@@ -71,8 +71,7 @@ fn receive_messages(mut client: ResMut<RenetClient>) {
         match message {
             ServerMessages::Pong(text_message) => {
                 println!("Client: {}", text_message.payload)
-            }
-            _ => println!("recieved unsupported message type"),
+            } // _ => println!("recieved unsupported message type"),
         }
     }
 }
