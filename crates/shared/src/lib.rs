@@ -1,1 +1,5 @@
-// Types and rules used by both the client and server belong here.
+pub mod messages;
+
+pub fn app_init() {
+    dotenvy::dotenv().ok();
+}
