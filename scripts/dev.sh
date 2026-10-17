@@ -22,6 +22,9 @@ fi
 
 cd "$(dirname "$0")/.."
 
+cargo build -p server -p client
+binary_dir="${CARGO_TARGET_DIR:-target}/debug"
+
 pids=()
 cleanup() {
     trap - EXIT INT TERM
@@ -36,8 +39,8 @@ trap 'exit 143' TERM
 
 start_process() {
     local package=$1 label=$2
-    setsid bash -c 'set -o pipefail; cargo run -p "$1" 2>&1 | sed -u "s/^/[$2] /"' \
-        _ "$package" "$label" &
+    setsid bash -c 'set -o pipefail; "$1" 2>&1 | sed -u "s/^/[$2] /"' \
+        _ "$binary_dir/$package" "$label" &
     pids+=("$!")
 }
 

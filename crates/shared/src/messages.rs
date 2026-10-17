@@ -1,23 +1,38 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum ServerMessages {
-    Pong(ServerMessage<String>),
+    Pong(String),
+    InitiateClientState(ClientInitialization),
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ServerMessage<T> {
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ServerMessage {
     pub sequence: u64,
-    pub payload: T,
+    pub tick: u64,
+    pub payload: ServerMessages,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum ClientMessages {
     Ping(String),
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct RecievedClientMessage {
-    pub client_id: u64,
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ClientMessage {
+    pub sequence: u64,
     pub payload: ClientMessages,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BufferedClientMessege {
+    pub client_id: u64,
+    pub recieved_tick: u64,
+    pub message: ClientMessage,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ClientInitialization {
+    pub client_id: u64,
+    pub tick: u64,
 }

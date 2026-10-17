@@ -7,7 +7,7 @@ pub struct ClientConfig {
 
 impl ClientConfig {
     pub fn new() -> Self {
-        let protocol_id: u64 = std::env::var("PROTOCOL_ID")
+        let protocol_id = std::env::var("PROTOCOL_ID")
             .expect("PROTOCOL_ID must be set")
             .parse()
             .expect("PROTOCOL_ID must be a valid u64");
