@@ -1,7 +1,7 @@
 use std::{
     collections::VecDeque,
     net::UdpSocket,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use bevy::{app::ScheduleRunnerPlugin, prelude::*};
@@ -11,7 +11,7 @@ use bevy_renet::{
     renet::{ConnectionConfig, DefaultChannel, ServerEvent},
 };
 use shared::messages::{
-    BufferedClientMessege, ClientInitialization, ClientMessage, ServerMessage,
+    BufferedClientMessege, ClientInitialization, ClientMessage, ClientMessages, ServerMessage,
     ServerMessages::{self, InitiateClientState},
 };
 
@@ -51,9 +51,13 @@ impl GameServer {
         )));
 
         app.init_resource::<MessageBuffer>();
+        app.init_resource::<OutgoingDelay>();
 
         app.add_observer(on_client_event);
-        app.add_systems(Update, (receive_messages, send_messages).chain());
+        app.add_systems(
+            Update,
+            (receive_messages, send_messages, send_delayed_replies).chain(),
+        );
 
         Self { app }
     }
@@ -100,6 +104,16 @@ struct TickCounter(u64);
 #[derive(Resource)]
 struct MessageTimer(Timer);
 
+#[derive(Resource, Default)]
+struct OutgoingDelay {
+    pending: VecDeque<DelayedReply>,
+}
+struct DelayedReply {
+    send_at: Instant,
+    client_id: u64,
+    bytes: Vec<u8>,
+}
+
 fn receive_messages(
     tick_counter: Res<TickCounter>,
     mut server: ResMut<RenetServer>,
@@ -125,7 +139,7 @@ fn send_messages(
     mut buffer: ResMut<MessageBuffer>,
     mut tick_counter: ResMut<TickCounter>,
     mut timer: ResMut<MessageTimer>,
-    mut server: ResMut<RenetServer>,
+    mut delay: ResMut<OutgoingDelay>,
 ) {
     timer.0.tick(time.delta());
 
@@ -133,13 +147,45 @@ fn send_messages(
         tick_counter.0 += 1;
         let tick_number = tick_counter.0;
         while let Some(buffered) = buffer.pending.pop_front() {
+            let ClientMessages::Ping {
+                server_delay_ms, ..
+            } = &buffered.message.payload;
             let msg = ServerMessage {
                 sequence: buffered.message.sequence,
                 tick: tick_number,
                 payload: ServerMessages::Pong(String::from("pong")),
             };
-            let bytes: Vec<u8> = postcard::to_allocvec(&msg).unwrap();
-            server.send_message(buffered.client_id, DefaultChannel::ReliableOrdered, bytes);
+
+            let send_at = Instant::now() + Duration::from_millis(*server_delay_ms);
+            let insert_at = delay
+                .pending
+                .iter()
+                .position(|reply| reply.send_at > send_at)
+                .unwrap_or(delay.pending.len());
+            delay.pending.insert(
+                insert_at,
+                DelayedReply {
+                    send_at,
+                    client_id: buffered.client_id,
+                    bytes: postcard::to_allocvec(&msg).unwrap(),
+                },
+            );
         }
+    }
+}
+fn send_delayed_replies(mut delay: ResMut<OutgoingDelay>, mut server: ResMut<RenetServer>) {
+    let now = Instant::now();
+
+    while delay
+        .pending
+        .front()
+        .is_some_and(|reply| reply.send_at <= now)
+    {
+        let reply = delay.pending.pop_front().unwrap();
+        server.send_message(
+            reply.client_id,
+            DefaultChannel::ReliableOrdered,
+            reply.bytes,
+        );
     }
 }

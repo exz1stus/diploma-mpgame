@@ -2,6 +2,7 @@ use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
 use egui_plot::{Legend, Line, Plot, PlotPoint, PlotPoints, PlotResponse, Points};
 
+use crate::client::NetworkSimulation;
 use crate::diagnostics::{MAX_WINDOW_SECONDS, MessageContent, MessageEvent, NetworkDiagnostics};
 
 const KILOBITS_PER_BYTE: f64 = 8.0 / 1_000.0;
@@ -31,12 +32,22 @@ impl TimelineZoom {
 pub fn network_diagnostics_ui(
     mut contexts: EguiContexts,
     stats: Res<NetworkDiagnostics>,
+    mut simulation: ResMut<NetworkSimulation>,
     mut selected_packet: Local<Option<MessageEvent>>,
     mut zoom: Local<TimelineZoom>,
 ) -> Result {
     let context = contexts.ctx_mut()?;
     egui::Window::new("Network diagnostics").show(context, |ui| {
         ui.label(format!("Ping/pong RTT: {} ms", stats.ping_ms));
+        ui.horizontal(|ui| {
+            ui.label("Client outgoing delay");
+            ui.add(egui::Slider::new(&mut simulation.outgoing_delay_ms, 0..=1_000).suffix(" ms"));
+        });
+        ui.horizontal(|ui| {
+            ui.label("Server reply delay");
+            ui.add(egui::Slider::new(&mut simulation.server_delay_ms, 0..=1_000).suffix(" ms"));
+        });
+        ui.small("Changes apply to new pings. RTT starts when a ping leaves the client queue.");
         ui.horizontal(|ui| {
             ui.label("Time window");
             ui.add(
@@ -260,7 +271,10 @@ mod tests {
                 rtt_ms: None,
                 content: MessageContent::Sent(ClientMessage {
                     sequence: 1,
-                    payload: ClientMessages::Ping("ping".into()),
+                    payload: ClientMessages::Ping {
+                        text: "ping".into(),
+                        server_delay_ms: 0,
+                    },
                 }),
             },
             MessageEvent {

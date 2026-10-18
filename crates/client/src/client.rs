@@ -1,4 +1,5 @@
 use std::{
+    collections::VecDeque,
     net::UdpSocket,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -58,10 +59,16 @@ impl GameClient {
 
         app.init_resource::<NetworkDiagnostics>();
         app.init_resource::<ClientState>();
+        app.init_resource::<NetworkSimulation>();
 
         app.add_systems(
             Update,
-            (receive_messages, send_messages, print_net_stats)
+            (
+                receive_messages,
+                send_messages,
+                release_outgoing,
+                print_net_stats,
+            )
                 .chain()
                 .run_if(client_connected),
         );
@@ -88,9 +95,30 @@ struct ClientState {
     initiated: bool,
 }
 
+#[derive(Resource)]
+pub struct NetworkSimulation {
+    pub outgoing_delay_ms: u64,
+    pub server_delay_ms: u64,
+    outgoing: VecDeque<QueuedMessage>,
+}
+
+impl Default for NetworkSimulation {
+    fn default() -> Self {
+        Self {
+            outgoing_delay_ms: 0,
+            server_delay_ms: 0,
+            outgoing: VecDeque::new(),
+        }
+    }
+}
+
+struct QueuedMessage {
+    release_at_s: f64,
+    message: ClientMessage,
+}
+
 fn send_messages(
-    mut client: ResMut<RenetClient>,
-    mut stats: ResMut<NetworkDiagnostics>,
+    mut simulation: ResMut<NetworkSimulation>,
     mut client_state: ResMut<ClientState>,
     time: Res<Time<Real>>,
 ) {
@@ -101,11 +129,44 @@ fn send_messages(
     client_state.sequence += 1;
     let message = ClientMessage {
         sequence: client_state.sequence,
-        payload: ClientMessages::Ping(String::from("client ping")),
+        payload: ClientMessages::Ping {
+            text: String::from("client ping"),
+            server_delay_ms: simulation.server_delay_ms,
+        },
     };
-    let bytes: Vec<u8> = postcard::to_allocvec(&message).unwrap();
-    stats.add_sent(message.clone(), time.elapsed_secs_f64());
-    client.send_message(DefaultChannel::ReliableOrdered, bytes);
+
+    let release_at_s = time.elapsed_secs_f64() + simulation.outgoing_delay_ms as f64 / 1_000.0;
+    let insert_at = simulation
+        .outgoing
+        .iter()
+        .position(|queued| queued.release_at_s > release_at_s)
+        .unwrap_or(simulation.outgoing.len());
+    simulation.outgoing.insert(
+        insert_at,
+        QueuedMessage {
+            release_at_s,
+            message,
+        },
+    );
+}
+fn release_outgoing(
+    mut simulation: ResMut<NetworkSimulation>,
+    mut client: ResMut<RenetClient>,
+    mut stats: ResMut<NetworkDiagnostics>,
+    time: Res<Time<Real>>,
+) {
+    let now = time.elapsed_secs_f64();
+
+    while simulation
+        .outgoing
+        .front()
+        .is_some_and(|queued| queued.release_at_s <= now)
+    {
+        let queued = simulation.outgoing.pop_front().unwrap();
+        let bytes = postcard::to_allocvec(&queued.message).unwrap();
+        stats.add_sent(queued.message, now);
+        client.send_message(DefaultChannel::ReliableOrdered, bytes);
+    }
 }
 
 fn receive_messages(

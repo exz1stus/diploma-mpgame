@@ -15,7 +15,7 @@ pub struct ServerMessage {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum ClientMessages {
-    Ping(String),
+    Ping { text: String, server_delay_ms: u64 },
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

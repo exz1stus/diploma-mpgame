@@ -47,7 +47,7 @@ impl MessageEvent {
     pub fn payload_type(&self) -> &'static str {
         match &self.content {
             MessageContent::Sent(message) => match message.payload {
-                ClientMessages::Ping(_) => "Ping",
+                ClientMessages::Ping { .. } => "Ping",
             },
             MessageContent::Received(message) => match message.payload {
                 ServerMessages::Pong(_) => "Pong",
@@ -59,7 +59,12 @@ impl MessageEvent {
     pub fn decoded_payload(&self) -> String {
         match &self.content {
             MessageContent::Sent(message) => match &message.payload {
-                ClientMessages::Ping(text) => format!("text: {text}"),
+                ClientMessages::Ping {
+                    text,
+                    server_delay_ms,
+                } => {
+                    format!("text: {text}\nserver reply delay: {server_delay_ms} ms")
+                }
             },
             MessageContent::Received(message) => match &message.payload {
                 ServerMessages::Pong(text) => {
@@ -191,7 +196,10 @@ mod tests {
         stats.add_sent(
             ClientMessage {
                 sequence: 7,
-                payload: ClientMessages::Ping("hello".into()),
+                payload: ClientMessages::Ping {
+                    text: "hello".into(),
+                    server_delay_ms: 0,
+                },
             },
             1.0,
         );
