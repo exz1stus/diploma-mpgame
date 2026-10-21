@@ -11,7 +11,8 @@ use bevy::{
     time::{Real, Time},
 };
 use bevy_renet::RenetClient;
-use shared::messages::{ClientMessage, ClientMessages, ServerMessage, ServerMessages};
+use shared::client_messages::{ClientMessage, ClientMessages};
+use shared::server_messages::{ServerMessage, ServerMessages};
 
 pub const MAX_WINDOW_SECONDS: f64 = 60.0;
 

@@ -8,7 +8,7 @@ use crate::diagnostics::{MAX_WINDOW_SECONDS, MessageContent, MessageEvent, Netwo
 const KILOBITS_PER_BYTE: f64 = 8.0 / 1_000.0;
 const PACKET_DOT_RADIUS: f32 = 5.0;
 const PACKET_CLICK_RADIUS: f32 = 9.0;
-const MIN_WINDOW_SECONDS: f64 = 0.01;
+const MIN_WINDOW_SECONDS: f64 = 0.05;
 const DEFAULT_WINDOW_SECONDS: f64 = 10.0;
 
 pub struct TimelineZoom {
@@ -260,7 +260,8 @@ fn in_window(time_s: f64, now: f64, span_s: f64) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use shared::messages::{ClientMessage, ClientMessages, ServerMessage, ServerMessages};
+    use shared::client_messages::{ClientMessage, ClientMessages};
+    use shared::server_messages::{ServerMessage, ServerMessages};
 
     #[test]
     fn selects_the_nearest_visible_dot() {

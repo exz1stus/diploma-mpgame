@@ -18,7 +18,8 @@ use crate::{
     netgraph::network_diagnostics_ui,
 };
 
-use shared::messages::*;
+use shared::client_messages::{ClientMessage, ClientMessages};
+use shared::server_messages::{ServerMessage, ServerMessages};
 
 pub struct GameClient {
     app: App,
@@ -179,11 +180,11 @@ fn receive_messages(
         let message: ServerMessage = postcard::from_bytes(&bytes).unwrap();
         client_state.last_tick = message.tick;
         match &message.payload {
-            ServerMessages::InitiateClientState(initial_message) => {
+            ServerMessages::InitiateClientState { client_id, tick } => {
                 *client_state = ClientState {
-                    id: initial_message.client_id,
+                    id: *client_id,
                     sequence: 0,
-                    last_tick: initial_message.tick,
+                    last_tick: *tick,
                     initiated: true,
                 };
                 println!(

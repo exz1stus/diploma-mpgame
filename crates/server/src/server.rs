@@ -10,10 +10,9 @@ use bevy_renet::{
     netcode::{NetcodeServerPlugin, NetcodeServerTransport, ServerAuthentication, ServerConfig},
     renet::{ConnectionConfig, DefaultChannel, ServerEvent},
 };
-use shared::messages::{
-    BufferedClientMessege, ClientInitialization, ClientMessage, ClientMessages, ServerMessage,
-    ServerMessages::{self, InitiateClientState},
-};
+use serde::{Deserialize, Serialize};
+use shared::client_messages::{ClientMessage, ClientMessages};
+use shared::server_messages::{ServerMessage, ServerMessages};
 
 use crate::config::AppConfig;
 
@@ -87,7 +86,7 @@ fn on_client_connected(mut server: ResMut<RenetServer>, client_id: u64, tick: u6
     let initiation_message = ServerMessage {
         sequence: 0,
         tick,
-        payload: InitiateClientState(ClientInitialization { client_id, tick }),
+        payload: ServerMessages::InitiateClientState { client_id, tick },
     };
     let bytes: Vec<u8> = postcard::to_allocvec(&initiation_message).unwrap();
     server.send_message(client_id, DefaultChannel::ReliableOrdered, bytes);
@@ -112,6 +111,13 @@ struct DelayedReply {
     send_at: Instant,
     client_id: u64,
     bytes: Vec<u8>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BufferedClientMessege {
+    pub client_id: u64,
+    pub recieved_tick: u64,
+    pub message: ClientMessage,
 }
 
 fn receive_messages(
