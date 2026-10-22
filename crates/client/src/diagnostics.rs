@@ -52,7 +52,7 @@ impl MessageEvent {
             },
             MessageContent::Received(message) => match message.payload {
                 ServerMessages::Pong(_) => "Pong",
-                ServerMessages::InitiateClientState(_) => "Initiate client state",
+                ServerMessages::InitiateClientState { .. } => "Initiate client state",
             },
         }
     }
@@ -71,9 +71,9 @@ impl MessageEvent {
                 ServerMessages::Pong(text) => {
                     format!("text: {text}\nserver tick: {}", message.tick)
                 }
-                ServerMessages::InitiateClientState(initial) => format!(
+                ServerMessages::InitiateClientState { client_id, tick } => format!(
                     "client id: {}\ninitial tick: {}\nserver tick: {}",
-                    initial.client_id, initial.tick, message.tick
+                    client_id, tick, message.tick
                 ),
             },
         }

@@ -2,20 +2,22 @@
 set -euo pipefail
 
 usage() {
-    printf 'Usage: %s [-n client_count]\n' "$0"
+    printf 'Usage: %s [-n client_count] [-s empty|circle]\n' "$0"
 }
 
 client_count=1
-while getopts ':n:h' option; do
+scene=empty
+while getopts ':n:s:h' option; do
     case "$option" in
         n) client_count=$OPTARG ;;
+        s) scene=$OPTARG ;;
         h) usage; exit 0 ;;
         *) usage >&2; exit 2 ;;
     esac
 done
 shift $((OPTIND - 1))
 
-if (( $# != 0 )) || [[ ! $client_count =~ ^[0-9]+$ ]]; then
+if (( $# != 0 )) || [[ ! $client_count =~ ^[0-9]+$ ]] || [[ $scene != empty && $scene != circle ]]; then
     usage >&2
     exit 2
 fi
@@ -39,8 +41,12 @@ trap 'exit 143' TERM
 
 start_process() {
     local package=$1 label=$2
-    setsid bash -c 'set -o pipefail; "$1" 2>&1 | sed -u "s/^/[$2] /"' \
-        _ "$binary_dir/$package" "$label" &
+    local -a command=("$binary_dir/$package")
+    if [[ $package == client ]]; then
+        command=(env "TEST_SCENE=$scene" "${command[@]}")
+    fi
+    setsid bash -c 'set -o pipefail; label=$1; shift; "$@" 2>&1 | sed -u "s/^/[$label] /"' \
+        _ "$label" "${command[@]}" &
     pids+=("$!")
 }
 

@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum ClientMessages {
     Ping { text: String, server_delay_ms: u64 },
+    Initiated,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

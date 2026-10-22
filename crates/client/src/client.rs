@@ -16,6 +16,7 @@ use crate::{
     config::ClientConfig,
     diagnostics::{NetworkDiagnostics, sample_network},
     netgraph::network_diagnostics_ui,
+    test_scenes::TestScenesPlugin,
 };
 
 use shared::client_messages::{ClientMessage, ClientMessages};
@@ -26,20 +27,7 @@ pub struct GameClient {
 }
 
 impl GameClient {
-    pub fn new(config: &ClientConfig) -> Self {
-        let mut app = App::new();
-        app.add_plugins((
-            DefaultPlugins,
-            EguiPlugin::default(),
-            RenetClientPlugin,
-            NetcodeClientPlugin,
-        ));
-
-        app.add_systems(Startup, |mut commands: Commands| {
-            commands.spawn(Camera2d);
-        });
-        app.add_systems(EguiPrimaryContextPass, network_diagnostics_ui);
-
+    pub fn new(mut app: App, config: &ClientConfig) -> Self {
         let socket = UdpSocket::bind("0.0.0.0:0").unwrap();
 
         let current_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
