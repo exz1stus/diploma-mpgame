@@ -49,10 +49,14 @@ impl MessageEvent {
         match &self.content {
             MessageContent::Sent(message) => match message.payload {
                 ClientMessages::Ping { .. } => "Ping",
+                ClientMessages::Initiated => "Initiated",
             },
             MessageContent::Received(message) => match message.payload {
                 ServerMessages::Pong(_) => "Pong",
                 ServerMessages::InitiateClientState { .. } => "Initiate client state",
+                ServerMessages::EntitySpawn(_) => "Entity spawn",
+                ServerMessages::EntityUpdate(_) => "Entity update",
+                ServerMessages::EntityDespawn(_) => "Entity despawn",
             },
         }
     }
@@ -66,15 +70,29 @@ impl MessageEvent {
                 } => {
                     format!("text: {text}\nserver reply delay: {server_delay_ms} ms")
                 }
+                ClientMessages::Initiated => "Initial state acknowledged".into(),
             },
             MessageContent::Received(message) => match &message.payload {
                 ServerMessages::Pong(text) => {
                     format!("text: {text}\nserver tick: {}", message.tick)
                 }
-                ServerMessages::InitiateClientState { client_id, tick } => format!(
+                ServerMessages::InitiateClientState {
+                    client_id, world, ..
+                } => format!(
                     "client id: {}\ninitial tick: {}\nserver tick: {}",
-                    client_id, tick, message.tick
+                    client_id, world.tick, message.tick
                 ),
+                ServerMessages::EntitySpawn(entity) => format!(
+                    "entity id: {}\ncomponents: {}",
+                    entity.id,
+                    entity.components.len()
+                ),
+                ServerMessages::EntityUpdate(entity) => format!(
+                    "entity id: {}\nchanged components: {}",
+                    entity.id,
+                    entity.components.len()
+                ),
+                ServerMessages::EntityDespawn(id) => format!("entity id: {id}"),
             },
         }
     }
