@@ -9,9 +9,9 @@ use bevy_renet::{
     netcode::{NetcodeServerTransport, ServerAuthentication, ServerConfig},
     renet::ConnectionConfig,
 };
-use shared::replication::BufferedComponentChanges;
+use shared::replication::{BufferedComponentChanges, NetworkEntityMap};
 
-use crate::{client_events, config::AppConfig, messages};
+use crate::{client_events, config::AppConfig, messages, replication};
 
 pub struct GameServer {
     app: App,
@@ -34,8 +34,10 @@ impl GameServer {
         app.insert_resource(transport);
 
         app.init_resource::<BufferedComponentChanges>();
+        app.init_resource::<NetworkEntityMap>();
 
         messages::configure(&mut app, config.tickrate);
+        replication::configure(&mut app);
         client_events::configure(&mut app);
 
         Self { app }

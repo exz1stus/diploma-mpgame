@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::replication::ReplicatedComponent;
 
-#[derive(Component, Serialize, Deserialize)]
+#[derive(Component, Serialize, Deserialize, Debug)]
 pub struct Position {
     pub x: f32,
     pub y: f32,

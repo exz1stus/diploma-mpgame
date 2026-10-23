@@ -2,6 +2,7 @@ use bevy::app::App;
 
 use crate::components::{Health, Position};
 use crate::replication::ReplicatedComponentAppExt;
+use crate::role::NetworkRole;
 
 pub mod client_messages;
 pub mod components;
@@ -17,8 +18,13 @@ pub fn register_components(app: &mut App) {
 }
 
 pub fn app_init() -> App {
+    app_init_with_role(NetworkRole::Client)
+}
+
+pub fn app_init_with_role(role: NetworkRole) -> App {
     dotenvy::dotenv().ok();
     let mut app = App::new();
+    app.insert_resource(role);
 
     register_components(&mut app);
 

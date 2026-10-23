@@ -5,15 +5,42 @@ mod netgraph;
 
 use bevy::{
     DefaultPlugins,
-    prelude::{Camera2d, Commands, Startup},
+    asset::Assets,
+    color::Color,
+    ecs::system::ResMut,
+    math::primitives::Circle,
+    mesh::{Mesh, Mesh2d},
+    prelude::{Camera2d, Commands, Name, Startup},
+    sprite_render::{ColorMaterial, MeshMaterial2d},
+    transform::components::Transform,
 };
 use bevy_egui::{EguiPlugin, EguiPrimaryContextPass};
 use bevy_renet::{RenetClientPlugin, netcode::NetcodeClientPlugin};
 use client::GameClient;
-use shared::app_init;
+use shared::{
+    app_init,
+    components::{Health, Position},
+    protocol::NetworkIdentity,
+};
 
 use crate::{config::ClientConfig, netgraph::network_diagnostics_ui};
 
+fn spawn(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+) {
+    commands.spawn((
+        Name::new("Test circle"),
+        NetworkIdentity { id: 1 },
+        Position { x: 0.0, y: 0.0 },
+        Health(100),
+        // Circle
+        Mesh2d(meshes.add(Circle::new(20.0))),
+        MeshMaterial2d(materials.add(Color::srgb(0.2, 0.8, 0.4))),
+        Transform::from_xyz(0.0, 0.0, 0.0),
+    ));
+}
 fn main() {
     let mut app = app_init();
 
@@ -24,7 +51,7 @@ fn main() {
         NetcodeClientPlugin,
     ));
 
-    app.add_systems(Startup, spawn_camera);
+    app.add_systems(Startup, (spawn, spawn_camera));
     app.add_systems(EguiPrimaryContextPass, network_diagnostics_ui);
 
     let config = ClientConfig::new();

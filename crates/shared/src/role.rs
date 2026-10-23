@@ -6,10 +6,10 @@ pub enum NetworkRole {
     Client,
 }
 
-fn is_server(role: Res<NetworkRole>) -> bool {
+pub fn is_server(role: Res<NetworkRole>) -> bool {
     *role == NetworkRole::Server
 }
 
-fn is_client(role: Res<NetworkRole>) -> bool {
+pub fn is_client(role: Res<NetworkRole>) -> bool {
     *role == NetworkRole::Client
 }

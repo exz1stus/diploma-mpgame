@@ -31,7 +31,7 @@ impl TimelineZoom {
 
 pub fn network_diagnostics_ui(
     mut contexts: EguiContexts,
-    stats: Res<NetworkDiagnostics>,
+    mut stats: ResMut<NetworkDiagnostics>,
     mut simulation: ResMut<NetworkSimulation>,
     mut selected_packet: Local<Option<MessageEvent>>,
     mut zoom: Local<TimelineZoom>,
@@ -39,6 +39,16 @@ pub fn network_diagnostics_ui(
     let context = contexts.ctx_mut()?;
     egui::Window::new("Network diagnostics").show(context, |ui| {
         ui.label(format!("Ping/pong RTT: {} ms", stats.ping_ms));
+        if ui
+            .button(if stats.capture_paused {
+                "Resume capture"
+            } else {
+                "Pause capture"
+            })
+            .clicked()
+        {
+            stats.capture_paused = !stats.capture_paused;
+        }
         ui.horizontal(|ui| {
             ui.label("Client outgoing delay");
             ui.add(egui::Slider::new(&mut simulation.outgoing_delay_ms, 0..=1_000).suffix(" ms"));
@@ -373,6 +383,8 @@ fn show_packet_inspector(
     let mut open = true;
     egui::Window::new("Packet inspector")
         .open(&mut open)
+        .default_width(520.0)
+        .resizable(true)
         .show(context, |ui| {
             egui::Grid::new("packet_fields").show(ui, |ui| {
                 ui.label("Direction");
@@ -397,7 +409,16 @@ fn show_packet_inspector(
             });
             ui.separator();
             ui.label("Decoded payload");
-            ui.monospace(packet.decoded_payload());
+            egui::ScrollArea::both()
+                .id_salt("decoded_payload")
+                .max_height(350.0)
+                .show(ui, |ui| {
+                    ui.add(
+                        egui::Label::new(egui::RichText::new(packet.decoded_payload()).monospace())
+                            .wrap_mode(egui::TextWrapMode::Extend)
+                            .selectable(true),
+                    );
+                });
         });
     if !open {
         *selected_packet = None;
