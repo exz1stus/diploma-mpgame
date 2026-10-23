@@ -4,4 +4,10 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+bevy_egui = "0.42"
+egui_plot = "0.37"
+bevy = { workspace = true, features = ["2d"] }
+bevy_renet.workspace = true
+postcard.workspace = true
+serde.workspace = true
 shared = { path = "../shared" }
