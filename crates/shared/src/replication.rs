@@ -11,7 +11,7 @@ use bevy_renet::renet::DefaultChannel;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use crate::protocol::NetworkComponentId;
+use crate::protocol::{NetworkComponentId, NetworkEntityId};
 use crate::role::NetworkRole;
 
 pub trait ReplicatedComponent: Component + Serialize + DeserializeOwned {
@@ -20,13 +20,12 @@ pub trait ReplicatedComponent: Component + Serialize + DeserializeOwned {
 
 #[derive(Resource, Default)]
 pub struct BufferedComponentChanges {
-    pub queue: VecDeque<PendingComponentChange>,
+    pub changes: HashMap<(Entity, NetworkComponentId), ComponentChange>,
 }
 
-pub struct PendingComponentChange {
-    entity: Entity,
-    data: Vec<u8>,
-    id: NetworkComponentId,
+pub enum ComponentChange {
+    Upsert(Vec<u8>),
+    Remove,
 }
 
 fn apply_component<T>(world: &mut World, entity: Entity, bytes: &[u8])
@@ -78,11 +77,9 @@ fn collect_changes<T>(
             continue;
         };
 
-        outgoing.queue.push_back(PendingComponentChange {
-            entity,
-            id: T::NETWORK_ID,
-            data,
-        });
+        outgoing
+            .changes
+            .insert((entity, T::NETWORK_ID), ComponentChange::Upsert(data));
     }
 }
 

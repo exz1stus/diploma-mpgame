@@ -1,9 +1,10 @@
-use std::{
-    collections::VecDeque,
-    time::{Duration, Instant},
-};
+use std::{collections::VecDeque, time::Instant};
 
-use bevy::prelude::{App, IntoScheduleConfigs, Time, Timer, TimerMode, Update};
+use bevy::{
+    app::{FixedPostUpdate, FixedPreUpdate, FixedUpdate, PreUpdate},
+    prelude::{App, IntoScheduleConfigs, Time},
+    time::Fixed,
+};
 use bevy_ecs::{
     resource::Resource,
     system::{Res, ResMut},
@@ -15,46 +16,63 @@ use shared::{
     server_messages::{ServerMessage, ServerMessages},
 };
 
-pub(crate) fn configure(app: &mut App, tickrate: u32) {
+use crate::{
+    handlers::{handle_ping, on_client_initiated},
+    simulation::simulate,
+};
+
+pub fn configure(app: &mut App, tickrate: u32) {
     app.insert_resource(TickCounter(0));
-    app.insert_resource(MessageTimer(Timer::from_seconds(
-        1.0 / tickrate as f32,
-        TimerMode::Repeating,
-    )));
+    app.insert_resource(Time::<Fixed>::from_hz(tickrate as f64));
     app.init_resource::<MessageBuffer>();
-    app.init_resource::<OutgoingDelay>();
-    app.add_systems(
-        Update,
-        (receive_messages, send_messages, send_delayed_replies).chain(),
-    );
+
+    app.add_systems(PreUpdate, receive_messages);
+
+    app.add_systems(FixedPreUpdate, tick);
+
+    app.add_systems(FixedUpdate, simulate);
+
+    app.add_systems(FixedPostUpdate, send_messages);
+}
+
+pub struct MessageContext<'a> {
+    pub tick: u64,
+    pub outgoing: &'a mut VecDeque<BufferedServerMessage>,
+}
+
+impl MessageContext<'_> {
+    pub fn reply(&mut self, req: &BufferedClientMessage, payload: ServerMessages) {
+        self.outgoing.push_back(BufferedServerMessage {
+            client_id: req.client_id,
+            message: ServerMessage {
+                tick: self.tick,
+                sequence: req.message.sequence,
+                payload,
+            },
+        });
+    }
 }
 
 #[derive(Resource, Default)]
 struct MessageBuffer {
     pending: VecDeque<BufferedClientMessage>,
+    outgoing: VecDeque<BufferedServerMessage>,
 }
 
 #[derive(Resource)]
-pub(crate) struct TickCounter(pub(crate) u64);
+pub struct TickCounter(pub u64);
 
-#[derive(Resource)]
-struct MessageTimer(Timer);
-
-#[derive(Resource, Default)]
-struct OutgoingDelay {
-    pending: VecDeque<DelayedReply>,
-}
-struct DelayedReply {
-    send_at: Instant,
-    client_id: u64,
-    bytes: Vec<u8>,
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BufferedClientMessage {
+    pub client_id: u64,
+    pub received_tick: u64,
+    pub message: ClientMessage,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct BufferedClientMessage {
-    client_id: u64,
-    received_tick: u64,
-    message: ClientMessage,
+pub struct BufferedServerMessage {
+    pub client_id: u64,
+    pub message: ServerMessage,
 }
 
 fn receive_messages(
@@ -65,70 +83,54 @@ fn receive_messages(
     for client_id in server.clients_id() {
         while let Some(message) = server.receive_message(client_id, DefaultChannel::ReliableOrdered)
         {
-            let message: ClientMessage =
-                postcard::from_bytes(&message).expect("failed to deserialize client message");
+            let Ok(message) = postcard::from_bytes::<ClientMessage>(&message) else {
+                eprintln!("Failed to deserialize client message");
+                continue;
+            };
+
             buffer.pending.push_back(BufferedClientMessage {
                 client_id,
                 received_tick: tick_counter.0,
                 message,
             });
+
             println!("received message from client, pushed to buffer");
         }
     }
 }
 
-fn send_messages(
-    time: Res<Time>,
-    mut buffer: ResMut<MessageBuffer>,
-    mut tick_counter: ResMut<TickCounter>,
-    mut timer: ResMut<MessageTimer>,
-    mut delay: ResMut<OutgoingDelay>,
-) {
-    timer.0.tick(time.delta());
+fn tick(mut buffer: ResMut<MessageBuffer>, mut tick_counter: ResMut<TickCounter>) {
+    tick_counter.0 += 1;
 
-    if timer.0.just_finished() {
-        tick_counter.0 += 1;
-        let tick_number = tick_counter.0;
-        while let Some(buffered) = buffer.pending.pop_front() {
-            let ClientMessages::Ping {
-                server_delay_ms, ..
-            } = &buffered.message.payload;
-            let msg = ServerMessage {
-                sequence: buffered.message.sequence,
-                tick: tick_number,
-                payload: ServerMessages::Pong(String::from("pong")),
-            };
+    let current_tick = tick_counter.0;
+    let buffer = &mut *buffer;
 
-            let send_at = Instant::now() + Duration::from_millis(*server_delay_ms);
-            let insert_at = delay
-                .pending
-                .iter()
-                .position(|reply| reply.send_at > send_at)
-                .unwrap_or(delay.pending.len());
-            delay.pending.insert(
-                insert_at,
-                DelayedReply {
-                    send_at,
-                    client_id: buffered.client_id,
-                    bytes: postcard::to_allocvec(&msg).unwrap(),
-                },
-            );
+    let (_, outgoing) = (&mut buffer.pending, &mut buffer.outgoing);
+
+    let mut ctx = MessageContext {
+        tick: current_tick,
+        outgoing,
+    };
+
+    while let Some(buffered) = buffer.pending.pop_front() {
+        match &buffered.message.payload {
+            ClientMessages::Ping { .. } => {
+                handle_ping(&mut ctx, &buffered);
+            }
+            ClientMessages::Initiated => {
+                on_client_initiated(&mut ctx, &buffered);
+            }
         }
     }
 }
-fn send_delayed_replies(mut delay: ResMut<OutgoingDelay>, mut server: ResMut<RenetServer>) {
-    let now = Instant::now();
 
-    while delay
-        .pending
-        .front()
-        .is_some_and(|reply| reply.send_at <= now)
-    {
-        let reply = delay.pending.pop_front().unwrap();
-        server.send_message(
-            reply.client_id,
-            DefaultChannel::ReliableOrdered,
-            reply.bytes,
-        );
+fn send_messages(mut server: ResMut<RenetServer>, mut buffer: ResMut<MessageBuffer>) {
+    while let Some(buffered) = buffer.outgoing.pop_front() {
+        let Ok(bytes) = postcard::to_allocvec(&buffered.message) else {
+            eprintln!("Failed to serialize server message");
+            continue;
+        };
+
+        server.send_message(buffered.client_id, DefaultChannel::ReliableOrdered, bytes);
     }
 }

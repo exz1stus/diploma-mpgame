@@ -16,7 +16,6 @@ use crate::{
     config::ClientConfig,
     diagnostics::{NetworkDiagnostics, sample_network},
     netgraph::network_diagnostics_ui,
-    test_scenes::TestScenesPlugin,
 };
 
 use shared::client_messages::{ClientMessage, ClientMessages};

@@ -6,9 +6,9 @@ use bevy_renet::{
 };
 use shared::server_messages::{ServerMessage, ServerMessages};
 
-use crate::messages::TickCounter;
+use crate::{messages::TickCounter, world::build_world_snapshot};
 
-pub(crate) fn configure(app: &mut App) {
+pub fn configure(app: &mut App) {
     app.add_observer(on_client_event);
 }
 
@@ -29,11 +29,14 @@ fn on_client_event(
 
 fn on_client_connected(mut server: ResMut<RenetServer>, client_id: u64, tick: u64) {
     println!("Client {client_id} connected");
+    let world = build_world_snapshot();
+
     let initiation_message = ServerMessage {
         sequence: 0,
         tick,
-        payload: ServerMessages::InitiateClientState { client_id, tick },
+        payload: ServerMessages::InitiateClientState { client_id, world },
     };
+
     let bytes: Vec<u8> = postcard::to_allocvec(&initiation_message).unwrap();
     server.send_message(client_id, DefaultChannel::ReliableOrdered, bytes);
 }

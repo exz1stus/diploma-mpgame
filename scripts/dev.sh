@@ -42,7 +42,7 @@ trap 'exit 143' TERM
 start_process() {
     local package=$1 label=$2
     local -a command=("$binary_dir/$package")
-    if [[ $package == client ]]; then
+    if [[ $package == server ]]; then
         command=(env "TEST_SCENE=$scene" "${command[@]}")
     fi
     setsid bash -c 'set -o pipefail; label=$1; shift; "$@" 2>&1 | sed -u "s/^/[$label] /"' \

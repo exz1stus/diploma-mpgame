@@ -1,4 +1,4 @@
-use bevy_ecs::component::Component;
+use bevy_ecs::{component::Component, resource::Resource};
 use serde::{Deserialize, Serialize};
 
 use crate::replication::ReplicatedComponent;
@@ -14,7 +14,7 @@ impl ReplicatedComponent for Position {
 }
 
 #[derive(Component, Serialize, Deserialize)]
-pub struct Health(u16);
+pub struct Health(pub u16);
 
 impl ReplicatedComponent for Health {
     const NETWORK_ID: u16 = 2;

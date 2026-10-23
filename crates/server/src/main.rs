@@ -1,7 +1,12 @@
 mod client_events;
 mod config;
+mod handlers;
 mod messages;
+mod replication;
 mod server;
+mod simulation;
+mod test_scenes;
+mod world;
 use std::time::Duration;
 
 use bevy::{
@@ -11,7 +16,7 @@ use bevy::{
 use bevy_renet::{RenetServerPlugin, netcode::NetcodeServerPlugin};
 use shared::app_init;
 
-use crate::{config::AppConfig, server::GameServer};
+use crate::{config::AppConfig, server::GameServer, test_scenes::TestScenesPlugin};
 
 fn main() {
     let mut app = app_init();
@@ -21,6 +26,7 @@ fn main() {
         RenetServerPlugin,
         NetcodeServerPlugin,
     ));
+    app.add_plugins(TestScenesPlugin::from_env());
 
     let config = AppConfig::new();
 

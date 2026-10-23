@@ -7,7 +7,6 @@ pub enum ServerMessages {
     Pong(String),
     InitiateClientState {
         client_id: u64,
-        tick: u64,
         world: WorldSnapshot,
     },
     EntitySpawn(EntitySnapshot),

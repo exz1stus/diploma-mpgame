@@ -2,17 +2,17 @@ mod client;
 mod config;
 mod diagnostics;
 mod netgraph;
-mod test_scenes;
 
-use bevy::DefaultPlugins;
+use bevy::{
+    DefaultPlugins,
+    prelude::{Camera2d, Commands, Startup},
+};
 use bevy_egui::{EguiPlugin, EguiPrimaryContextPass};
 use bevy_renet::{RenetClientPlugin, netcode::NetcodeClientPlugin};
 use client::GameClient;
 use shared::app_init;
 
-use crate::{
-    config::ClientConfig, netgraph::network_diagnostics_ui, test_scenes::TestScenesPlugin,
-};
+use crate::{config::ClientConfig, netgraph::network_diagnostics_ui};
 
 fn main() {
     let mut app = app_init();
@@ -24,7 +24,7 @@ fn main() {
         NetcodeClientPlugin,
     ));
 
-    app.add_plugins(TestScenesPlugin::from_env());
+    app.add_systems(Startup, spawn_camera);
     app.add_systems(EguiPrimaryContextPass, network_diagnostics_ui);
 
     let config = ClientConfig::new();
@@ -34,6 +34,10 @@ fn main() {
     prefer_wslg_x11();
 
     client.run();
+}
+
+fn spawn_camera(mut commands: Commands) {
+    commands.spawn(Camera2d);
 }
 
 #[cfg(target_os = "linux")]
