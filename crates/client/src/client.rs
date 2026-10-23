@@ -5,18 +5,15 @@ use std::{
 };
 
 use bevy::prelude::*;
-use bevy_egui::{EguiPlugin, EguiPrimaryContextPass};
 use bevy_renet::{
-    RenetClient, RenetClientPlugin, RenetSend, client_connected,
-    netcode::{ClientAuthentication, NetcodeClientPlugin, NetcodeClientTransport},
+    RenetClient, RenetSend, client_connected,
+    netcode::{ClientAuthentication, NetcodeClientTransport},
     renet::{ConnectionConfig, DefaultChannel},
 };
 
 use crate::{
     config::ClientConfig,
     diagnostics::{NetworkDiagnostics, sample_network},
-    netgraph::network_diagnostics_ui,
-    test_scenes::TestScenesPlugin,
 };
 
 use shared::client_messages::{ClientMessage, ClientMessages};
@@ -168,7 +165,9 @@ fn receive_messages(
         let message: ServerMessage = postcard::from_bytes(&bytes).unwrap();
         client_state.last_tick = message.tick;
         match &message.payload {
-            ServerMessages::InitiateClientState { client_id, tick } => {
+            ServerMessages::InitiateClientState {
+                client_id, tick, ..
+            } => {
                 *client_state = ClientState {
                     id: *client_id,
                     sequence: 0,
@@ -183,6 +182,9 @@ fn receive_messages(
             ServerMessages::Pong(text_message) => {
                 println!("Client: {}", text_message);
             }
+            ServerMessages::EntitySpawn(_)
+            | ServerMessages::EntityUpdate(_)
+            | ServerMessages::EntityDespawn(_) => {}
         }
         stats.add_received(message, time.elapsed_secs_f64());
     }
