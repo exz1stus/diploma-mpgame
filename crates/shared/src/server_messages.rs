@@ -1,3 +1,4 @@
+use bevy_renet::renet::ClientId;
 use serde::{Deserialize, Serialize};
 
 use crate::protocol::{EntitySnapshot, NetworkComponentId, NetworkEntityId, WorldSnapshot};
@@ -6,11 +7,14 @@ use crate::protocol::{EntitySnapshot, NetworkComponentId, NetworkEntityId, World
 pub enum ServerMessages {
     Pong(String),
     InitiateClientState {
-        client_id: u64,
+        client_id: ClientId,
         world: WorldSnapshot,
     },
     EntitySpawn(EntitySnapshot),
-    EntityUpdate(EntitySnapshot), //vec contains only updated components
+
+    //vec contains only updated components
+    EntityUpdate(EntitySnapshot),
+
     EntityDespawn(NetworkEntityId),
     ComponentRemove {
         entity_id: NetworkEntityId,

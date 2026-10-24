@@ -10,9 +10,9 @@ pub fn simulate(
     time: Res<Time<Real>>,
 ) {
     for (mut position, mut health) in &mut query {
-        position.x = 10.0 * time.elapsed_secs().cos();
-        position.y = 10.0 * time.elapsed_secs().sin();
-        if tick_counter.0 % 60 == 0 && health.0 > 0 {
+        position.x = 100.0 * time.elapsed_secs().cos();
+        position.y = 100.0 * time.elapsed_secs().sin();
+        if tick_counter.0.is_multiple_of(60) && health.0 > 0 {
             health.0 -= 1;
         }
     }

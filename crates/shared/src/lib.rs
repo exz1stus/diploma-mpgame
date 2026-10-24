@@ -21,6 +21,7 @@ pub fn register_components(app: &mut App) {
 pub fn app_init(role: NetworkRole) -> App {
     dotenvy::dotenv().ok();
     let mut app = App::new();
+    app.insert_resource(role);
 
     app.insert_resource(role);
     register_components(&mut app);

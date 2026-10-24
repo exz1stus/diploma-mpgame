@@ -9,7 +9,10 @@ use bevy_ecs::{
     resource::Resource,
     system::{Res, ResMut},
 };
-use bevy_renet::{RenetServer, renet::DefaultChannel};
+use bevy_renet::{
+    RenetServer,
+    renet::{ClientId, DefaultChannel},
+};
 use serde::{Deserialize, Serialize};
 use shared::{
     client_messages::{ClientMessage, ClientMessages},
@@ -18,6 +21,7 @@ use shared::{
 
 use crate::{
     handlers::{handle_ping, on_client_initiated},
+    replication::queue_changes,
     simulation::simulate,
 };
 
@@ -32,7 +36,7 @@ pub fn configure(app: &mut App, tickrate: u32) {
 
     app.add_systems(FixedUpdate, simulate);
 
-    app.add_systems(FixedPostUpdate, send_messages);
+    app.add_systems(FixedPostUpdate, send_messages.after(queue_changes));
 }
 
 pub struct MessageContext<'a> {
@@ -44,6 +48,7 @@ impl MessageContext<'_> {
     pub fn reply(&mut self, req: &BufferedClientMessage, payload: ServerMessages) {
         self.outgoing.push_back(BufferedServerMessage {
             client_id: req.client_id,
+            channel: DefaultChannel::ReliableOrdered.into(),
             message: ServerMessage {
                 tick: self.tick,
                 sequence: req.message.sequence,
@@ -51,12 +56,24 @@ impl MessageContext<'_> {
             },
         });
     }
+
+    pub fn push_outgoing(&mut self, client_id: ClientId, channel: u8, payload: ServerMessages) {
+        self.outgoing.push_back(BufferedServerMessage {
+            client_id,
+            channel,
+            message: ServerMessage {
+                tick: self.tick,
+                sequence: 0,
+                payload,
+            },
+        });
+    }
 }
 
 #[derive(Resource, Default)]
-struct MessageBuffer {
+pub struct MessageBuffer {
     pending: VecDeque<BufferedClientMessage>,
-    outgoing: VecDeque<BufferedServerMessage>,
+    pub(crate) outgoing: VecDeque<BufferedServerMessage>,
 }
 
 #[derive(Resource)]
@@ -64,14 +81,15 @@ pub struct TickCounter(pub u64);
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BufferedClientMessage {
-    pub client_id: u64,
+    pub client_id: ClientId,
     pub received_tick: u64,
     pub message: ClientMessage,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BufferedServerMessage {
-    pub client_id: u64,
+    pub client_id: ClientId,
+    pub channel: u8,
     pub message: ServerMessage,
 }
 
@@ -131,6 +149,6 @@ fn send_messages(mut server: ResMut<RenetServer>, mut buffer: ResMut<MessageBuff
             continue;
         };
 
-        server.send_message(buffered.client_id, DefaultChannel::ReliableOrdered, bytes);
+        server.send_message(buffered.client_id, buffered.channel, bytes);
     }
 }
