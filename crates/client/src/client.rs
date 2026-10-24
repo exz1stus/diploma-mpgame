@@ -1,5 +1,3 @@
-//! Client startup and system execution order. Follow the modules below for details.
-
 pub use crate::network::NetworkSimulation;
 pub(crate) use crate::state::Owned;
 

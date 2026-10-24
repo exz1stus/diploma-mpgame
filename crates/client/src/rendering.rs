@@ -1,4 +1,3 @@
-//! Circle assets and visual transforms; authoritative components stay separate.
 use super::{
     interpolation::position_at_tick,
     state::{ClientState, Owned, RemoteWorld},

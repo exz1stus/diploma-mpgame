@@ -1,4 +1,3 @@
-//! Receive/send queues and simulated delays for all message types.
 use super::{
     replication::process_server_message,
     state::{ClientState, RemoteWorld},

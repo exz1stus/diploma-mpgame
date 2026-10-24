@@ -1,4 +1,3 @@
-//! Apply released server snapshots through the shared component registry.
 use super::{
     interpolation::PositionSample,
     state::{ClientState, Owned, RemoteWorld, ReplicatedEntity},

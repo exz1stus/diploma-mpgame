@@ -1,4 +1,3 @@
-//! Shared client resources and the local ownership marker.
 use super::interpolation::{InterpolationClock, PositionSample};
 use bevy::{
     platform::collections::{HashMap, HashSet},

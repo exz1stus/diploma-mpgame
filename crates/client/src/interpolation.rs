@@ -1,4 +1,3 @@
-//! Snapshot samples, the playback clock, and position interpolation.
 use bevy::prelude::Vec2;
 use std::collections::VecDeque;
 
