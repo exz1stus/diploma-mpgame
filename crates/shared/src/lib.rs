@@ -1,6 +1,6 @@
 use bevy::app::App;
 
-use crate::components::{Health, Position};
+use crate::components::{Health, Ownership, Position};
 use crate::replication::ReplicatedComponentAppExt;
 use crate::role::NetworkRole;
 
@@ -15,17 +15,15 @@ pub fn register_components(app: &mut App) {
     app.add_replicated::<Position>().unreliable().interpolated();
 
     app.add_replicated::<Health>().reliable();
+    app.add_replicated::<Ownership>().reliable();
 }
 
-pub fn app_init() -> App {
-    app_init_with_role(NetworkRole::Client)
-}
-
-pub fn app_init_with_role(role: NetworkRole) -> App {
+pub fn app_init(role: NetworkRole) -> App {
     dotenvy::dotenv().ok();
     let mut app = App::new();
     app.insert_resource(role);
 
+    app.insert_resource(role);
     register_components(&mut app);
 
     app

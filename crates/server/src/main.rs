@@ -14,12 +14,13 @@ use bevy::{
     app::{PluginGroup, ScheduleRunnerPlugin},
 };
 use bevy_renet::{RenetServerPlugin, netcode::NetcodeServerPlugin};
-use shared::{app_init_with_role, role::NetworkRole};
+use shared::app_init;
+use shared::role::NetworkRole;
 
 use crate::{config::AppConfig, server::GameServer, test_scenes::TestScenesPlugin};
 
 fn main() {
-    let mut app = app_init_with_role(NetworkRole::Server);
+    let mut app = app_init(NetworkRole::Server);
 
     app.add_plugins((
         MinimalPlugins.set(ScheduleRunnerPlugin::run_loop(Duration::from_millis(16))),

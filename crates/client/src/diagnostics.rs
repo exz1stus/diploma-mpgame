@@ -61,6 +61,7 @@ impl MessageEvent {
                 ServerMessages::EntitySpawn(_) => "Entity spawn",
                 ServerMessages::EntityUpdate(_) => "Entity update",
                 ServerMessages::EntityDespawn(_) => "Entity despawn",
+                ServerMessages::ComponentRemove { .. } => "Component remove",
             },
         }
     }
@@ -68,12 +69,7 @@ impl MessageEvent {
     pub fn decoded_payload(&self) -> String {
         match &self.content {
             MessageContent::Sent(message) => match &message.payload {
-                ClientMessages::Ping {
-                    text,
-                    server_delay_ms,
-                } => {
-                    format!("text: {text}\nserver reply delay: {server_delay_ms} ms")
-                }
+                ClientMessages::Ping { text } => format!("text: {text}"),
                 ClientMessages::Initiated => "Initial state acknowledged".into(),
             },
             MessageContent::Received(message) => match &message.payload {
@@ -82,24 +78,26 @@ impl MessageEvent {
                 }
                 ServerMessages::InitiateClientState {
                     client_id, world, ..
+                } => format!(
+                    "client id: {}\ninitial tick: {}\nserver tick: {}\ntick rate: {}",
+                    client_id, world.tick, message.tick, world.tick_rate
+                ),
+                ServerMessages::EntitySpawn(entity) => format!(
+                    "entity id: {}\ncomponents: {}",
+                    entity.id,
+                    entity.components.len()
+                ),
+                ServerMessages::EntityUpdate(entity) => format!(
+                    "entity id: {}\nchanged components: {}",
+                    entity.id,
+                    entity.components.len()
+                ),
+                ServerMessages::EntityDespawn(id) => format!("entity id: {id}"),
+                ServerMessages::ComponentRemove {
+                    entity_id,
+                    component_id,
                 } => {
-                    let mut details = format!(
-                        "client id: {client_id}\ninitial tick: {}\nentities: {}",
-                        message.tick,
-                        world.entities.len()
-                    );
-                    for entity in &world.entities {
-                        write_entity(&mut details, entity);
-                    }
-                    details
-                }
-                ServerMessages::EntitySpawn(entity) | ServerMessages::EntityUpdate(entity) => {
-                    let mut details = format!("server tick: {}", message.tick);
-                    write_entity(&mut details, entity);
-                    details
-                }
-                ServerMessages::EntityDespawn(id) => {
-                    format!("server tick: {}\nentity id: {id}", message.tick)
+                    format!("entity id: {entity_id}\nremoved component: {component_id}")
                 }
             },
         }
@@ -281,7 +279,6 @@ mod tests {
                 sequence: 7,
                 payload: ClientMessages::Ping {
                     text: "hello".into(),
-                    server_delay_ms: 0,
                 },
             },
             1.0,
