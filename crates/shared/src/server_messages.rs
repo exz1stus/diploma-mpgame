@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::protocol::{EntitySnapshot, NetworkEntityId, WorldSnapshot};
+use crate::protocol::{EntitySnapshot, NetworkComponentId, NetworkEntityId, WorldSnapshot};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum ServerMessages {
@@ -12,6 +12,10 @@ pub enum ServerMessages {
     EntitySpawn(EntitySnapshot),
     EntityUpdate(EntitySnapshot), //vec contains only updated components
     EntityDespawn(NetworkEntityId),
+    ComponentRemove {
+        entity_id: NetworkEntityId,
+        component_id: NetworkComponentId,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

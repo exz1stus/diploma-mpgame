@@ -1,5 +1,3 @@
-use std::collections::VecDeque;
-
 use bevy::app::FixedPostUpdate;
 use bevy::{app::App, platform::collections::HashMap};
 use bevy_ecs::query::Changed;
@@ -11,7 +9,7 @@ use bevy_renet::renet::DefaultChannel;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use crate::protocol::{NetworkComponentId, NetworkEntityId};
+use crate::protocol::NetworkComponentId;
 use crate::role::NetworkRole;
 
 pub trait ReplicatedComponent: Component + Serialize + DeserializeOwned {
@@ -54,6 +52,16 @@ pub struct RegisteredComponent {
 
     pub apply: fn(&mut World, Entity, &[u8]),
     pub remove: fn(&mut World, Entity),
+}
+
+impl RegisteredComponent {
+    pub fn channel_id(&self) -> u8 {
+        match self.delivery {
+            DefaultChannel::Unreliable => DefaultChannel::Unreliable.into(),
+            DefaultChannel::ReliableOrdered => DefaultChannel::ReliableOrdered.into(),
+            DefaultChannel::ReliableUnordered => DefaultChannel::ReliableUnordered.into(),
+        }
+    }
 }
 
 #[derive(Resource, Default)]

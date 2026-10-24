@@ -1,23 +1,27 @@
-use std::{
-    collections::VecDeque,
-    net::UdpSocket,
-    time::{SystemTime, UNIX_EPOCH},
-};
+//! Client startup and system execution order. Follow the modules below for details.
 
-use bevy::prelude::*;
-use bevy_renet::{
-    RenetClient, RenetSend, client_connected,
-    netcode::{ClientAuthentication, NetcodeClientTransport},
-    renet::{ConnectionConfig, DefaultChannel},
-};
+pub use crate::network::NetworkSimulation;
+pub(crate) use crate::state::Owned;
 
+use crate::network::{
+    collect_incoming, release_incoming, release_outgoing, reset_disconnected_client, send_messages,
+};
+use crate::rendering::{add_circle_visuals, render_remote_circles, setup_circle_assets};
+use crate::state::{ClientState, RemoteWorld};
 use crate::{
     config::ClientConfig,
     diagnostics::{NetworkDiagnostics, sample_network},
 };
-
-use shared::client_messages::{ClientMessage, ClientMessages};
-use shared::server_messages::{ServerMessage, ServerMessages};
+use bevy::prelude::*;
+use bevy_renet::{
+    RenetClient, RenetSend, client_connected,
+    netcode::{ClientAuthentication, NetcodeClientTransport},
+    renet::ConnectionConfig,
+};
+use std::{
+    net::UdpSocket,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 pub struct GameClient {
     app: App,
@@ -46,146 +50,32 @@ impl GameClient {
         app.init_resource::<NetworkDiagnostics>();
         app.init_resource::<ClientState>();
         app.init_resource::<NetworkSimulation>();
+        app.init_resource::<RemoteWorld>();
+
+        app.add_systems(Startup, setup_circle_assets);
 
         app.add_systems(
             Update,
             (
-                receive_messages,
+                collect_incoming,
+                release_incoming,
+                add_circle_visuals,
+                render_remote_circles,
                 send_messages,
                 release_outgoing,
-                print_net_stats,
             )
                 .chain()
                 .run_if(client_connected),
         );
 
-        app.add_systems(PostUpdate, (sample_network).after(RenetSend));
+        app.add_systems(Update, reset_disconnected_client);
+
+        app.add_systems(PostUpdate, sample_network.after(RenetSend));
 
         Self { app }
     }
 
     pub fn run(&mut self) {
         self.app.run();
-    }
-}
-
-fn print_net_stats(diagnostics: Res<NetworkDiagnostics>) {
-    println!("Ping: {}", diagnostics.ping_ms)
-}
-
-#[derive(Resource, Default)]
-struct ClientState {
-    id: u64,
-    sequence: u64,
-    last_tick: u64,
-    initiated: bool,
-}
-
-#[derive(Resource)]
-pub struct NetworkSimulation {
-    pub outgoing_delay_ms: u64,
-    pub server_delay_ms: u64,
-    outgoing: VecDeque<QueuedMessage>,
-}
-
-impl Default for NetworkSimulation {
-    fn default() -> Self {
-        Self {
-            outgoing_delay_ms: 0,
-            server_delay_ms: 0,
-            outgoing: VecDeque::new(),
-        }
-    }
-}
-
-struct QueuedMessage {
-    release_at_s: f64,
-    message: ClientMessage,
-}
-
-fn send_messages(
-    mut simulation: ResMut<NetworkSimulation>,
-    mut client_state: ResMut<ClientState>,
-    time: Res<Time<Real>>,
-) {
-    if !client_state.initiated {
-        return;
-    }
-
-    client_state.sequence += 1;
-    let message = ClientMessage {
-        sequence: client_state.sequence,
-        payload: ClientMessages::Ping {
-            text: String::from("client ping"),
-            server_delay_ms: simulation.server_delay_ms,
-        },
-    };
-
-    let release_at_s = time.elapsed_secs_f64() + simulation.outgoing_delay_ms as f64 / 1_000.0;
-    let insert_at = simulation
-        .outgoing
-        .iter()
-        .position(|queued| queued.release_at_s > release_at_s)
-        .unwrap_or(simulation.outgoing.len());
-    simulation.outgoing.insert(
-        insert_at,
-        QueuedMessage {
-            release_at_s,
-            message,
-        },
-    );
-}
-fn release_outgoing(
-    mut simulation: ResMut<NetworkSimulation>,
-    mut client: ResMut<RenetClient>,
-    mut stats: ResMut<NetworkDiagnostics>,
-    time: Res<Time<Real>>,
-) {
-    let now = time.elapsed_secs_f64();
-
-    while simulation
-        .outgoing
-        .front()
-        .is_some_and(|queued| queued.release_at_s <= now)
-    {
-        let queued = simulation.outgoing.pop_front().unwrap();
-        let bytes = postcard::to_allocvec(&queued.message).unwrap();
-        stats.add_sent(queued.message, now);
-        client.send_message(DefaultChannel::ReliableOrdered, bytes);
-    }
-}
-
-fn receive_messages(
-    mut client: ResMut<RenetClient>,
-    mut stats: ResMut<NetworkDiagnostics>,
-    mut client_state: ResMut<ClientState>,
-    time: Res<Time<Real>>,
-) {
-    while let Some(bytes) = client.receive_message(DefaultChannel::ReliableOrdered) {
-        let message: ServerMessage = postcard::from_bytes(&bytes).unwrap();
-        client_state.last_tick = message.tick;
-        match &message.payload {
-            ServerMessages::InitiateClientState {
-                client_id, world, ..
-            } => {
-                *client_state = ClientState {
-                    id: *client_id,
-                    sequence: 0,
-                    last_tick: world.tick,
-                    initiated: true,
-                };
-                println!(
-                    "Client {} initialized at tick {}",
-                    client_state.id, client_state.last_tick
-                );
-            }
-            ServerMessages::Pong(text_message) => {
-                println!("Client: {}", text_message);
-            }
-            ServerMessages::EntitySpawn(_)
-            | ServerMessages::EntityUpdate(_)
-            | ServerMessages::EntityDespawn(_) => {}
-        }
-        stats.add_received(message, time.elapsed_secs_f64());
     }
 }

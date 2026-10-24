@@ -1,7 +1,12 @@
 mod client;
 mod config;
 mod diagnostics;
+mod interpolation;
 mod netgraph;
+mod network;
+mod rendering;
+mod replication;
+mod state;
 
 use bevy::{
     DefaultPlugins,
@@ -11,11 +16,12 @@ use bevy_egui::{EguiPlugin, EguiPrimaryContextPass};
 use bevy_renet::{RenetClientPlugin, netcode::NetcodeClientPlugin};
 use client::GameClient;
 use shared::app_init;
+use shared::role::NetworkRole;
 
 use crate::{config::ClientConfig, netgraph::network_diagnostics_ui};
 
 fn main() {
-    let mut app = app_init();
+    let mut app = app_init(NetworkRole::Client);
 
     app.add_plugins((
         DefaultPlugins,

@@ -2,8 +2,12 @@ use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
 use egui_plot::{Legend, Line, Plot, PlotPoint, PlotPoints, PlotResponse, Points};
 
-use crate::client::NetworkSimulation;
+use crate::client::{NetworkSimulation, Owned};
 use crate::diagnostics::{MAX_WINDOW_SECONDS, MessageContent, MessageEvent, NetworkDiagnostics};
+use shared::{
+    components::{Health, Position},
+    protocol::NetworkIdentity,
+};
 
 const KILOBITS_PER_BYTE: f64 = 8.0 / 1_000.0;
 const PACKET_DOT_RADIUS: f32 = 5.0;
@@ -33,6 +37,7 @@ pub fn network_diagnostics_ui(
     mut contexts: EguiContexts,
     stats: Res<NetworkDiagnostics>,
     mut simulation: ResMut<NetworkSimulation>,
+    entities: Query<(&NetworkIdentity, &Position, Option<&Health>, Option<&Owned>)>,
     mut selected_packet: Local<Option<MessageEvent>>,
     mut zoom: Local<TimelineZoom>,
 ) -> Result {
@@ -44,10 +49,22 @@ pub fn network_diagnostics_ui(
             ui.add(egui::Slider::new(&mut simulation.outgoing_delay_ms, 0..=1_000).suffix(" ms"));
         });
         ui.horizontal(|ui| {
-            ui.label("Server reply delay");
-            ui.add(egui::Slider::new(&mut simulation.server_delay_ms, 0..=1_000).suffix(" ms"));
+            ui.label("Incoming server delay");
+            ui.add(egui::Slider::new(&mut simulation.incoming_delay_ms, 0..=1_000).suffix(" ms"));
         });
-        ui.small("Changes apply to new pings. RTT starts when a ping leaves the client queue.");
+        ui.small("Delay changes apply to new messages. RTT starts when a ping is sent and includes incoming Pong delay.");
+        ui.collapsing("Replicated entities", |ui| {
+            let mut rows: Vec<_> = entities.iter().collect();
+            rows.sort_by_key(|(identity, _, _, _)| identity.id);
+            for (identity, position, health, owned) in rows {
+                let health = health.map_or_else(|| "none".to_owned(), |value| value.0.to_string());
+                let ownership = if owned.is_some() { "owned locally" } else { "remote" };
+                ui.monospace(format!(
+                    "#{} | server position ({:.1}, {:.1}) | health {} | {}",
+                    identity.id, position.x, position.y, health, ownership,
+                ));
+            }
+        });
         ui.horizontal(|ui| {
             ui.label("Time window");
             ui.add(
@@ -274,7 +291,6 @@ mod tests {
                     sequence: 1,
                     payload: ClientMessages::Ping {
                         text: "ping".into(),
-                        server_delay_ms: 0,
                     },
                 }),
             },
