@@ -1,4 +1,7 @@
-use crate::replication_handlers::{handle_component_remove, handle_entity_despawn, handle_entity_spawn, handle_entity_update, handle_initial_state};
+use crate::replication_handlers::{
+    handle_component_remove, handle_entity_despawn, handle_entity_spawn, handle_entity_update,
+    handle_initial_state,
+};
 
 use super::{
     interpolation::PositionSample,
@@ -19,31 +22,62 @@ pub fn process_server_message(
     remote_world: &mut RemoteWorld,
     registry: &ReplicationRegistry,
     now: f64,
-) {
+) -> bool {
     let tick = message.tick;
     client_state.last_tick = client_state.last_tick.max(tick);
 
     match message.payload {
         ServerMessages::InitiateClientState { client_id, world } => {
-         handle_initial_state(client_id,world,tick,commands,client_state,remote_world,registry,now);
+            return handle_initial_state(
+                client_id,
+                world,
+                tick,
+                commands,
+                client_state,
+                remote_world,
+                registry,
+                now,
+            );
         }
         ServerMessages::EntitySpawn(snapshot) => {
-            handle_entity_spawn(snapshot,tick,commands,client_state,remote_world,registry);
+            handle_entity_spawn(
+                snapshot,
+                tick,
+                commands,
+                client_state,
+                remote_world,
+                registry,
+            );
         }
         ServerMessages::EntityUpdate(snapshot) => {
-            handle_entity_update(snapshot,tick,commands,client_state,remote_world,registry);
+            handle_entity_update(
+                snapshot,
+                tick,
+                commands,
+                client_state,
+                remote_world,
+                registry,
+            );
         }
         ServerMessages::EntityDespawn(id) => {
-           handle_entity_despawn(id,commands,remote_world);
+            handle_entity_despawn(id, commands, remote_world);
         }
         ServerMessages::ComponentRemove {
             entity_id,
             component_id,
         } => {
-           handle_component_remove(entity_id,component_id,tick,commands,remote_world,registry);
+            handle_component_remove(
+                entity_id,
+                component_id,
+                tick,
+                commands,
+                remote_world,
+                registry,
+            );
         }
         ServerMessages::Pong(_) => {}
     }
+    false
 }
 
 pub fn spawn_remote_entity(

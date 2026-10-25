@@ -11,14 +11,14 @@ use bevy_renet::{
 };
 use shared::replication::{BufferedComponentChanges, NetworkEntityMap};
 
-use crate::{client_events, config::AppConfig, entity, messages, replication};
+use crate::{client, config::AppConfig, entity, messages, replication};
 
-pub struct GameServer {
+pub(crate) struct GameServer {
     app: App,
 }
 
 impl GameServer {
-    pub fn new(mut app: App, config: AppConfig) -> Self {
+    pub(crate) fn new(mut app: App, config: AppConfig) -> Self {
         let socket = UdpSocket::bind(config.server_addr).unwrap();
         let server_config = ServerConfig {
             protocol_id: config.protocol_id,
@@ -40,14 +40,14 @@ impl GameServer {
         app.init_resource::<NetworkEntityMap>();
 
         messages::configure(&mut app, tickrate);
-        client_events::configure(&mut app);
+        client::configure(&mut app);
         entity::configure(&mut app);
         replication::configure(&mut app);
 
         Self { app }
     }
 
-    pub fn run(&mut self) {
+    pub(crate) fn run(&mut self) {
         self.app.run();
     }
 }

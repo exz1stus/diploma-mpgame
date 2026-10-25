@@ -65,7 +65,6 @@ impl NetworkSimulation {
     }
 }
 
-
 pub fn collect_incoming(
     mut client: ResMut<RenetClient>,
     mut simulation: ResMut<NetworkSimulation>,
@@ -129,7 +128,7 @@ pub fn release_incoming(
 
         stats.add_received(item.message.clone(), now);
 
-        process_server_message(
+        let initialized = process_server_message(
             item.message,
             &mut commands,
             &mut client_state,
@@ -137,28 +136,29 @@ pub fn release_incoming(
             &registry,
             now,
         );
+        if initialized {
+            queue_outgoing(
+                &mut simulation,
+                &mut client_state,
+                ClientMessages::Initiated,
+                now,
+            );
+        }
     }
 }
 
-
-pub fn send_messages(
-    mut simulation: ResMut<NetworkSimulation>,
-    mut client_state: ResMut<ClientState>,
-    time: Res<Time<Real>>,
+fn queue_outgoing(
+    simulation: &mut NetworkSimulation,
+    client_state: &mut ClientState,
+    payload: ClientMessages,
+    now: f64,
 ) {
-    if !client_state.initiated {
-        return;
-    }
-
     client_state.sequence += 1;
     let message = ClientMessage {
         sequence: client_state.sequence,
-        payload: ClientMessages::Ping {
-            text: String::from("client ping"),
-        },
+        payload,
     };
-
-    let release_at_s = time.elapsed_secs_f64() + simulation.outgoing_delay_ms as f64 / 1_000.0;
+    let release_at_s = now + simulation.outgoing_delay_ms as f64 / 1_000.0;
     let insert_at = simulation
         .outgoing
         .iter()
@@ -170,6 +170,25 @@ pub fn send_messages(
             release_at_s,
             message,
         },
+    );
+}
+
+pub fn send_messages(
+    mut simulation: ResMut<NetworkSimulation>,
+    mut client_state: ResMut<ClientState>,
+    time: Res<Time<Real>>,
+) {
+    if !client_state.initiated {
+        return;
+    }
+
+    queue_outgoing(
+        &mut simulation,
+        &mut client_state,
+        ClientMessages::Ping {
+            text: String::from("client ping"),
+        },
+        time.elapsed_secs_f64(),
     );
 }
 
@@ -190,5 +209,60 @@ pub fn release_outgoing(
         let bytes = postcard::to_allocvec(&queued.message).unwrap();
         stats.add_sent(queued.message, now);
         client.send_message(DefaultChannel::ReliableOrdered, bytes);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use shared::{server_messages::ServerMessages, snapshots::WorldSnapshot};
+
+    #[test]
+    fn acknowledges_only_applied_initial_state() {
+        let mut app = App::new();
+        app.insert_resource(Time::<Real>::default());
+        app.init_resource::<NetworkSimulation>();
+        app.init_resource::<ClientState>();
+        app.init_resource::<RemoteWorld>();
+        app.init_resource::<ReplicationRegistry>();
+        app.init_resource::<NetworkDiagnostics>();
+        app.add_systems(Update, (release_incoming, send_messages).chain());
+
+        let simulation = &mut app.world_mut().resource_mut::<NetworkSimulation>();
+        for tickrate in [0, 60] {
+            simulation.incoming.push_back(QueuedIncoming {
+                release_at_s: 0.0,
+                message: ServerMessage {
+                    sequence: 0,
+                    tick: 7,
+                    payload: ServerMessages::InitiateClientState {
+                        client_id: 42,
+                        world: WorldSnapshot {
+                            tickrate,
+                            entities: vec![],
+                        },
+                    },
+                },
+            });
+        }
+
+        app.update();
+
+        let state = app.world().resource::<ClientState>();
+        assert!(state.initiated);
+        assert_eq!(state.id, 42);
+        assert_eq!(state.sequence, 2);
+        let simulation = app.world().resource::<NetworkSimulation>();
+        assert_eq!(simulation.outgoing.len(), 2);
+        assert!(matches!(
+            simulation.outgoing[0].message.payload,
+            ClientMessages::Initiated
+        ));
+        assert_eq!(simulation.outgoing[0].message.sequence, 1);
+        assert!(matches!(
+            simulation.outgoing[1].message.payload,
+            ClientMessages::Ping { .. }
+        ));
+        assert_eq!(simulation.outgoing[1].message.sequence, 2);
     }
 }

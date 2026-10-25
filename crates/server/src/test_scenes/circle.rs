@@ -1,23 +1,15 @@
 use bevy::prelude::*;
-use shared::{
-    components::{Health, Ownership, Position},
-    snapshots::NetworkIdentity,
-};
+use shared::components::{Health, Ownership, Position};
 
 use crate::entity::NetworkCommandsExt;
 
-pub fn spawn(mut commands: Commands) {
-    commands.network_spawn((
-        Name::new("Test circle"),
-        Ownership { client_id: 1 },
-        Position { x: 0.0, y: 0.0 },
-        Health(100),
-    ));
-
-    commands.network_spawn((
-        Name::new("Test circle 2"),
-        Ownership { client_id: 2 },
-        Position { x: 0.5, y: 0.5 },
-        Health(50),
-    ));
+pub(super) fn spawn(mut commands: Commands) {
+    for i in 0..30 {
+        commands.network_spawn((
+            Name::new(format!("Test circle {i}")),
+            Ownership { client_id: 1 },
+            Position { x: 0.0, y: 0.0 },
+            Health(100),
+        ));
+    }
 }

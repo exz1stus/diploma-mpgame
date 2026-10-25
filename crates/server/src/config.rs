@@ -3,14 +3,14 @@ use std::net::SocketAddr;
 use bevy_ecs::resource::Resource;
 
 #[derive(Resource)]
-pub struct AppConfig {
-    pub protocol_id: u64,
-    pub server_addr: SocketAddr,
-    pub tickrate: u32,
+pub(crate) struct AppConfig {
+    pub(crate) protocol_id: u64,
+    pub(crate) server_addr: SocketAddr,
+    pub(crate) tickrate: u32,
 }
 
 impl AppConfig {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let protocol_id: u64 = std::env::var("PROTOCOL_ID")
             .expect("PROTOCOL_ID must be set")
             .parse()

@@ -20,12 +20,13 @@ use shared::{
 };
 
 use crate::{
-    handlers::{handle_ping, on_client_initiated},
+    client::{ReplicationClients, on_client_initiated},
+    handlers::handle_ping,
     replication::queue_changes,
     simulation::simulate,
 };
 
-pub fn configure(app: &mut App, tickrate: u32) {
+pub(crate) fn configure(app: &mut App, tickrate: u32) {
     app.insert_resource(TickCounter(0));
     app.insert_resource(Time::<Fixed>::from_hz(tickrate as f64));
     app.init_resource::<MessageBuffer>();
@@ -40,13 +41,13 @@ pub fn configure(app: &mut App, tickrate: u32) {
 }
 
 // Message context is used for client messages handler functions
-pub struct MessageContext<'a> {
-    pub tick: u64,
-    pub outgoing: &'a mut VecDeque<BufferedServerMessage>,
+pub(crate) struct MessageContext<'a> {
+    pub(crate) tick: u64,
+    pub(crate) outgoing: &'a mut VecDeque<BufferedServerMessage>,
 }
 
 impl MessageContext<'_> {
-    pub fn reply(&mut self, req: &BufferedClientMessage, payload: ServerMessages) {
+    pub(crate) fn reply(&mut self, req: &BufferedClientMessage, payload: ServerMessages) {
         self.outgoing.push_back(BufferedServerMessage {
             target: MessageTarget::Client(req.client_id),
             channel: DefaultChannel::ReliableOrdered.into(),
@@ -58,7 +59,12 @@ impl MessageContext<'_> {
         });
     }
 
-    pub fn push_outgoing(&mut self, client_id: ClientId, channel: u8, payload: ServerMessages) {
+    pub(crate) fn push_outgoing(
+        &mut self,
+        client_id: ClientId,
+        channel: u8,
+        payload: ServerMessages,
+    ) {
         self.outgoing.push_back(BufferedServerMessage {
             target: MessageTarget::Client(client_id),
             channel,
@@ -72,33 +78,33 @@ impl MessageContext<'_> {
 }
 
 #[derive(Resource, Default)]
-pub struct MessageBuffer {
+pub(crate) struct MessageBuffer {
     pending: VecDeque<BufferedClientMessage>,
     pub(crate) outgoing: VecDeque<BufferedServerMessage>,
 }
 
 #[derive(Resource)]
-pub struct TickCounter(pub u64);
+pub(crate) struct TickCounter(pub(crate) u64);
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct BufferedClientMessage {
-    pub client_id: ClientId,
-    pub received_tick: u64,
-    pub message: ClientMessage,
+pub(crate) struct BufferedClientMessage {
+    pub(crate) client_id: ClientId,
+    received_tick: u64,
+    message: ClientMessage,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub enum MessageTarget {
+pub(crate) enum MessageTarget {
     Client(ClientId),
     Clients(Vec<ClientId>),
     Broadcast,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct BufferedServerMessage {
-    pub target: MessageTarget,
-    pub channel: u8,
-    pub message: ServerMessage,
+pub(crate) struct BufferedServerMessage {
+    pub(crate) target: MessageTarget,
+    pub(crate) channel: u8,
+    pub(crate) message: ServerMessage,
 }
 
 fn receive_messages(
@@ -119,13 +125,15 @@ fn receive_messages(
                 received_tick: tick_counter.0,
                 message,
             });
-
-            println!("received message from client, pushed to buffer");
         }
     }
 }
 
-fn tick(mut buffer: ResMut<MessageBuffer>, mut tick_counter: ResMut<TickCounter>) {
+fn tick(
+    mut buffer: ResMut<MessageBuffer>,
+    mut tick_counter: ResMut<TickCounter>,
+    mut clients: ResMut<ReplicationClients>,
+) {
     tick_counter.0 += 1;
 
     let current_tick = tick_counter.0;
@@ -144,7 +152,7 @@ fn tick(mut buffer: ResMut<MessageBuffer>, mut tick_counter: ResMut<TickCounter>
                 handle_ping(&mut ctx, &buffered);
             }
             ClientMessages::Initiated => {
-                on_client_initiated(&mut ctx, &buffered);
+                on_client_initiated(&buffered, &mut clients);
             }
         }
     }

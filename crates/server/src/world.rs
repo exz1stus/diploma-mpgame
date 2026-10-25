@@ -1,12 +1,17 @@
-use bevy_ecs::{query::With, system::Query, world::EntityRef};
+use bevy_ecs::{
+    query::{With, Without},
+    resource::IsResource,
+    system::Query,
+    world::EntityRef,
+};
 use shared::{
     replication::ReplicationRegistry,
     snapshots::{EntitySnapshot, NetworkIdentity, WorldSnapshot},
 };
 
-pub fn build_world_snapshot(
+pub(crate) fn build_world_snapshot(
     tickrate: u32,
-    entities: &Query<EntityRef, With<NetworkIdentity>>,
+    entities: &Query<EntityRef, (With<NetworkIdentity>, Without<IsResource>)>,
     registry: &ReplicationRegistry,
 ) -> WorldSnapshot {
     let snapshots = entities

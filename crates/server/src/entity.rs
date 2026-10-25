@@ -18,11 +18,11 @@ use shared::{
 use crate::messages::{BufferedServerMessage, MessageBuffer, MessageTarget, TickCounter};
 
 #[derive(Resource, Debug, Default)]
-pub struct NetworkIdAllocator {
+struct NetworkIdAllocator {
     next_id: NetworkEntityId,
 }
 
-pub fn configure(app: &mut App) {
+pub(crate) fn configure(app: &mut App) {
     app.init_resource::<NetworkIdAllocator>();
     app.add_observer(on_network_identity_inserted);
     app.add_observer(on_network_identity_removed);

@@ -8,10 +8,10 @@ enum TestScene {
     Empty,
 }
 
-pub struct TestScenesPlugin(TestScene);
+pub(crate) struct TestScenesPlugin(TestScene);
 
 impl TestScenesPlugin {
-    pub fn from_env() -> Self {
+    pub(crate) fn from_env() -> Self {
         let scene = match std::env::var("TEST_SCENE").as_deref() {
             Ok("circle") => TestScene::Circle,
             Ok("empty") | Err(_) => TestScene::Empty,

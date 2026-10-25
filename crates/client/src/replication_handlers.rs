@@ -1,9 +1,14 @@
-use bevy::{ecs::{system::Commands, world::World}, state::commands};
+use crate::{
+    replication::{apply_components, spawn_remote_entity},
+    state::{ClientState, Owned, RemoteWorld},
+};
+use bevy::ecs::{system::Commands, world::World};
 use bevy_renet::renet::ClientId;
-use shared::{components::{Ownership, Position}, protocol::{
-    EntitySnapshot, NetworkComponentId, NetworkEntityId, WorldSnapshot,
-}, replication::{ReplicatedComponent, ReplicationRegistry}};
-use crate::{replication::{apply_components, spawn_remote_entity}, state::{ClientState, Owned, RemoteWorld}};
+use shared::{
+    components::{Ownership, Position},
+    replication::{ReplicatedComponent, ReplicationRegistry},
+    snapshots::{EntitySnapshot, NetworkComponentId, NetworkEntityId, WorldSnapshot},
+};
 
 pub fn handle_initial_state(
     client_id: ClientId,
@@ -14,36 +19,36 @@ pub fn handle_initial_state(
     remote_world: &mut RemoteWorld,
     registry: &ReplicationRegistry,
     now: f64,
-){
-       if world.tickrate == 0 {
-                return;
-            }
-            for (_, replica) in remote_world.entities.drain() {
-                commands.entity(replica.entity).despawn();
-            }
-            remote_world.positions.clear();
-            remote_world.despawned.clear();
-            remote_world
-                .pending_updates
-                .retain(|(update_tick, _)| *update_tick > tick);
+) -> bool {
+    if world.tickrate == 0 {
+        return false;
+    }
+    for (_, replica) in remote_world.entities.drain() {
+        commands.entity(replica.entity).despawn();
+    }
+    remote_world.positions.clear();
+    remote_world.despawned.clear();
+    remote_world
+        .pending_updates
+        .retain(|(update_tick, _)| *update_tick > tick);
 
-            client_state.id = client_id;
-            client_state.sequence = 0;
-            client_state.last_tick = tick;
-            client_state.initiated = true;
-            client_state.clock.reset(tick, world.tickrate, now);
+    client_state.id = client_id;
+    client_state.sequence = 0;
+    client_state.last_tick = tick;
+    client_state.clock.reset(tick, world.tickrate, now);
 
-            for snapshot in world.entities {
-                spawn_remote_entity(
-                    snapshot,
-                    tick,
-                    commands,
-                    client_state,
-                    remote_world,
-                    registry,
-                );
-            }
-
+    for snapshot in world.entities {
+        spawn_remote_entity(
+            snapshot,
+            tick,
+            commands,
+            client_state,
+            remote_world,
+            registry,
+        );
+    }
+    client_state.initiated = true;
+    true
 }
 pub fn handle_entity_spawn(
     snapshot: EntitySnapshot,

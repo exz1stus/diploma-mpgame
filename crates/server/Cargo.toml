@@ -7,6 +7,7 @@ edition = "2024"
 bevy.workspace = true
 bevy_ecs.workspace = true
 bevy_renet.workspace = true
+fastrand = "2.5"
 postcard.workspace = true
 serde.workspace = true
 shared = { path = "../shared" }

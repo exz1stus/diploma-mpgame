@@ -6,7 +6,7 @@ use bevy::{
     prelude::{App, IntoScheduleConfigs},
 };
 use bevy_ecs::system::{Res, ResMut};
-use bevy_renet::{RenetServer, renet::ClientId};
+use bevy_renet::renet::ClientId;
 use shared::{
     replication::{
         BufferedComponentChanges, ComponentChange, NetworkEntityMap, ReplicationRegistry,
@@ -16,7 +16,10 @@ use shared::{
     snapshots::{ComponentSnapshot, EntitySnapshot, NetworkEntityId},
 };
 
-use crate::messages::{MessageBuffer, MessageContext, TickCounter};
+use crate::{
+    client::ReplicationClients,
+    messages::{MessageBuffer, MessageContext, TickCounter},
+};
 
 type SnapshotBatch = BTreeMap<u8, Vec<EntitySnapshot>>;
 
@@ -28,9 +31,9 @@ pub(crate) fn configure(app: &mut App) {
 }
 pub(crate) fn queue_changes(
     mut changes: ResMut<BufferedComponentChanges>,
+    clients: Res<ReplicationClients>,
     registry: Res<ReplicationRegistry>,
     entities: Res<NetworkEntityMap>,
-    server: Res<RenetServer>,
     tick: Res<TickCounter>,
     mut buffer: ResMut<MessageBuffer>,
 ) {
@@ -47,13 +50,12 @@ pub(crate) fn queue_changes(
         return;
     }
 
-    let clients = server.clients_id();
     let mut ctx = MessageContext {
         tick: tick.0,
         outgoing: &mut buffer.outgoing,
     };
 
-    push_changes(&mut ctx, &clients, &batch);
+    push_changes(&mut ctx, clients.ready_clients(), &batch);
 }
 
 fn build_channels_snapshots(
@@ -96,8 +98,12 @@ fn build_channels_snapshots(
         .collect()
 }
 
-fn push_changes(ctx: &mut MessageContext, clients: &[ClientId], batch: &SnapshotBatch) {
-    for &client_id in clients {
+fn push_changes(
+    ctx: &mut MessageContext,
+    clients: impl IntoIterator<Item = ClientId>,
+    batch: &SnapshotBatch,
+) {
+    for client_id in clients {
         for (&channel, snapshots) in batch {
             for snapshot in snapshots {
                 ctx.push_outgoing(

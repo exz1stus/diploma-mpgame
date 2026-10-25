@@ -1,4 +1,4 @@
-mod client_events;
+mod client;
 mod config;
 mod entity;
 mod handlers;
