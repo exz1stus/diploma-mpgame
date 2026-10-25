@@ -11,7 +11,7 @@ use bevy_renet::{
 };
 use shared::replication::{BufferedComponentChanges, NetworkEntityMap};
 
-use crate::{client_events, config::AppConfig, messages, replication};
+use crate::{client_events, config::AppConfig, entity, messages, replication};
 
 pub struct GameServer {
     app: App,
@@ -40,8 +40,9 @@ impl GameServer {
         app.init_resource::<NetworkEntityMap>();
 
         messages::configure(&mut app, tickrate);
-        replication::configure(&mut app);
         client_events::configure(&mut app);
+        entity::configure(&mut app);
+        replication::configure(&mut app);
 
         Self { app }
     }

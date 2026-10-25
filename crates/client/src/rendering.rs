@@ -5,7 +5,7 @@ use super::{
 use bevy::prelude::*;
 use shared::{
     components::Position,
-    protocol::NetworkIdentity,
+    snapshots::NetworkIdentity,
     replication::{ReplicatedComponent, ReplicationRegistry},
 };
 

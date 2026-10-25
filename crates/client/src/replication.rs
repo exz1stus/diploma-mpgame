@@ -7,9 +7,9 @@ use super::{
 use bevy::{platform::collections::HashMap, prelude::*};
 use shared::{
     components::{Ownership, Position},
-    protocol::{EntitySnapshot, NetworkIdentity},
     replication::{ReplicatedComponent, ReplicationRegistry},
     server_messages::{ServerMessage, ServerMessages},
+    snapshots::{EntitySnapshot, NetworkIdentity},
 };
 
 pub fn process_server_message(
@@ -129,7 +129,7 @@ pub fn apply_components(
             .is_none_or(|last| tick >= *last)
         {
             if let Ok(owner) = postcard::from_bytes::<Ownership>(&component.data) {
-                let owned = owner.client_id == Some(client_state.id);
+                let owned = owner.client_id == client_state.id;
                 if owned != replica.owned {
                     remote_world.positions.remove(&snapshot.id);
                 }

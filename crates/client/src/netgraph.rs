@@ -8,7 +8,7 @@ use crate::rendering::InterpolationDebug;
 use crate::state::RemoteWorld;
 use shared::{
     components::{Health, Position},
-    protocol::NetworkIdentity,
+    snapshots::NetworkIdentity,
 };
 
 const KILOBITS_PER_BYTE: f64 = 8.0 / 1_000.0;

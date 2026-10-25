@@ -3,7 +3,7 @@ use bevy::{
     platform::collections::{HashMap, HashSet},
     prelude::*,
 };
-use shared::protocol::{EntitySnapshot, NetworkComponentId, NetworkEntityId};
+use shared::snapshots::{EntitySnapshot, NetworkComponentId, NetworkEntityId};
 use std::collections::VecDeque;
 
 #[derive(Resource, Default)]

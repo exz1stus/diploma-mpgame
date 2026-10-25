@@ -10,7 +10,7 @@ use bevy_renet::{
     renet::{ClientId, DefaultChannel, ServerEvent},
 };
 use shared::server_messages::{ServerMessage, ServerMessages};
-use shared::{protocol::NetworkIdentity, replication::ReplicationRegistry};
+use shared::{replication::ReplicationRegistry, snapshots::NetworkIdentity};
 
 use crate::{config::AppConfig, messages::TickCounter, world::build_world_snapshot};
 
@@ -40,7 +40,7 @@ fn on_client_connected(
     mut server: ResMut<RenetServer>,
     client_id: ClientId,
     tick: u64,
-    world: shared::protocol::WorldSnapshot,
+    world: shared::snapshots::WorldSnapshot,
 ) {
     println!("Client {client_id} connected");
 

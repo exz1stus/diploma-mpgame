@@ -1,4 +1,4 @@
-use std::{collections::VecDeque, time::Instant};
+use std::collections::VecDeque;
 
 use bevy::{
     app::{FixedPostUpdate, FixedPreUpdate, FixedUpdate, PreUpdate},
@@ -11,7 +11,7 @@ use bevy_ecs::{
 };
 use bevy_renet::{
     RenetServer,
-    renet::{ClientId, DefaultChannel},
+    renet::{Bytes, ClientId, DefaultChannel},
 };
 use serde::{Deserialize, Serialize};
 use shared::{
@@ -39,6 +39,7 @@ pub fn configure(app: &mut App, tickrate: u32) {
     app.add_systems(FixedPostUpdate, send_messages.after(queue_changes));
 }
 
+// Message context is used for client messages handler functions
 pub struct MessageContext<'a> {
     pub tick: u64,
     pub outgoing: &'a mut VecDeque<BufferedServerMessage>,
@@ -47,7 +48,7 @@ pub struct MessageContext<'a> {
 impl MessageContext<'_> {
     pub fn reply(&mut self, req: &BufferedClientMessage, payload: ServerMessages) {
         self.outgoing.push_back(BufferedServerMessage {
-            client_id: req.client_id,
+            target: MessageTarget::Client(req.client_id),
             channel: DefaultChannel::ReliableOrdered.into(),
             message: ServerMessage {
                 tick: self.tick,
@@ -59,7 +60,7 @@ impl MessageContext<'_> {
 
     pub fn push_outgoing(&mut self, client_id: ClientId, channel: u8, payload: ServerMessages) {
         self.outgoing.push_back(BufferedServerMessage {
-            client_id,
+            target: MessageTarget::Client(client_id),
             channel,
             message: ServerMessage {
                 tick: self.tick,
@@ -87,8 +88,15 @@ pub struct BufferedClientMessage {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub enum MessageTarget {
+    Client(ClientId),
+    Clients(Vec<ClientId>),
+    Broadcast,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct BufferedServerMessage {
-    pub client_id: ClientId,
+    pub target: MessageTarget,
     pub channel: u8,
     pub message: ServerMessage,
 }
@@ -149,6 +157,18 @@ fn send_messages(mut server: ResMut<RenetServer>, mut buffer: ResMut<MessageBuff
             continue;
         };
 
-        server.send_message(buffered.client_id, buffered.channel, bytes);
+        let bytes = Bytes::from(bytes);
+
+        match buffered.target {
+            MessageTarget::Client(client_id) => {
+                server.send_message(client_id, buffered.channel, bytes);
+            }
+            MessageTarget::Clients(client_ids) => {
+                for id in client_ids {
+                    server.send_message(id, buffered.channel, bytes.clone());
+                }
+            }
+            MessageTarget::Broadcast => server.broadcast_message(buffered.channel, bytes),
+        }
     }
 }

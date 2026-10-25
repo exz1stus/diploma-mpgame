@@ -14,7 +14,7 @@ use bevy::{
 use bevy_renet::RenetClient;
 use shared::client_messages::{ClientMessage, ClientMessages};
 use shared::components::{Health, Position};
-use shared::protocol::{ComponentSnapshot, EntitySnapshot, NetworkComponentId};
+use shared::snapshots::{ComponentSnapshot, EntitySnapshot, NetworkComponentId};
 use shared::replication::ReplicatedComponent;
 use shared::server_messages::{ServerMessage, ServerMessages};
 
@@ -269,7 +269,7 @@ fn finite_or_zero(value: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use shared::protocol::{ComponentSnapshot, EntitySnapshot, WorldSnapshot};
+    use shared::snapshots::{ComponentSnapshot, EntitySnapshot, WorldSnapshot};
 
     #[test]
     fn pairs_packet_rtt_and_prunes_the_window() {

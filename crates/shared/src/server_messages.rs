@@ -1,7 +1,7 @@
 use bevy_renet::renet::ClientId;
 use serde::{Deserialize, Serialize};
 
-use crate::protocol::{EntitySnapshot, NetworkComponentId, NetworkEntityId, WorldSnapshot};
+use crate::snapshots::{EntitySnapshot, NetworkComponentId, NetworkEntityId, WorldSnapshot};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum ServerMessages {

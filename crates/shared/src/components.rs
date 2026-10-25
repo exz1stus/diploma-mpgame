@@ -20,10 +20,9 @@ impl ReplicatedComponent for Health {
     const NETWORK_ID: u16 = 2;
 }
 
-
-#[derive(Component, Serialize, Deserialize, Default)]
+#[derive(Component, Serialize, Deserialize)]
 pub struct Ownership {
-    pub client_id: Option<u64>,
+    pub client_id: u64,
 }
 
 impl ReplicatedComponent for Ownership {

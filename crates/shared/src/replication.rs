@@ -1,18 +1,23 @@
 use bevy::app::FixedPostUpdate;
 use bevy::{app::App, platform::collections::HashMap, prelude::IntoScheduleConfigs};
+use bevy_ecs::lifecycle::RemovedComponents;
 use bevy_ecs::query::Changed;
 use bevy_ecs::schedule::SystemSet;
 use bevy_ecs::system::{Query, ResMut};
 use bevy_ecs::world::EntityRef;
 use bevy_ecs::{
-    change_detection::Mut, component::Component, entity::Entity, resource::Resource, world::World,
+    change_detection::{DetectChanges, Mut, Ref},
+    component::Component,
+    entity::Entity,
+    resource::Resource,
+    world::World,
 };
 use bevy_renet::renet::DefaultChannel;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use crate::protocol::{NetworkComponentId, NetworkEntityId};
 use crate::role::NetworkRole;
+use crate::snapshots::{NetworkComponentId, NetworkEntityId};
 
 pub trait ReplicatedComponent: Component + Serialize + DeserializeOwned {
     const NETWORK_ID: NetworkComponentId;
@@ -30,8 +35,18 @@ pub struct BufferedComponentChanges {
 
 #[derive(Clone)]
 pub enum ComponentChange {
+    Added(Vec<u8>),
     Upsert(Vec<u8>),
     Remove,
+}
+
+impl ComponentChange {
+    pub fn delivery_channel(&self, configured: u8) -> u8 {
+        match self {
+            Self::Added(_) => DefaultChannel::ReliableOrdered.into(),
+            _ => configured,
+        }
+    }
 }
 
 fn apply_component<T>(world: &mut World, entity: Entity, bytes: &[u8])
@@ -106,19 +121,29 @@ pub struct ReplicatedComponentBuilder<'a> {
 }
 
 fn collect_changes<T>(
-    query: Query<(Entity, &T), Changed<T>>,
+    query: Query<(Entity, Ref<T>), Changed<T>>,
+    mut removed: RemovedComponents<T>,
     mut outgoing: ResMut<BufferedComponentChanges>,
 ) where
     T: ReplicatedComponent,
 {
+    for entity in removed.read() {
+        outgoing
+            .changes
+            .insert((entity, T::NETWORK_ID), ComponentChange::Remove);
+    }
+
     for (entity, component) in &query {
-        let Ok(data) = postcard::to_allocvec(component) else {
+        let Ok(data) = postcard::to_allocvec(&*component) else {
             continue;
         };
 
-        outgoing
-            .changes
-            .insert((entity, T::NETWORK_ID), ComponentChange::Upsert(data));
+        let change = if component.is_added() {
+            ComponentChange::Added(data)
+        } else {
+            ComponentChange::Upsert(data)
+        };
+        outgoing.changes.insert((entity, T::NETWORK_ID), change);
     }
 }
 
@@ -192,5 +217,78 @@ impl ReplicatedComponentAppExt for App {
             registry,
             network_id: T::NETWORK_ID,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::components::Position;
+
+    use super::*;
+
+    #[test]
+    fn new_components_are_added_and_later_changes_are_upserts() {
+        let mut world = World::new();
+        world.init_resource::<BufferedComponentChanges>();
+        let entity = world.spawn(Position { x: 1.0, y: 2.0 }).id();
+
+        world
+            .run_system_cached(collect_changes::<Position>)
+            .unwrap();
+        assert!(matches!(
+            world
+                .resource::<BufferedComponentChanges>()
+                .changes
+                .get(&(entity, Position::NETWORK_ID)),
+            Some(ComponentChange::Added(_))
+        ));
+
+        world
+            .resource_mut::<BufferedComponentChanges>()
+            .changes
+            .clear();
+        world.entity_mut(entity).get_mut::<Position>().unwrap().x = 3.0;
+        world
+            .run_system_cached(collect_changes::<Position>)
+            .unwrap();
+        assert!(matches!(
+            world
+                .resource::<BufferedComponentChanges>()
+                .changes
+                .get(&(entity, Position::NETWORK_ID)),
+            Some(ComponentChange::Upsert(_))
+        ));
+
+        world
+            .resource_mut::<BufferedComponentChanges>()
+            .changes
+            .clear();
+        world.entity_mut(entity).remove::<Position>();
+        world.entity_mut(entity).insert(Position { x: 4.0, y: 5.0 });
+        world
+            .run_system_cached(collect_changes::<Position>)
+            .unwrap();
+        assert!(matches!(
+            world
+                .resource::<BufferedComponentChanges>()
+                .changes
+                .get(&(entity, Position::NETWORK_ID)),
+            Some(ComponentChange::Added(_))
+        ));
+    }
+
+    #[test]
+    fn added_components_use_reliable_channel() {
+        let unreliable: u8 = DefaultChannel::Unreliable.into();
+        let reliable: u8 = DefaultChannel::ReliableOrdered.into();
+
+        assert_eq!(
+            ComponentChange::Added(vec![]).delivery_channel(unreliable),
+            reliable
+        );
+        assert_eq!(
+            ComponentChange::Upsert(vec![]).delivery_channel(unreliable),
+            unreliable
+        );
     }
 }

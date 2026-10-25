@@ -1,5 +1,6 @@
 mod client_events;
 mod config;
+mod entity;
 mod handlers;
 mod messages;
 mod replication;
