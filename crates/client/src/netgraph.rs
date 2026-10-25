@@ -4,6 +4,8 @@ use egui_plot::{Legend, Line, Plot, PlotPoint, PlotPoints, PlotResponse, Points}
 
 use crate::client::{NetworkSimulation, Owned};
 use crate::diagnostics::{MAX_WINDOW_SECONDS, MessageContent, MessageEvent, NetworkDiagnostics};
+use crate::rendering::InterpolationDebug;
+use crate::state::RemoteWorld;
 use shared::{
     components::{Health, Position},
     protocol::NetworkIdentity,
@@ -37,7 +39,16 @@ pub fn network_diagnostics_ui(
     mut contexts: EguiContexts,
     mut stats: ResMut<NetworkDiagnostics>,
     mut simulation: ResMut<NetworkSimulation>,
-    entities: Query<(&NetworkIdentity, &Position, Option<&Health>, Option<&Owned>)>,
+    remote_world: Res<RemoteWorld>,
+    interpolation_debug: Query<&InterpolationDebug>,
+    entities: Query<(
+        Entity,
+        &NetworkIdentity,
+        &Position,
+        &Transform,
+        Option<&Health>,
+        Option<&Owned>,
+    )>,
     mut selected_packet: Local<Option<MessageEvent>>,
     mut zoom: Local<TimelineZoom>,
 ) -> Result {
@@ -65,14 +76,30 @@ pub fn network_diagnostics_ui(
         ui.small("Delay changes apply to new messages. RTT starts when a ping is sent and includes incoming Pong delay.");
         ui.collapsing("Replicated entities", |ui| {
             let mut rows: Vec<_> = entities.iter().collect();
-            rows.sort_by_key(|(identity, _, _, _)| identity.id);
-            for (identity, position, health, owned) in rows {
+            rows.sort_by_key(|(_, identity, _, _, _, _)| identity.id);
+            for (_, identity, position, _, health, owned) in rows {
                 let health = health.map_or_else(|| "none".to_owned(), |value| value.0.to_string());
                 let ownership = if owned.is_some() { "owned locally" } else { "remote" };
                 ui.monospace(format!(
                     "#{} | server position ({:.1}, {:.1}) | health {} | {}",
                     identity.id, position.x, position.y, health, ownership,
                 ));
+            }
+        });
+        ui.collapsing("Interpolation", |ui| {
+            ui.small("Latest = last received position. Rendered = circle on screen. The gap is expected while interpolation plays buffered movement.");
+            ui.small("This view is live, including while packet capture is paused.");
+            let mut rows: Vec<_> = entities.iter().collect();
+            rows.sort_by_key(|(_, identity, _, _, _, _)| identity.id);
+            for (entity, identity, position, transform, _, owned) in rows {
+                ui.push_id(identity.id, |ui| {
+                    show_circle_interpolation(ui, identity, position, transform, owned, &remote_world);
+                    if owned.is_none() {
+                        if let Ok(debug) = interpolation_debug.get(entity) {
+                            show_interpolation_inspector(ui, debug);
+                        }
+                    }
+                });
             }
         });
         ui.horizontal(|ui| {
@@ -99,6 +126,94 @@ pub fn network_diagnostics_ui(
     });
     show_packet_inspector(context, &stats, &mut selected_packet);
     Ok(())
+}
+
+fn show_circle_interpolation(
+    ui: &mut egui::Ui,
+    identity: &NetworkIdentity,
+    position: &Position,
+    transform: &Transform,
+    owned: Option<&Owned>,
+    remote_world: &RemoteWorld,
+) {
+    ui.separator();
+    ui.label(format!("Circle #{}", identity.id));
+
+    if owned.is_some() {
+        ui.small("Locally owned: interpolation bypassed.");
+        return;
+    }
+
+    let latest = Vec2::new(position.x, position.y);
+    let rendered = transform.translation.truncate();
+    ui.monospace(format!(
+        "Latest:   ({:.2}, {:.2})\nRendered: ({:.2}, {:.2})\nGap:      {:.2} world units",
+        latest.x,
+        latest.y,
+        rendered.x,
+        rendered.y,
+        latest.distance(rendered),
+    ));
+
+    let Some(samples) = remote_world.positions.get(&identity.id) else {
+        ui.small("No interpolation samples buffered.");
+        return;
+    };
+
+    ui.label(format!("Buffered samples: {}", samples.len()));
+    if let (Some(first), Some(last)) = (samples.front(), samples.back()) {
+        ui.monospace(format!("Buffered ticks: {} → {}", first.tick, last.tick));
+    }
+
+    let path: PlotPoints = samples
+        .iter()
+        .map(|sample| [sample.x as f64, sample.y as f64])
+        .collect();
+
+    Plot::new(("circle_interpolation", identity.id))
+        .height(180.0)
+        .data_aspect(1.0)
+        .x_axis_label("World X")
+        .y_axis_label("World Y")
+        .legend(Legend::default())
+        .show(ui, |plot_ui| {
+            plot_ui.line(Line::new("Buffered path", path).color(egui::Color32::GRAY));
+            plot_ui.points(
+                Points::new("Latest received", vec![[latest.x as f64, latest.y as f64]])
+                    .color(egui::Color32::from_rgb(255, 170, 60))
+                    .radius(7.0),
+            );
+            plot_ui.points(
+                Points::new("Rendered", vec![[rendered.x as f64, rendered.y as f64]])
+                    .color(egui::Color32::from_rgb(80, 200, 255))
+                    .radius(5.0),
+            );
+        });
+}
+
+fn show_interpolation_inspector(ui: &mut egui::Ui, debug: &InterpolationDebug) {
+    ui.collapsing("Sample inspector", |ui| {
+        ui.monospace(format!("Display tick: {:.3}", debug.display_tick));
+        let Some(sample) = debug.sample else {
+            ui.label("No interpolation used on the last rendered frame.");
+            return;
+        };
+        ui.label(sample.status);
+        ui.monospace(format!(
+            "From tick {}: ({:.2}, {:.2})\nTo tick   {}: ({:.2}, {:.2})",
+            sample.from.tick, sample.from.x, sample.from.y,
+            sample.to.tick, sample.to.x, sample.to.y,
+        ));
+        if sample.from.tick != sample.to.tick {
+            ui.add(egui::ProgressBar::new(sample.fraction).text(format!(
+                "Blend: {:.3} ({:.1}%)", sample.fraction, sample.fraction * 100.0,
+            )));
+        } else {
+            ui.small("One sample held; no blend between two samples.");
+        }
+        ui.monospace(format!("Result: ({:.2}, {:.2})", sample.position.x, sample.position.y));
+        ui.small("Captured from rendering. Ticks identify position samples, not packet sequence numbers.");
+    });
 }
 
 fn graph_now(stats: &NetworkDiagnostics) -> f64 {

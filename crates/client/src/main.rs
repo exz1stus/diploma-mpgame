@@ -7,6 +7,7 @@ mod network;
 mod rendering;
 mod replication;
 mod state;
+mod replication_handlers;
 
 use bevy::{
     DefaultPlugins,

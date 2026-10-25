@@ -1,3 +1,5 @@
+use crate::replication_handlers::{handle_component_remove, handle_entity_despawn, handle_entity_spawn, handle_entity_update, handle_initial_state};
+
 use super::{
     interpolation::PositionSample,
     state::{ClientState, Owned, RemoteWorld, ReplicatedEntity},
@@ -23,109 +25,28 @@ pub fn process_server_message(
 
     match message.payload {
         ServerMessages::InitiateClientState { client_id, world } => {
-            if world.tickrate == 0 {
-                return;
-            }
-            for (_, replica) in remote_world.entities.drain() {
-                commands.entity(replica.entity).despawn();
-            }
-            remote_world.positions.clear();
-            remote_world.despawned.clear();
-            remote_world
-                .pending_updates
-                .retain(|(update_tick, _)| *update_tick > tick);
-
-            client_state.id = client_id;
-            client_state.sequence = 0;
-            client_state.last_tick = tick;
-            client_state.initiated = true;
-            client_state.clock.reset(tick, world.tickrate, now);
-
-            for snapshot in world.entities {
-                spawn_remote_entity(
-                    snapshot,
-                    tick,
-                    commands,
-                    client_state,
-                    remote_world,
-                    registry,
-                );
-            }
+         handle_initial_state(client_id,world,tick,commands,client_state,remote_world,registry,now);
         }
         ServerMessages::EntitySpawn(snapshot) => {
-            if client_state.initiated {
-                spawn_remote_entity(
-                    snapshot,
-                    tick,
-                    commands,
-                    client_state,
-                    remote_world,
-                    registry,
-                );
-            }
+            handle_entity_spawn(snapshot,tick,commands,client_state,remote_world,registry);
         }
         ServerMessages::EntityUpdate(snapshot) => {
-            if remote_world.entities.contains_key(&snapshot.id) {
-                apply_components(
-                    snapshot,
-                    tick,
-                    commands,
-                    client_state,
-                    remote_world,
-                    registry,
-                );
-            } else if !remote_world.despawned.contains(&snapshot.id) {
-                // Bound memory if an update's reliable spawn never arrives.
-                if remote_world.pending_updates.len() == 256 {
-                    remote_world.pending_updates.pop_front();
-                }
-                remote_world.pending_updates.push_back((tick, snapshot));
-            }
+            handle_entity_update(snapshot,tick,commands,client_state,remote_world,registry);
         }
         ServerMessages::EntityDespawn(id) => {
-            if let Some(replica) = remote_world.entities.remove(&id) {
-                commands.entity(replica.entity).despawn();
-            }
-            remote_world.positions.remove(&id);
-            remote_world
-                .pending_updates
-                .retain(|(_, snapshot)| snapshot.id != id);
-            remote_world.despawned.insert(id);
+           handle_entity_despawn(id,commands,remote_world);
         }
         ServerMessages::ComponentRemove {
             entity_id,
             component_id,
         } => {
-            let Some(replica) = remote_world.entities.get_mut(&entity_id) else {
-                return;
-            };
-            let Some(registered) = registry.components.get(&component_id) else {
-                return;
-            };
-            if replica
-                .last_ticks
-                .get(&component_id)
-                .is_some_and(|last| tick < *last)
-            {
-                return;
-            }
-            replica.last_ticks.insert(component_id, tick);
-            if component_id == Position::NETWORK_ID {
-                remote_world.positions.remove(&entity_id);
-            }
-            if component_id == Ownership::NETWORK_ID {
-                replica.owned = false;
-                commands.entity(replica.entity).remove::<Owned>();
-            }
-            let entity = replica.entity;
-            let remove = registered.remove;
-            commands.queue(move |world: &mut World| remove(world, entity));
+           handle_component_remove(entity_id,component_id,tick,commands,remote_world,registry);
         }
         ServerMessages::Pong(_) => {}
     }
 }
 
-fn spawn_remote_entity(
+pub fn spawn_remote_entity(
     snapshot: EntitySnapshot,
     tick: u64,
     commands: &mut Commands,
@@ -184,7 +105,7 @@ fn spawn_remote_entity(
     }
 }
 
-fn apply_components(
+pub fn apply_components(
     snapshot: EntitySnapshot,
     tick: u64,
     commands: &mut Commands,

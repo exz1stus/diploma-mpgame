@@ -1,6 +1,7 @@
 use bevy::prelude::Vec2;
 use std::collections::VecDeque;
 
+#[derive(Clone, Copy, Debug)]
 pub struct PositionSample {
     pub tick: u64,
     pub x: f32,
@@ -48,24 +49,88 @@ impl InterpolationClock {
     }
 }
 
-pub fn position_at_tick(samples: &VecDeque<PositionSample>, display_tick: f64) -> Option<Vec2> {
-    let first = samples.front()?;
+#[derive(Clone, Copy, Debug)]
+pub struct InterpolationSample {
+    pub from: PositionSample,
+    pub to: PositionSample,
+    pub fraction: f32,
+    pub position: Vec2,
+    pub status: &'static str,
+}
+
+pub fn sample_at_tick(
+    samples: &VecDeque<PositionSample>,
+    display_tick: f64,
+) -> Option<InterpolationSample> {
+    let first = *samples.front()?;
+    let held = |sample: PositionSample, status| InterpolationSample {
+        from: sample,
+        to: sample,
+        fraction: 0.0,
+        position: Vec2::new(sample.x, sample.y),
+        status,
+    };
 
     if display_tick <= first.tick as f64 {
-        return Some(Vec2::new(first.x, first.y));
+        return Some(held(first, "Holding oldest sample"));
     }
 
     for (a, b) in samples.iter().zip(samples.iter().skip(1)) {
         if display_tick <= b.tick as f64 {
             let fraction =
                 ((display_tick - a.tick as f64) / (b.tick - a.tick) as f64).clamp(0.0, 1.0) as f32;
-
             let start = Vec2::new(a.x, a.y);
             let end = Vec2::new(b.x, b.y);
-            return Some(start.lerp(end, fraction));
+            return Some(InterpolationSample {
+                from: *a,
+                to: *b,
+                fraction,
+                position: start.lerp(end, fraction),
+                status: "Interpolating",
+            });
         }
     }
 
-    let last = samples.back()?;
-    Some(Vec2::new(last.x, last.y))
+    Some(held(
+        *samples.back()?,
+        "Holding newest sample (no future sample)",
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reports_blend_and_buffer_edges() {
+        let samples = VecDeque::from([
+            PositionSample {
+                tick: 10,
+                x: 0.0,
+                y: 10.0,
+            },
+            PositionSample {
+                tick: 14,
+                x: 8.0,
+                y: 2.0,
+            },
+        ]);
+        let blend = sample_at_tick(&samples, 11.0).unwrap();
+        assert_eq!((blend.from.tick, blend.to.tick), (10, 14));
+        assert_eq!(blend.fraction, 0.25);
+        assert_eq!(blend.position, Vec2::new(2.0, 8.0));
+        let before = sample_at_tick(&samples, 9.0).unwrap();
+        assert_eq!((before.from.tick, before.to.tick), (10, 10));
+        assert_eq!(before.position, Vec2::new(0.0, 10.0));
+        let after = sample_at_tick(&samples, 15.0).unwrap();
+        assert_eq!((after.from.tick, after.to.tick), (14, 14));
+        assert_eq!(after.position, Vec2::new(8.0, 2.0));
+        assert!(sample_at_tick(&VecDeque::new(), 11.0).is_none());
+        assert_eq!(
+            sample_at_tick(&VecDeque::from([samples[0]]), 11.0)
+                .unwrap()
+                .position,
+            before.position
+        );
+    }
 }

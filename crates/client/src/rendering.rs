@@ -1,5 +1,5 @@
 use super::{
-    interpolation::position_at_tick,
+    interpolation::{InterpolationSample, sample_at_tick},
     state::{ClientState, Owned, RemoteWorld},
 };
 use bevy::prelude::*;
@@ -8,6 +8,12 @@ use shared::{
     protocol::NetworkIdentity,
     replication::{ReplicatedComponent, ReplicationRegistry},
 };
+
+#[derive(Component, Default)]
+pub struct InterpolationDebug {
+    pub display_tick: f64,
+    pub sample: Option<InterpolationSample>,
+}
 
 #[derive(Resource)]
 pub struct CircleAssets {
@@ -40,9 +46,11 @@ pub fn add_circle_visuals(
             assets.orange.clone()
         };
 
-        commands
-            .entity(entity)
-            .insert((Mesh2d(assets.mesh.clone()), MeshMaterial2d(material)));
+        commands.entity(entity).insert((
+            Mesh2d(assets.mesh.clone()),
+            MeshMaterial2d(material),
+            InterpolationDebug::default(),
+        ));
     }
 }
 
@@ -51,7 +59,13 @@ pub fn render_remote_circles(
     mut client_state: ResMut<ClientState>,
     registry: Res<ReplicationRegistry>,
     time: Res<Time<Real>>,
-    mut circles: Query<(&NetworkIdentity, &Position, Option<&Owned>, &mut Transform)>,
+    mut circles: Query<(
+        &NetworkIdentity,
+        &Position,
+        Option<&Owned>,
+        &mut Transform,
+        &mut InterpolationDebug,
+    )>,
 ) {
     if !client_state.initiated {
         return;
@@ -62,15 +76,18 @@ pub fn render_remote_circles(
         .get(&Position::NETWORK_ID)
         .is_some_and(|component| component.interpolated);
 
-    for (identity, authoritative, owned, mut transform) in &mut circles {
+    for (identity, authoritative, owned, mut transform, mut debug) in &mut circles {
+        debug.display_tick = display_tick;
+        debug.sample = None;
         let mut position = Vec2::new(authoritative.x, authoritative.y);
         if interpolate && owned.is_none() {
             if let Some(sampled) = remote_world
                 .positions
                 .get(&identity.id)
-                .and_then(|samples| position_at_tick(samples, display_tick))
+                .and_then(|samples| sample_at_tick(samples, display_tick))
             {
-                position = sampled;
+                position = sampled.position;
+                debug.sample = Some(sampled);
             }
         }
         transform.translation.x = position.x;
