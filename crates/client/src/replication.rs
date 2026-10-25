@@ -23,7 +23,7 @@ pub fn process_server_message(
 
     match message.payload {
         ServerMessages::InitiateClientState { client_id, world } => {
-            if world.tick_rate == 0 {
+            if world.tickrate == 0 {
                 return;
             }
             for (_, replica) in remote_world.entities.drain() {
@@ -33,18 +33,18 @@ pub fn process_server_message(
             remote_world.despawned.clear();
             remote_world
                 .pending_updates
-                .retain(|(tick, _)| *tick > world.tick);
+                .retain(|(update_tick, _)| *update_tick > tick);
 
             client_state.id = client_id;
             client_state.sequence = 0;
-            client_state.last_tick = world.tick;
+            client_state.last_tick = tick;
             client_state.initiated = true;
-            client_state.clock.reset(world.tick, world.tick_rate, now);
+            client_state.clock.reset(tick, world.tickrate, now);
 
             for snapshot in world.entities {
                 spawn_remote_entity(
                     snapshot,
-                    world.tick,
+                    tick,
                     commands,
                     client_state,
                     remote_world,
@@ -121,7 +121,7 @@ pub fn process_server_message(
             let remove = registered.remove;
             commands.queue(move |world: &mut World| remove(world, entity));
         }
-        ServerMessages::Pong(_) => {} 
+        ServerMessages::Pong(_) => {}
     }
 }
 

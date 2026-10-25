@@ -31,6 +31,6 @@ fn main() {
 
     let config = AppConfig::new();
 
-    let mut server = GameServer::new(app, &config);
+    let mut server = GameServer::new(app, config);
     server.run();
 }

@@ -11,7 +11,7 @@ use bevy_renet::renet::DefaultChannel;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use crate::protocol::NetworkComponentId;
+use crate::protocol::{NetworkComponentId, NetworkEntityId};
 use crate::role::NetworkRole;
 
 pub trait ReplicatedComponent: Component + Serialize + DeserializeOwned {
@@ -91,16 +91,6 @@ impl NetworkEntityMap {
     pub fn remove(&mut self, entity: Entity) {
         if let Some(net_id) = self.local_to_network.remove(&entity) {
             self.network_to_local.remove(&net_id);
-        }
-    }
-}
-
-impl RegisteredComponent {
-    pub fn channel_id(&self) -> u8 {
-        match self.delivery {
-            DefaultChannel::Unreliable => DefaultChannel::Unreliable.into(),
-            DefaultChannel::ReliableOrdered => DefaultChannel::ReliableOrdered.into(),
-            DefaultChannel::ReliableUnordered => DefaultChannel::ReliableUnordered.into(),
         }
     }
 }

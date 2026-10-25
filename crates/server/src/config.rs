@@ -1,5 +1,8 @@
 use std::net::SocketAddr;
 
+use bevy_ecs::resource::Resource;
+
+#[derive(Resource)]
 pub struct AppConfig {
     pub protocol_id: u64,
     pub server_addr: SocketAddr,

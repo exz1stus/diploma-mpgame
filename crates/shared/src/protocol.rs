@@ -11,7 +11,7 @@ pub type NetworkComponentId = u16;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct WorldSnapshot {
-    pub tick_rate: u32,
+    pub tickrate: u32,
     pub entities: Vec<EntitySnapshot>,
 }
 

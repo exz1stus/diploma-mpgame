@@ -1,10 +1,17 @@
-use bevy_ecs::{query::With, system::Query, world::EntityRef};
+use bevy_ecs::{
+    query::With,
+    system::{Query, Res},
+    world::EntityRef,
+};
 use shared::{
     protocol::{ComponentSnapshot, EntitySnapshot, NetworkIdentity, WorldSnapshot},
     replication::ReplicationRegistry,
 };
 
+use crate::config::AppConfig;
+
 pub fn build_world_snapshot(
+    tickrate: u32,
     entities: &Query<EntityRef, With<NetworkIdentity>>,
     registry: &ReplicationRegistry,
 ) -> WorldSnapshot {
@@ -28,6 +35,7 @@ pub fn build_world_snapshot(
     }
 
     WorldSnapshot {
+        tickrate,
         entities: snapshots,
     }
 }

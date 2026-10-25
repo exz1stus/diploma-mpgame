@@ -18,7 +18,7 @@ pub struct GameServer {
 }
 
 impl GameServer {
-    pub fn new(mut app: App, config: &AppConfig) -> Self {
+    pub fn new(mut app: App, config: AppConfig) -> Self {
         let socket = UdpSocket::bind(config.server_addr).unwrap();
         let server_config = ServerConfig {
             protocol_id: config.protocol_id,
@@ -30,13 +30,16 @@ impl GameServer {
         let transport = NetcodeServerTransport::new(server_config, socket).unwrap();
         let server = RenetServer::new(ConnectionConfig::default());
 
+        let tickrate = config.tickrate;
+
         app.insert_resource(server);
         app.insert_resource(transport);
+        app.insert_resource(config);
 
         app.init_resource::<BufferedComponentChanges>();
         app.init_resource::<NetworkEntityMap>();
 
-        messages::configure(&mut app, config.tickrate);
+        messages::configure(&mut app, tickrate);
         replication::configure(&mut app);
         client_events::configure(&mut app);
 

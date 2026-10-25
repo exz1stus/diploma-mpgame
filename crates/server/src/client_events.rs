@@ -12,7 +12,7 @@ use bevy_renet::{
 use shared::server_messages::{ServerMessage, ServerMessages};
 use shared::{protocol::NetworkIdentity, replication::ReplicationRegistry};
 
-use crate::{messages::TickCounter, world::build_world_snapshot};
+use crate::{config::AppConfig, messages::TickCounter, world::build_world_snapshot};
 
 pub fn configure(app: &mut App) {
     app.add_observer(on_client_event);
@@ -21,12 +21,13 @@ pub fn configure(app: &mut App) {
 fn on_client_event(
     event: On<RenetServerEvent>,
     tick_counter: Res<TickCounter>,
+    config: Res<AppConfig>,
     mut params: ParamSet<(ResMut<RenetServer>, Query<EntityRef, With<NetworkIdentity>>)>,
     registry: Res<ReplicationRegistry>,
 ) {
     match **event {
         ServerEvent::ClientConnected { client_id } => {
-            let world = build_world_snapshot(&params.p1(), &registry);
+            let world = build_world_snapshot(config.tickrate, &params.p1(), &registry);
             on_client_connected(params.p0(), client_id, tick_counter.0, world)
         }
         ServerEvent::ClientDisconnected { client_id, reason } => {

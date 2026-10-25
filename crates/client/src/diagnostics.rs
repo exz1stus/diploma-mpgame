@@ -79,8 +79,8 @@ impl MessageEvent {
                 ServerMessages::InitiateClientState {
                     client_id, world, ..
                 } => format!(
-                    "client id: {}\ninitial tick: {}\nserver tick: {}\ntick rate: {}",
-                    client_id, world.tick, message.tick, world.tick_rate
+                    "client id: {}\n server tick: {}\ntick rate: {}",
+                    client_id, message.tick, world.tickrate
                 ),
                 ServerMessages::EntitySpawn(entity) => format!(
                     "entity id: {}\ncomponents: {}",

@@ -15,14 +15,13 @@ pub struct ClientState {
     pub clock: InterpolationClock,
 }
 
-
 #[derive(Component)]
 pub struct Owned;
 
 pub struct ReplicatedEntity {
     pub entity: Entity,
     pub owned: bool,
-    pub  last_ticks: HashMap<NetworkComponentId, u64>,
+    pub last_ticks: HashMap<NetworkComponentId, u64>,
 }
 
 #[derive(Resource, Default)]
