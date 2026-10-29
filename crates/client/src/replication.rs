@@ -75,6 +75,9 @@ pub fn process_server_message(
                 registry,
             );
         }
+        ServerMessages::MovementCorrection(_) => {
+            todo!();
+        }
         ServerMessages::Pong(_) => {}
     }
     false

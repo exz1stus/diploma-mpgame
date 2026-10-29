@@ -8,6 +8,7 @@ mod rendering;
 mod replication;
 mod state;
 mod replication_handlers;
+mod prediction;
 
 use bevy::{
     DefaultPlugins,

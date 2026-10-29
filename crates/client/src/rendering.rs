@@ -1,8 +1,11 @@
+use crate::prediction::Prediction;
+
 use super::{
     interpolation::{InterpolationSample, sample_at_tick},
     state::{ClientState, Owned, RemoteWorld},
 };
 use bevy::prelude::*;
+use postcard::fixint::le;
 use shared::{
     components::Position,
     replication::{ReplicatedComponent, ReplicationRegistry},
@@ -53,6 +56,7 @@ pub fn render_remote_circles(
         &NetworkIdentity,
         &Position,
         Option<&Owned>,
+        Option<&Prediction>,
         &mut Transform,
         &mut InterpolationDebug,
     )>,
@@ -66,7 +70,7 @@ pub fn render_remote_circles(
         .get(&Position::NETWORK_ID)
         .is_some_and(|component| component.interpolated);
 
-    for (identity, authoritative, owned, mut transform, mut debug) in &mut circles {
+    for (identity, authoritative, owned, prediction, mut transform, mut debug) in &mut circles {
         debug.display_tick = display_tick;
         debug.sample = None;
         let mut position = Vec2::new(authoritative.x, authoritative.y);
@@ -78,6 +82,11 @@ pub fn render_remote_circles(
             {
                 position = sampled.position;
                 debug.sample = Some(sampled);
+            }
+        }
+        if owned.is_some() {
+            if let Some(prediction) = prediction {
+                position = Vec2::new(prediction.state.x, prediction.state.y)
             }
         }
         transform.translation.x = position.x;
