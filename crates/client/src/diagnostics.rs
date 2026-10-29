@@ -54,6 +54,7 @@ impl MessageEvent {
             MessageContent::Sent(message) => match message.payload {
                 ClientMessages::Ping { .. } => "Ping",
                 ClientMessages::Initiated => "Initiated",
+                ClientMessages::MovementInputs(_) => "Movement inputs",
             },
             MessageContent::Received(message) => match message.payload {
                 ServerMessages::Pong(_) => "Pong",
@@ -62,6 +63,7 @@ impl MessageEvent {
                 ServerMessages::EntityUpdate(_) => "Entity update",
                 ServerMessages::EntityDespawn(_) => "Entity despawn",
                 ServerMessages::ComponentRemove { .. } => "Component remove",
+                ServerMessages::MovementCorrection(_) => "Movement correction",
             },
         }
     }
@@ -71,6 +73,9 @@ impl MessageEvent {
             MessageContent::Sent(message) => match &message.payload {
                 ClientMessages::Ping { text } => format!("text: {text}"),
                 ClientMessages::Initiated => "Initial state acknowledged".into(),
+                ClientMessages::MovementInputs(batch) => {
+                    format!("{:?}", batch.inputs)
+                }
             },
             MessageContent::Received(message) => match &message.payload {
                 ServerMessages::Pong(text) => {
@@ -98,6 +103,10 @@ impl MessageEvent {
                     component_id,
                 } => {
                     format!("entity id: {entity_id}\nremoved component: {component_id}")
+                }
+
+                ServerMessages::MovementCorrection(correction) => {
+                    format!("{correction:?}")
                 }
             },
         }

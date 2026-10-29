@@ -31,3 +31,4 @@ pub struct RemoteWorld {
     pub pending_updates: VecDeque<(u64, EntitySnapshot)>,
     pub despawned: HashSet<NetworkEntityId>,
 }
+

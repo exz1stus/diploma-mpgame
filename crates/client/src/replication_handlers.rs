@@ -2,7 +2,8 @@ use crate::{
     replication::{apply_components, spawn_remote_entity},
     state::{ClientState, Owned, RemoteWorld},
 };
-use bevy::ecs::{system::Commands, world::World};
+use bevy::{ecs::{system::Commands, world::World}, time::{Fixed, Time}};
+
 use bevy_renet::renet::ClientId;
 use shared::{
     components::{Ownership, Position},
@@ -23,6 +24,9 @@ pub fn handle_initial_state(
     if world.tickrate == 0 {
         return false;
     }
+     commands.insert_resource(
+        Time::<Fixed>::from_hz(world.tickrate as f64),
+    );
     for (_, replica) in remote_world.entities.drain() {
         commands.entity(replica.entity).despawn();
     }

@@ -1,4 +1,5 @@
 pub use crate::network::NetworkSimulation;
+use crate::prediction::{initialize_prediction, predict_movement};
 pub(crate) use crate::state::Owned;
 
 use crate::network::{
@@ -57,6 +58,7 @@ impl GameClient {
             (
                 collect_incoming,
                 release_incoming,
+                initialize_prediction,
                 add_circle_visuals,
                 render_remote_circles,
                 send_messages,
@@ -67,7 +69,7 @@ impl GameClient {
         );
 
         app.add_systems(Update, reset_disconnected_client);
-
+        app.add_systems(FixedUpdate, predict_movement.run_if(client_connected));
         app.add_systems(PostUpdate, sample_network.after(RenetSend));
 
         Self { app }
