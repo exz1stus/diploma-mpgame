@@ -90,7 +90,7 @@ fn on_client_connected(
     world: shared::snapshots::WorldSnapshot,
 ) {
     let initiation_message = ServerMessage {
-        sequence: 0,
+        sequence: None,
         tick,
         payload: ServerMessages::InitiateClientState { client_id, world },
     };

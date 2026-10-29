@@ -79,7 +79,7 @@ fn on_network_identity_inserted(
         target: MessageTarget::Broadcast,
         channel: ReliableOrdered.into(),
         message: ServerMessage {
-            sequence: 0,
+            sequence: None,
             tick: tick_counter.0,
             payload: ServerMessages::EntitySpawn(snapshot),
         },
@@ -106,7 +106,7 @@ fn on_network_identity_removed(
         target: MessageTarget::Broadcast,
         channel: ReliableOrdered.into(),
         message: ServerMessage {
-            sequence: 0,
+            sequence: None,
             tick: tick_counter.0,
             payload: ServerMessages::EntityDespawn(network_id),
         },

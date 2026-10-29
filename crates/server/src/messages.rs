@@ -53,7 +53,7 @@ impl MessageContext<'_> {
             channel: DefaultChannel::ReliableOrdered.into(),
             message: ServerMessage {
                 tick: self.tick,
-                sequence: req.message.sequence,
+                sequence: Some(req.message.sequence),
                 payload,
             },
         });
@@ -70,7 +70,7 @@ impl MessageContext<'_> {
             channel,
             message: ServerMessage {
                 tick: self.tick,
-                sequence: 0,
+                sequence: None,
                 payload,
             },
         });

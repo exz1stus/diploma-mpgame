@@ -233,7 +233,7 @@ mod tests {
             simulation.incoming.push_back(QueuedIncoming {
                 release_at_s: 0.0,
                 message: ServerMessage {
-                    sequence: 0,
+                    sequence: None,
                     tick: 7,
                     payload: ServerMessages::InitiateClientState {
                         client_id: 42,

@@ -14,9 +14,9 @@ use bevy::{
 use bevy_renet::RenetClient;
 use shared::client_messages::{ClientMessage, ClientMessages};
 use shared::components::{Health, Position};
-use shared::snapshots::{ComponentSnapshot, EntitySnapshot, NetworkComponentId};
 use shared::replication::ReplicatedComponent;
 use shared::server_messages::{ServerMessage, ServerMessages};
+use shared::snapshots::{ComponentSnapshot, EntitySnapshot, NetworkComponentId};
 
 pub const MAX_WINDOW_SECONDS: f64 = 60.0;
 
@@ -42,9 +42,9 @@ impl MessageEvent {
         }
     }
 
-    pub fn sequence(&self) -> u64 {
+    pub fn sequence(&self) -> Option<u64> {
         match &self.content {
-            MessageContent::Sent(message) => message.sequence,
+            MessageContent::Sent(message) => Some(message.sequence),
             MessageContent::Received(message) => message.sequence,
         }
     }
@@ -193,18 +193,21 @@ impl NetworkDiagnostics {
             return;
         }
         let rtt_ms = if matches!(message.payload, ServerMessages::Pong(_)) {
-            self.sent_at.remove(&message.sequence).map(|sent| {
-                let rtt_ms = sent.at.elapsed().as_secs_f64() * 1_000.0;
-                self.ping_ms = rtt_ms.round() as u64;
-                if let Some(event) = self
-                    .message_events
-                    .iter_mut()
-                    .find(|event| event.id == sent.event_id)
-                {
-                    event.rtt_ms = Some(rtt_ms);
-                }
-                rtt_ms
-            })
+            message
+                .sequence
+                .and_then(|sequence| self.sent_at.remove(&sequence))
+                .map(|sent| {
+                    let rtt_ms = sent.at.elapsed().as_secs_f64() * 1_000.0;
+                    self.ping_ms = rtt_ms.round() as u64;
+                    if let Some(event) = self
+                        .message_events
+                        .iter_mut()
+                        .find(|event| event.id == sent.event_id)
+                    {
+                        event.rtt_ms = Some(rtt_ms);
+                    }
+                    rtt_ms
+                })
         } else {
             None
         };
@@ -285,7 +288,7 @@ mod tests {
         );
         stats.add_received(
             ServerMessage {
-                sequence: 7,
+                sequence: Some(7),
                 tick: 3,
                 payload: ServerMessages::Pong("world".into()),
             },
@@ -296,14 +299,14 @@ mod tests {
         let received = &stats.message_events[1];
         assert_eq!(sent.direction(), "Sent");
         assert_eq!(received.direction(), "Received");
-        assert_eq!(received.sequence(), 7);
+        assert_eq!(received.sequence(), Some(7));
         assert_eq!(received.decoded_payload(), "text: world\nserver tick: 3");
         assert!(sent.rtt_ms.is_some());
         assert_eq!(sent.rtt_ms, received.rtt_ms);
 
         stats.prune_old_events(61.05);
         assert_eq!(stats.message_events.len(), 1);
-        assert_eq!(stats.message_events[0].sequence(), 7);
+        assert_eq!(stats.message_events[0].sequence(), Some(7));
     }
 
     #[test]
@@ -326,14 +329,14 @@ mod tests {
         );
         stats.add_received(
             ServerMessage {
-                sequence: 2,
+                sequence: Some(2),
                 tick: 1,
                 payload: ServerMessages::Pong("paused".into()),
             },
             2.1,
         );
         assert_eq!(stats.message_events.len(), 1);
-        assert_eq!(stats.message_events[0].sequence(), 1);
+        assert_eq!(stats.message_events[0].sequence(), Some(1));
 
         stats.capture_paused = false;
         stats.add_sent(
@@ -344,6 +347,6 @@ mod tests {
             3.0,
         );
         assert_eq!(stats.message_events.len(), 2);
-        assert_eq!(stats.message_events[1].sequence(), 3);
+        assert_eq!(stats.message_events[1].sequence(), Some(3));
     }
 }

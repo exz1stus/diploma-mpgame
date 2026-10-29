@@ -424,7 +424,7 @@ mod tests {
                 time_s: 9.1,
                 rtt_ms: None,
                 content: MessageContent::Received(ServerMessage {
-                    sequence: 1,
+                    sequence: Some(1),
                     tick: 1,
                     payload: ServerMessages::Pong("pong".into()),
                 }),
@@ -475,10 +475,12 @@ fn show_packet_list(
         .show_rows(ui, row_height, row_count, |ui, rows| {
             for event in visible_events().skip(rows.start).take(rows.len()) {
                 let label = format!(
-                    "{:>7.3} s  {:<8}  #{:<7}  {:<14}  {}",
+                    "{:>7.3} s  {:<8}  {:<8}  {:<14}  {}",
                     event.time_s,
                     event.direction(),
-                    event.sequence(),
+                    event
+                        .sequence()
+                        .map_or_else(|| "-".to_string(), |sequence| format!("#{sequence}")),
                     event.payload_type(),
                     rtt_label(event)
                 );
@@ -523,7 +525,11 @@ fn show_packet_inspector(
                 ui.end_row();
 
                 ui.label("Sequence");
-                ui.label(packet.sequence().to_string());
+                ui.label(
+                    packet
+                        .sequence()
+                        .map_or_else(|| "-".to_string(), |sequence| sequence.to_string()),
+                );
                 ui.end_row();
 
                 ui.label("Time");

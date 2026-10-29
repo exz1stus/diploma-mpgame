@@ -24,7 +24,7 @@ pub enum ServerMessages {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ServerMessage {
-    pub sequence: u64,
+    pub sequence: Option<u64>,
     pub tick: u64,
     pub payload: ServerMessages,
 }
