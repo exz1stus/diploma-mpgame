@@ -2,11 +2,14 @@ use crate::{
     replication::{apply_components, spawn_remote_entity},
     state::{ClientState, Owned, RemoteWorld},
 };
-use bevy::{ecs::{system::Commands, world::World}, time::{Fixed, Time}};
+use bevy::{
+    ecs::{system::Commands, world::World},
+    time::{Fixed, Time},
+};
 
 use bevy_renet::renet::ClientId;
 use shared::{
-    components::{Ownership, Position},
+    components::{NetworkPhysicsState, Ownership},
     replication::{ReplicatedComponent, ReplicationRegistry},
     snapshots::{EntitySnapshot, NetworkComponentId, NetworkEntityId, WorldSnapshot},
 };
@@ -24,9 +27,7 @@ pub fn handle_initial_state(
     if world.tickrate == 0 {
         return false;
     }
-     commands.insert_resource(
-        Time::<Fixed>::from_hz(world.tickrate as f64),
-    );
+    commands.insert_resource(Time::<Fixed>::from_hz(world.tickrate as f64));
     for (_, replica) in remote_world.entities.drain() {
         commands.entity(replica.entity).despawn();
     }
@@ -147,7 +148,7 @@ pub fn handle_component_remove(
 
     replica.last_ticks.insert(component_id, tick);
 
-    if component_id == Position::NETWORK_ID {
+    if component_id == NetworkPhysicsState::NETWORK_ID {
         remote_world.positions.remove(&entity_id);
     }
 

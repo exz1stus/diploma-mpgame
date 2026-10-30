@@ -1,13 +1,11 @@
-use crate::prediction::Prediction;
-
 use super::{
     interpolation::{InterpolationSample, sample_at_tick},
     state::{ClientState, Owned, RemoteWorld},
 };
+use crate::prediction::{Prediction, PredictionSettings};
 use bevy::prelude::*;
-use postcard::fixint::le;
 use shared::{
-    components::Position,
+    components::{NetworkPhysicsState, Player},
     replication::{ReplicatedComponent, ReplicationRegistry},
     snapshots::NetworkIdentity,
 };
@@ -31,7 +29,7 @@ pub fn setup_circle_assets(mut commands: Commands, mut meshes: ResMut<Assets<Mes
 
 pub fn add_circle_visuals(
     mut commands: Commands,
-    new_entities: Query<(Entity, &NetworkIdentity), Added<NetworkIdentity>>,
+    new_entities: Query<(Entity, &NetworkIdentity), Added<Player>>,
     assets: Res<CircleAssets>,
     mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
@@ -51,10 +49,11 @@ pub fn render_remote_circles(
     remote_world: Res<RemoteWorld>,
     mut client_state: ResMut<ClientState>,
     registry: Res<ReplicationRegistry>,
+    prediction_settings: Res<PredictionSettings>,
     time: Res<Time<Real>>,
     mut circles: Query<(
         &NetworkIdentity,
-        &Position,
+        &NetworkPhysicsState,
         Option<&Owned>,
         Option<&Prediction>,
         &mut Transform,
@@ -67,14 +66,18 @@ pub fn render_remote_circles(
     let display_tick = client_state.clock.advance(time.elapsed_secs_f64());
     let interpolate = registry
         .components
-        .get(&Position::NETWORK_ID)
+        .get(&NetworkPhysicsState::NETWORK_ID)
         .is_some_and(|component| component.interpolated);
 
     for (identity, authoritative, owned, prediction, mut transform, mut debug) in &mut circles {
         debug.display_tick = display_tick;
         debug.sample = None;
-        let mut position = Vec2::new(authoritative.x, authoritative.y);
-        if interpolate && owned.is_none() {
+        let mut position = authoritative.position;
+        if owned.is_some() && prediction_settings.enabled {
+            if let Some(prediction) = prediction {
+                position = prediction.state.position;
+            }
+        } else if owned.is_none() && interpolate {
             if let Some(sampled) = remote_world
                 .positions
                 .get(&identity.id)
@@ -84,12 +87,57 @@ pub fn render_remote_circles(
                 debug.sample = Some(sampled);
             }
         }
-        if owned.is_some() {
-            if let Some(prediction) = prediction {
-                position = Vec2::new(prediction.state.x, prediction.state.y)
-            }
-        }
         transform.translation.x = position.x;
         transform.translation.y = position.y;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn owned_player_uses_server_position_when_prediction_is_disabled() {
+        let mut app = App::new();
+        app.init_resource::<RemoteWorld>();
+        app.init_resource::<ReplicationRegistry>();
+        app.insert_resource(ClientState {
+            initiated: true,
+            ..Default::default()
+        });
+        app.insert_resource(PredictionSettings { enabled: false });
+        app.insert_resource(Time::<Real>::default());
+        app.add_systems(Update, render_remote_circles);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                NetworkIdentity { id: 1 },
+                NetworkPhysicsState {
+                    position: Vec2::new(50.0, 0.0),
+                    velocity: Vec2::ZERO,
+                },
+                Owned,
+                Prediction::new(NetworkPhysicsState {
+                    position: Vec2::new(100.0, 0.0),
+                    velocity: Vec2::ZERO,
+                }),
+                Transform::default(),
+                InterpolationDebug::default(),
+            ))
+            .id();
+
+        app.update();
+        assert_eq!(
+            app.world().get::<Transform>(entity).unwrap().translation.x,
+            50.0
+        );
+
+        app.world_mut().resource_mut::<PredictionSettings>().enabled = true;
+        app.update();
+        assert_eq!(
+            app.world().get::<Transform>(entity).unwrap().translation.x,
+            100.0
+        );
     }
 }

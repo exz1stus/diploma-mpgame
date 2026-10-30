@@ -1,13 +1,12 @@
 use std::collections::VecDeque;
 
 use bevy::{
-    app::{FixedPostUpdate, FixedPreUpdate, FixedUpdate, PreUpdate},
-    prelude::{App, IntoScheduleConfigs, Time},
-    time::Fixed,
+    app::{App, FixedPostUpdate, FixedPreUpdate, PreUpdate},
+    prelude::IntoScheduleConfigs,
 };
 use bevy_ecs::{
     resource::Resource,
-    system::{Res, ResMut},
+    system::{Commands, Res, ResMut},
 };
 use bevy_renet::{
     RenetServer,
@@ -19,25 +18,23 @@ use shared::{
     server_messages::{ServerMessage, ServerMessages},
 };
 
-use crate::{
+use crate::networking::server::TickCounter;
+
+use super::{
     client::{ReplicationClients, on_client_initiated},
-    handlers::handle_ping,
-    replication::queue_changes,
-    simulation::simulate,
+    handlers::{handle_input, handle_ping},
+    input::InputBuffer,
+    server::TickSet,
 };
 
-pub(crate) fn configure(app: &mut App, tickrate: u32) {
-    app.insert_resource(TickCounter(0));
-    app.insert_resource(Time::<Fixed>::from_hz(tickrate as f64));
+pub(crate) fn configure(app: &mut App) {
     app.init_resource::<MessageBuffer>();
-
-    app.add_systems(PreUpdate, receive_messages);
-
-    app.add_systems(FixedPreUpdate, tick);
-
-    app.add_systems(FixedUpdate, simulate);
-
-    app.add_systems(FixedPostUpdate, send_messages.after(queue_changes));
+    app.add_systems(PreUpdate, receive_messages.in_set(TickSet::ReceiveMessages));
+    app.add_systems(
+        FixedPreUpdate,
+        dispatch_messages.in_set(TickSet::DispatchMessages),
+    );
+    app.add_systems(FixedPostUpdate, send_messages.in_set(TickSet::SendMessages));
 }
 
 // Message context is used for client messages handler functions
@@ -83,14 +80,11 @@ pub(crate) struct MessageBuffer {
     pub(crate) outgoing: VecDeque<BufferedServerMessage>,
 }
 
-#[derive(Resource)]
-pub(crate) struct TickCounter(pub(crate) u64);
-
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct BufferedClientMessage {
     pub(crate) client_id: ClientId,
-    received_tick: u64,
-    message: ClientMessage,
+    pub(crate) received_tick: u64,
+    pub(crate) message: ClientMessage,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -102,9 +96,9 @@ pub(crate) enum MessageTarget {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct BufferedServerMessage {
-    pub(crate) target: MessageTarget,
-    pub(crate) channel: u8,
-    pub(crate) message: ServerMessage,
+    pub target: MessageTarget,
+    pub channel: u8,
+    pub message: ServerMessage,
 }
 
 fn receive_messages(
@@ -113,36 +107,36 @@ fn receive_messages(
     mut buffer: ResMut<MessageBuffer>,
 ) {
     for client_id in server.clients_id() {
-        while let Some(message) = server.receive_message(client_id, DefaultChannel::ReliableOrdered)
-        {
-            let Ok(message) = postcard::from_bytes::<ClientMessage>(&message) else {
-                eprintln!("Failed to deserialize client message");
-                continue;
-            };
+        for channel in [DefaultChannel::ReliableOrdered, DefaultChannel::Unreliable].map(u8::from) {
+            while let Some(message) = server.receive_message(client_id, channel) {
+                let Ok(message) = postcard::from_bytes::<ClientMessage>(&message) else {
+                    eprintln!("Failed to deserialize client message");
+                    continue;
+                };
 
-            buffer.pending.push_back(BufferedClientMessage {
-                client_id,
-                received_tick: tick_counter.0,
-                message,
-            });
+                buffer.pending.push_back(BufferedClientMessage {
+                    client_id,
+                    received_tick: tick_counter.0,
+                    message,
+                });
+            }
         }
     }
 }
 
-fn tick(
+fn dispatch_messages(
+    tick_counter: Res<TickCounter>,
+    mut commands: Commands,
     mut buffer: ResMut<MessageBuffer>,
-    mut tick_counter: ResMut<TickCounter>,
     mut clients: ResMut<ReplicationClients>,
+    mut input_buffer: ResMut<InputBuffer>,
 ) {
-    tick_counter.0 += 1;
-
-    let current_tick = tick_counter.0;
     let buffer = &mut *buffer;
 
     let (_, outgoing) = (&mut buffer.pending, &mut buffer.outgoing);
 
     let mut ctx = MessageContext {
-        tick: current_tick,
+        tick: tick_counter.0,
         outgoing,
     };
 
@@ -152,8 +146,9 @@ fn tick(
                 handle_ping(&mut ctx, &buffered);
             }
             ClientMessages::Initiated => {
-                on_client_initiated(&buffered, &mut clients);
+                on_client_initiated(&mut commands, &buffered, &mut clients);
             }
+            ClientMessages::MovementInputs { .. } => handle_input(&buffered, &mut input_buffer),
         }
     }
 }

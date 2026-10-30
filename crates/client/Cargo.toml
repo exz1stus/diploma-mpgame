@@ -10,4 +10,5 @@ bevy = { workspace = true, features = ["2d"] }
 bevy_renet.workspace = true
 postcard.workspace = true
 serde.workspace = true
+avian2d.workspace = true
 shared = { path = "../shared" }

@@ -9,7 +9,7 @@ use super::{
 };
 use bevy::{platform::collections::HashMap, prelude::*};
 use shared::{
-    components::{Ownership, Position},
+    components::{NetworkPhysicsState, Ownership},
     replication::{ReplicatedComponent, ReplicationRegistry},
     server_messages::{ServerMessage, ServerMessages},
     snapshots::{EntitySnapshot, NetworkIdentity},
@@ -74,9 +74,6 @@ pub fn process_server_message(
                 remote_world,
                 registry,
             );
-        }
-        ServerMessages::MovementCorrection(_) => {
-            todo!();
         }
         ServerMessages::Pong(_) => {}
     }
@@ -194,16 +191,16 @@ pub fn apply_components(
         {
             continue;
         }
-        if component.component_id == Position::NETWORK_ID {
-            let Ok(position) = postcard::from_bytes::<Position>(&component.data) else {
+        if component.component_id == NetworkPhysicsState::NETWORK_ID {
+            let Ok(state) = postcard::from_bytes::<NetworkPhysicsState>(&component.data) else {
                 continue;
             };
             if registered.interpolated && !replica.owned {
                 let samples = remote_world.positions.entry(snapshot.id).or_default();
                 samples.push_back(PositionSample {
                     tick,
-                    x: position.x,
-                    y: position.y,
+                    x: state.position.x,
+                    y: state.position.y,
                 });
                 if samples.len() > 32 {
                     samples.pop_front();

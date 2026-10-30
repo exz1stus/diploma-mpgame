@@ -147,12 +147,25 @@ pub fn release_incoming(
     }
 }
 
-fn queue_outgoing(
+pub(crate) fn queue_outgoing(
     simulation: &mut NetworkSimulation,
     client_state: &mut ClientState,
     payload: ClientMessages,
     now: f64,
 ) {
+    if matches!(&payload, ClientMessages::MovementInputs { .. }) {
+        // Keep the first scheduled send time, but send the latest sampled state.
+        // Resetting the delay each tick would prevent a queued input from sending.
+        if let Some(queued) = simulation.outgoing.iter_mut().find(|queued| {
+            matches!(
+                &queued.message.payload,
+                ClientMessages::MovementInputs { .. }
+            )
+        }) {
+            queued.message.payload = payload;
+            return;
+        }
+    }
     client_state.sequence += 1;
     let message = ClientMessage {
         sequence: client_state.sequence,
@@ -182,14 +195,14 @@ pub fn send_messages(
         return;
     }
 
-    queue_outgoing(
-        &mut simulation,
-        &mut client_state,
-        ClientMessages::Ping {
-            text: String::from("client ping"),
-        },
-        time.elapsed_secs_f64(),
-    );
+    // queue_outgoing(
+    //     &mut simulation,
+    //     &mut client_state,
+    //     ClientMessages::Ping {
+    //         text: String::from("client ping"),
+    //     },
+    //     time.elapsed_secs_f64(),
+    // );
 }
 
 pub fn release_outgoing(
@@ -206,16 +219,54 @@ pub fn release_outgoing(
         .is_some_and(|queued| queued.release_at_s <= now)
     {
         let queued = simulation.outgoing.pop_front().unwrap();
+        let channel = if matches!(
+            &queued.message.payload,
+            ClientMessages::MovementInputs { .. }
+        ) {
+            DefaultChannel::Unreliable
+        } else {
+            DefaultChannel::ReliableOrdered
+        };
         let bytes = postcard::to_allocvec(&queued.message).unwrap();
         stats.add_sent(queued.message, now);
-        client.send_message(DefaultChannel::ReliableOrdered, bytes);
+        client.send_message(channel, bytes);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use shared::{server_messages::ServerMessages, snapshots::WorldSnapshot};
+    use shared::{
+        movement::MovementInput, server_messages::ServerMessages, snapshots::WorldSnapshot,
+    };
+
+    #[test]
+    fn delayed_movement_keeps_only_latest_unsent_input() {
+        let mut simulation = NetworkSimulation {
+            outgoing_delay_ms: 200,
+            ..Default::default()
+        };
+        let mut state = ClientState::default();
+        let first_release_at = 1.0 / 60.0 + 0.2;
+        for tick in 1..=3 {
+            queue_outgoing(
+                &mut simulation,
+                &mut state,
+                ClientMessages::MovementInputs {
+                    inputs: vec![MovementInput { tick, x: 1, y: 0 }],
+                },
+                tick as f64 / 60.0,
+            );
+        }
+
+        assert_eq!(simulation.outgoing.len(), 1);
+        assert_eq!(simulation.outgoing[0].release_at_s, first_release_at);
+        assert!(matches!(
+            &simulation.outgoing[0].message.payload,
+            ClientMessages::MovementInputs { inputs }
+                if inputs.len() == 1 && inputs[0].tick == 3
+        ));
+    }
 
     #[test]
     fn acknowledges_only_applied_initial_state() {
@@ -251,18 +302,13 @@ mod tests {
         let state = app.world().resource::<ClientState>();
         assert!(state.initiated);
         assert_eq!(state.id, 42);
-        assert_eq!(state.sequence, 2);
+        assert_eq!(state.sequence, 1);
         let simulation = app.world().resource::<NetworkSimulation>();
-        assert_eq!(simulation.outgoing.len(), 2);
+        assert_eq!(simulation.outgoing.len(), 1);
         assert!(matches!(
             simulation.outgoing[0].message.payload,
             ClientMessages::Initiated
         ));
         assert_eq!(simulation.outgoing[0].message.sequence, 1);
-        assert!(matches!(
-            simulation.outgoing[1].message.payload,
-            ClientMessages::Ping { .. }
-        ));
-        assert_eq!(simulation.outgoing[1].message.sequence, 2);
     }
 }

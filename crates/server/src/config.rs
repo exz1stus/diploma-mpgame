@@ -2,7 +2,7 @@ use std::net::SocketAddr;
 
 use bevy_ecs::resource::Resource;
 
-#[derive(Resource)]
+#[derive(Resource, Clone)]
 pub(crate) struct AppConfig {
     pub(crate) protocol_id: u64,
     pub(crate) server_addr: SocketAddr,

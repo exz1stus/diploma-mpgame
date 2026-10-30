@@ -4,11 +4,11 @@ mod diagnostics;
 mod interpolation;
 mod netgraph;
 mod network;
+mod prediction;
 mod rendering;
 mod replication;
-mod state;
 mod replication_handlers;
-mod prediction;
+mod state;
 
 use bevy::{
     DefaultPlugins,

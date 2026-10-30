@@ -1,10 +1,10 @@
 pub use crate::network::NetworkSimulation;
-use crate::prediction::{initialize_prediction, predict_movement};
 pub(crate) use crate::state::Owned;
 
 use crate::network::{
     collect_incoming, release_incoming, release_outgoing, reset_disconnected_client, send_messages,
 };
+use crate::prediction::{PredictionSettings, initialize_prediction, predict_movement};
 use crate::rendering::{add_circle_visuals, render_remote_circles, setup_circle_assets};
 use crate::state::{ClientState, RemoteWorld};
 use crate::{
@@ -49,6 +49,7 @@ impl GameClient {
         app.init_resource::<NetworkDiagnostics>();
         app.init_resource::<ClientState>();
         app.init_resource::<NetworkSimulation>();
+        app.init_resource::<PredictionSettings>();
         app.init_resource::<RemoteWorld>();
 
         app.add_systems(Startup, setup_circle_assets);
@@ -58,8 +59,8 @@ impl GameClient {
             (
                 collect_incoming,
                 release_incoming,
-                initialize_prediction,
                 add_circle_visuals,
+                initialize_prediction,
                 render_remote_circles,
                 send_messages,
                 release_outgoing,

@@ -1,14 +1,9 @@
-mod client;
 mod config;
-mod entity;
-mod handlers;
-mod messages;
-mod replication;
-mod server;
-mod simulation;
-mod test_scenes;
-mod world;
+mod game;
+mod networking;
 use std::time::Duration;
+
+use avian2d::prelude::PhysicsPlugins;
 
 use bevy::{
     MinimalPlugins,
@@ -18,20 +13,20 @@ use bevy_renet::{RenetServerPlugin, netcode::NetcodeServerPlugin};
 use shared::app_init;
 use shared::role::NetworkRole;
 
-use crate::{config::AppConfig, server::GameServer, test_scenes::TestScenesPlugin};
+use crate::{config::AppConfig, game::GamePlugin, networking::ServerPlugin};
 
 fn main() {
     let mut app = app_init(NetworkRole::Server);
 
+    let config = AppConfig::new();
     app.add_plugins((
         MinimalPlugins.set(ScheduleRunnerPlugin::run_loop(Duration::from_millis(16))),
+        PhysicsPlugins::default(),
         RenetServerPlugin,
         NetcodeServerPlugin,
+        ServerPlugin::new(config),
+        GamePlugin,
     ));
-    app.add_plugins(TestScenesPlugin::from_env());
 
-    let config = AppConfig::new();
-
-    let mut server = GameServer::new(app, config);
-    server.run();
+    app.run();
 }

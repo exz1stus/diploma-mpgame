@@ -1,7 +1,7 @@
 use bevy_renet::renet::ClientId;
 use serde::{Deserialize, Serialize};
 
-use crate::{movement::MovementCorrection, snapshots::{EntitySnapshot, NetworkComponentId, NetworkEntityId, WorldSnapshot}};
+use crate::snapshots::{EntitySnapshot, NetworkComponentId, NetworkEntityId, WorldSnapshot};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum ServerMessages {
@@ -20,7 +20,6 @@ pub enum ServerMessages {
         entity_id: NetworkEntityId,
         component_id: NetworkComponentId,
     },
-    MovementCorrection(MovementCorrection)
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

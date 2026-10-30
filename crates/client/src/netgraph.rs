@@ -4,10 +4,11 @@ use egui_plot::{Legend, Line, Plot, PlotPoint, PlotPoints, PlotResponse, Points}
 
 use crate::client::{NetworkSimulation, Owned};
 use crate::diagnostics::{MAX_WINDOW_SECONDS, MessageContent, MessageEvent, NetworkDiagnostics};
+use crate::prediction::PredictionSettings;
 use crate::rendering::InterpolationDebug;
 use crate::state::RemoteWorld;
 use shared::{
-    components::{Health, Position},
+    components::{Health, NetworkPhysicsState},
     snapshots::NetworkIdentity,
 };
 
@@ -39,12 +40,13 @@ pub fn network_diagnostics_ui(
     mut contexts: EguiContexts,
     mut stats: ResMut<NetworkDiagnostics>,
     mut simulation: ResMut<NetworkSimulation>,
+    mut prediction_settings: ResMut<PredictionSettings>,
     remote_world: Res<RemoteWorld>,
     interpolation_debug: Query<&InterpolationDebug>,
     entities: Query<(
         Entity,
         &NetworkIdentity,
-        &Position,
+        &NetworkPhysicsState,
         &Transform,
         Option<&Health>,
         Option<&Owned>,
@@ -73,6 +75,11 @@ pub fn network_diagnostics_ui(
             ui.label("Incoming server delay");
             ui.add(egui::Slider::new(&mut simulation.incoming_delay_ms, 0..=1_000).suffix(" ms"));
         });
+        let mut enabled = prediction_settings.enabled;
+        if ui.checkbox(&mut enabled, "Predict owned player").changed() {
+            prediction_settings.enabled = enabled;
+        }
+        ui.small("Turn off to display the server's collision result for your player.");
         ui.small("Delay changes apply to new messages. RTT starts when a ping is sent and includes incoming Pong delay.");
         ui.collapsing("Replicated entities", |ui| {
             let mut rows: Vec<_> = entities.iter().collect();
@@ -82,7 +89,7 @@ pub fn network_diagnostics_ui(
                 let ownership = if owned.is_some() { "owned locally" } else { "remote" };
                 ui.monospace(format!(
                     "#{} | server position ({:.1}, {:.1}) | health {} | {}",
-                    identity.id, position.x, position.y, health, ownership,
+                    identity.id, position.position.x, position.position.y, health, ownership,
                 ));
             }
         });
@@ -131,7 +138,7 @@ pub fn network_diagnostics_ui(
 fn show_circle_interpolation(
     ui: &mut egui::Ui,
     identity: &NetworkIdentity,
-    position: &Position,
+    position: &NetworkPhysicsState,
     transform: &Transform,
     owned: Option<&Owned>,
     remote_world: &RemoteWorld,
@@ -144,7 +151,7 @@ fn show_circle_interpolation(
         return;
     }
 
-    let latest = Vec2::new(position.x, position.y);
+    let latest = position.position;
     let rendered = transform.translation.truncate();
     ui.monospace(format!(
         "Latest:   ({:.2}, {:.2})\nRendered: ({:.2}, {:.2})\nGap:      {:.2} world units",

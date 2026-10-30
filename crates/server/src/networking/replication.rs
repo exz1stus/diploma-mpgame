@@ -1,35 +1,35 @@
 use std::collections::BTreeMap;
 
 use bevy::{
-    app::FixedPostUpdate,
+    app::{App, FixedPostUpdate},
     platform::collections::HashMap,
-    prelude::{App, IntoScheduleConfigs},
+    prelude::IntoScheduleConfigs,
 };
 use bevy_ecs::system::{Res, ResMut};
 use bevy_renet::renet::ClientId;
 use shared::{
     replication::{
         BufferedComponentChanges, ComponentChange, NetworkEntityMap, ReplicationRegistry,
-        ReplicationSet,
     },
     server_messages::ServerMessages,
     snapshots::{ComponentSnapshot, EntitySnapshot, NetworkEntityId},
 };
 
-use crate::{
+use crate::networking::server::TickCounter;
+
+use super::{
     client::ReplicationClients,
-    messages::{MessageBuffer, MessageContext, TickCounter},
+    messages::{MessageBuffer, MessageContext},
+    server::TickSet,
 };
 
 type SnapshotBatch = BTreeMap<u8, Vec<EntitySnapshot>>;
 
 pub(crate) fn configure(app: &mut App) {
-    app.add_systems(
-        FixedPostUpdate,
-        queue_changes.after(ReplicationSet::Collect),
-    );
+    app.add_systems(FixedPostUpdate, queue_changes.in_set(TickSet::QueueChanges));
 }
-pub(crate) fn queue_changes(
+
+fn queue_changes(
     mut changes: ResMut<BufferedComponentChanges>,
     clients: Res<ReplicationClients>,
     registry: Res<ReplicationRegistry>,

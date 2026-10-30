@@ -13,7 +13,7 @@ use bevy::{
 };
 use bevy_renet::RenetClient;
 use shared::client_messages::{ClientMessage, ClientMessages};
-use shared::components::{Health, Position};
+use shared::components::{Health, NetworkPhysicsState};
 use shared::replication::ReplicatedComponent;
 use shared::server_messages::{ServerMessage, ServerMessages};
 use shared::snapshots::{ComponentSnapshot, EntitySnapshot, NetworkComponentId};
@@ -54,7 +54,7 @@ impl MessageEvent {
             MessageContent::Sent(message) => match message.payload {
                 ClientMessages::Ping { .. } => "Ping",
                 ClientMessages::Initiated => "Initiated",
-                ClientMessages::MovementInputs(_) => "Movement inputs",
+                ClientMessages::MovementInputs { .. } => "Movement inputs",
             },
             MessageContent::Received(message) => match message.payload {
                 ServerMessages::Pong(_) => "Pong",
@@ -63,7 +63,6 @@ impl MessageEvent {
                 ServerMessages::EntityUpdate(_) => "Entity update",
                 ServerMessages::EntityDespawn(_) => "Entity despawn",
                 ServerMessages::ComponentRemove { .. } => "Component remove",
-                ServerMessages::MovementCorrection(_) => "Movement correction",
             },
         }
     }
@@ -73,8 +72,8 @@ impl MessageEvent {
             MessageContent::Sent(message) => match &message.payload {
                 ClientMessages::Ping { text } => format!("text: {text}"),
                 ClientMessages::Initiated => "Initial state acknowledged".into(),
-                ClientMessages::MovementInputs(batch) => {
-                    format!("{:?}", batch.inputs)
+                ClientMessages::MovementInputs { inputs } => {
+                    format!("{inputs:?}")
                 }
             },
             MessageContent::Received(message) => match &message.payload {
@@ -104,10 +103,6 @@ impl MessageEvent {
                 } => {
                     format!("entity id: {entity_id}\nremoved component: {component_id}")
                 }
-
-                ServerMessages::MovementCorrection(correction) => {
-                    format!("{correction:?}")
-                }
             },
         }
     }
@@ -130,9 +125,13 @@ fn write_component(details: &mut String, component: &ComponentSnapshot) {
     let id = component.component_id;
     let _ = write!(details, "\n  {} (id {id}): ", component_name(id));
     match id {
-        Position::NETWORK_ID => {
-            if let Ok(position) = postcard::from_bytes::<Position>(&component.data) {
-                let _ = write!(details, "x: {}, y: {}", position.x, position.y);
+        NetworkPhysicsState::NETWORK_ID => {
+            if let Ok(state) = postcard::from_bytes::<NetworkPhysicsState>(&component.data) {
+                let _ = write!(
+                    details,
+                    "position: {}, {}; velocity: {}, {}",
+                    state.position.x, state.position.y, state.velocity.x, state.velocity.y
+                );
                 return;
             }
         }
@@ -152,7 +151,7 @@ fn write_component(details: &mut String, component: &ComponentSnapshot) {
 
 fn component_name(id: NetworkComponentId) -> &'static str {
     match id {
-        Position::NETWORK_ID => "Position",
+        NetworkPhysicsState::NETWORK_ID => "Physics state",
         Health::NETWORK_ID => "Health",
         _ => "Unknown component",
     }

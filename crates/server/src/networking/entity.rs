@@ -1,6 +1,8 @@
 use bevy::app::App;
 use bevy_ecs::{
     bundle::Bundle,
+    component::Component,
+    entity::Entity,
     lifecycle::{Add, Remove},
     observer::On,
     query::Without,
@@ -8,14 +10,17 @@ use bevy_ecs::{
     system::{Commands, EntityCommands, ParamSet, Query, Res, ResMut},
     world::{EntityRef, EntityWorldMut},
 };
-use bevy_renet::renet::DefaultChannel::ReliableOrdered;
+use bevy_renet::renet::{ClientId, DefaultChannel::ReliableOrdered};
 use shared::{
+    components::{DisconnectPolicy, Ownership},
     replication::{NetworkEntityMap, ReplicationRegistry},
     server_messages::{ServerMessage, ServerMessages},
     snapshots::{EntitySnapshot, NetworkEntityId, NetworkIdentity},
 };
 
-use crate::messages::{BufferedServerMessage, MessageBuffer, MessageTarget, TickCounter};
+use crate::networking::{client::ReplicationClients, server::TickCounter};
+
+use super::messages::{BufferedServerMessage, MessageBuffer, MessageTarget};
 
 #[derive(Resource, Debug, Default)]
 struct NetworkIdAllocator {
@@ -24,11 +29,23 @@ struct NetworkIdAllocator {
 
 pub(crate) fn configure(app: &mut App) {
     app.init_resource::<NetworkIdAllocator>();
-    app.add_observer(on_network_identity_inserted);
+    app.add_observer(on_network_identity_added);
     app.add_observer(on_network_identity_removed);
 }
+
 pub(crate) trait NetworkCommandsExt {
     fn network_spawn<T: Bundle>(&mut self, bundle: T) -> EntityCommands<'_>;
+    fn network_spawn_with_ownership<T: Bundle>(
+        &mut self,
+        client_id: ClientId,
+        bundle: T,
+    ) -> EntityCommands<'_>;
+    fn network_spawn_with_ownership_and_policy<T: Bundle>(
+        &mut self,
+        client_id: ClientId,
+        policy: DisconnectPolicy,
+        bundle: T,
+    ) -> EntityCommands<'_>;
 }
 
 impl NetworkCommandsExt for Commands<'_, '_> {
@@ -48,9 +65,32 @@ impl NetworkCommandsExt for Commands<'_, '_> {
 
         entity
     }
+
+    fn network_spawn_with_ownership<T: Bundle>(
+        &mut self,
+        client_id: ClientId,
+        bundle: T,
+    ) -> EntityCommands<'_> {
+        self.network_spawn_with_ownership_and_policy(client_id, DisconnectPolicy::default(), bundle)
+    }
+
+    fn network_spawn_with_ownership_and_policy<T: Bundle>(
+        &mut self,
+        client_id: ClientId,
+        policy: DisconnectPolicy,
+        bundle: T,
+    ) -> EntityCommands<'_> {
+        self.network_spawn((
+            Ownership {
+                client_id,
+                disconnect_policy: policy,
+            },
+            bundle,
+        ))
+    }
 }
 
-fn on_network_identity_inserted(
+fn on_network_identity_added(
     event: On<Add, NetworkIdentity>,
     mut params: ParamSet<(Query<EntityRef, Without<IsResource>>, ResMut<MessageBuffer>)>,
     registry: Res<ReplicationRegistry>,

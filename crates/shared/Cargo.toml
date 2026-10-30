@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 postcard.workspace = true
+avian2d.workspace = true
 serde.workspace = true
 bevy.workspace = true
 bevy_ecs.workspace = true
