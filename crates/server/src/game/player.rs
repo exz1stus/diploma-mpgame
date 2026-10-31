@@ -39,7 +39,3 @@ fn spawn_player_on_intiated(event: On<ClientIntiated>, mut commands: Commands) {
         new_player_bundle(),
     );
 }
-
-pub fn update_player() {}
-
-pub fn validate_player_movement() {}

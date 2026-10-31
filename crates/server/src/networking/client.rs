@@ -48,6 +48,12 @@ pub(crate) struct ClientState {
     // visible_entities: HashSet<NetworkEntityId>,
 }
 
+impl ClientState {
+    pub fn has_intiated(&self) -> bool {
+        self.phase == ClientSyncPhase::Ready
+    }
+}
+
 #[derive(Resource, Default)]
 pub(crate) struct ReplicationClients {
     pub clients: HashMap<ClientId, ClientState>,
@@ -145,16 +151,11 @@ fn on_client_disconnected(
 pub(crate) fn on_client_initiated(
     commands: &mut Commands,
     req: &BufferedClientMessage,
-    clients: &mut ReplicationClients,
+    client_state: &mut ClientState,
 ) {
     let client_id = req.client_id;
 
-    let Some(client) = clients.clients.get_mut(&client_id) else {
-        eprint!("unregistered client tried to intialize");
-        return;
-    };
-
-    client.phase = ClientSyncPhase::Ready;
+    client_state.phase = ClientSyncPhase::Ready;
 
     commands.trigger(ClientIntiated { client_id });
 

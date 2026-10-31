@@ -1,4 +1,7 @@
-use shared::{client_messages::ClientMessages::MovementInputs, server_messages::ServerMessages};
+use shared::{
+    client_messages::ClientMessages::MovementInputs, movement::MAX_INPUT_BATCH_SIZE,
+    server_messages::ServerMessages,
+};
 
 use crate::networking::input::InputBuffer;
 
@@ -12,6 +15,11 @@ pub(crate) fn handle_input(req: &BufferedClientMessage, input_buffer: &mut Input
     let MovementInputs { inputs } = &req.message.payload else {
         return;
     };
+
+    if inputs.len() > MAX_INPUT_BATCH_SIZE {
+        eprint!("Recived too large input batch of size {}", inputs.len());
+        return;
+    }
 
     for &input in inputs.iter() {
         input_buffer.record(req.client_id, input);

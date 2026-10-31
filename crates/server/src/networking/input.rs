@@ -23,19 +23,24 @@ use shared::{
 use super::client::ClientLeft;
 use super::server::TickSet;
 
+pub(crate) fn configure(app: &mut App) {
+    app.init_resource::<InputBuffer>();
+    app.add_systems(FixedUpdate, consume_input.in_set(TickSet::ProcessInputs));
+    app.add_observer(clear_disconnected_input);
+}
+
 #[derive(Resource, Default)]
 pub struct InputBuffer {
     pending: HashMap<ClientId, MovementInput>,
-    last_inputs: HashMap<ClientId, MovementInput>,
+    last_input: HashMap<ClientId, MovementInput>,
 }
 
 impl InputBuffer {
     pub(crate) fn record(&mut self, client_id: ClientId, input: MovementInput) {
-        if self
-            .last_inputs
-            .get(&client_id)
-            .is_some_and(|last| input.tick <= last.tick)
-        {
+        const MAX_FUTURE_TICKS: u64 = 20;
+        if self.last_input.get(&client_id).is_some_and(|last| {
+            input.tick <= last.tick || input.tick > last.tick + MAX_FUTURE_TICKS
+        }) {
             return;
         }
 
@@ -49,15 +54,9 @@ impl InputBuffer {
     }
 }
 
-pub(crate) fn configure(app: &mut App) {
-    app.init_resource::<InputBuffer>();
-    app.add_systems(FixedUpdate, consume_input.in_set(TickSet::ProcessInputs));
-    app.add_observer(clear_disconnected_input);
-}
-
 fn clear_disconnected_input(event: On<ClientLeft>, mut input_buffer: ResMut<InputBuffer>) {
     input_buffer.pending.remove(&event.client_id);
-    input_buffer.last_inputs.remove(&event.client_id);
+    input_buffer.last_input.remove(&event.client_id);
 }
 
 #[derive(Debug, Component, Default)]
@@ -73,14 +72,14 @@ fn consume_input(
         let newest_input = input_buffer.pending.remove(&ownership.client_id);
         if let Some(input) = newest_input
             && input_buffer
-                .last_inputs
+                .last_input
                 .get(&ownership.client_id)
                 .is_none_or(|last| input.tick > last.tick)
         {
-            input_buffer.last_inputs.insert(ownership.client_id, input);
+            input_buffer.last_input.insert(ownership.client_id, input);
         }
 
-        if let Some(input) = input_buffer.last_inputs.get(&ownership.client_id).copied() {
+        if let Some(input) = input_buffer.last_input.get(&ownership.client_id).copied() {
             current_movement.movement = Vec2::new(input.x as f32, input.y as f32);
         }
     }
