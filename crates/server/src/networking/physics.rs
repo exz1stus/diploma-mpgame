@@ -1,24 +1,54 @@
 use avian2d::{
-    dynamics::{integrator::Gravity, rigid_body::LinearVelocity},
+    dynamics::{
+        integrator::Gravity,
+        rigid_body::{
+            LinearVelocity,
+            forces::{Forces, ReadRigidBodyForces, WriteRigidBodyForces},
+        },
+    },
     physics_transform::Position as PhysicsPosition,
 };
 use bevy::{
-    app::{App, FixedPostUpdate},
+    app::{App, FixedPostUpdate, FixedUpdate},
     math::Vec2,
     prelude::IntoScheduleConfigs,
 };
-use bevy_ecs::system::Query;
-use shared::components::NetworkPhysicsState;
+use bevy_ecs::{
+    query::With,
+    system::{Query, Res},
+};
+use shared::{
+    components::{NetworkPhysicsState, Player},
+    movement::movement_acceleration,
+    replication::{ReplicationSet, collect_baseline},
+};
+
+use crate::networking::{input::CurrentMovementInput, server::TickCounter};
 
 use super::server::TickSet;
 
 pub(crate) fn configure(app: &mut App) {
     app.add_systems(
         FixedPostUpdate,
-        sync_positions.in_set(TickSet::SyncPositions),
+        (
+            sync_positions.in_set(TickSet::SyncPositions),
+            collect_baseline::<NetworkPhysicsState>
+                .run_if(is_baseline_tick)
+                .in_set(ReplicationSet::Collect),
+        ),
     );
 
+    app.add_systems(FixedUpdate, apply_movement.after(TickSet::ProcessInputs));
+
     app.insert_resource(Gravity(Vec2::ZERO));
+}
+
+fn apply_movement(mut players: Query<(&CurrentMovementInput, Forces), With<Player>>) {
+    for (input, mut forces) in &mut players {
+        let acceleration = movement_acceleration(forces.linear_velocity(), input.movement);
+
+        forces.apply_linear_acceleration(acceleration);
+    }
 }
 
 fn sync_positions(
@@ -30,4 +60,9 @@ fn sync_positions(
             network.velocity = velocity.0;
         }
     }
+}
+
+fn is_baseline_tick(tick_counter: Res<TickCounter>) -> bool {
+    const BASELINE_INTERVAL: u64 = 3;
+    tick_counter.0.is_multiple_of(BASELINE_INTERVAL)
 }

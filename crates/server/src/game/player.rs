@@ -7,7 +7,9 @@ use bevy::{app::App, math::Vec2, transform::components::Transform};
 use bevy_ecs::{bundle::Bundle, observer::On, system::Commands};
 use shared::components::{DisconnectPolicy, Health, NetworkPhysicsState, Player};
 
-use crate::networking::{client::ClientIntiated, entity::NetworkCommandsExt};
+use crate::networking::{
+    client::ClientIntiated, entity::NetworkCommandsExt, input::CurrentMovementInput,
+};
 
 pub fn configure(app: &mut App) {
     app.add_observer(spawn_player_on_intiated);
@@ -26,6 +28,7 @@ pub fn new_player_bundle() -> impl Bundle {
         AngularVelocity::ZERO,
         LockedAxes::ROTATION_LOCKED,
         Transform::from_xyz(spawn.x, spawn.y, 0.0),
+        CurrentMovementInput::default(),
     )
 }
 

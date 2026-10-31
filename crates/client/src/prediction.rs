@@ -17,7 +17,7 @@ pub struct PredictionSettings {
 
 impl Default for PredictionSettings {
     fn default() -> Self {
-        Self { enabled: true }
+        Self { enabled: false }
     }
 }
 
@@ -54,7 +54,10 @@ impl Prediction {
 
     fn apply(&mut self, input: MovementInput, dt: f32) {
         self.input_buffer.insert(input.tick, input);
-        self.state.velocity += movement_acceleration(self.state.velocity, input) * dt;
+        self.state.velocity += movement_acceleration(
+            self.state.velocity,
+            Vec2::new(input.x as f32, input.y as f32),
+        ) * dt;
         self.state.position += self.state.velocity * dt;
         self.prediction_history
             .insert(input.tick, self.state.clone());

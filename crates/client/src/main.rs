@@ -23,6 +23,9 @@ use shared::role::NetworkRole;
 use crate::{config::ClientConfig, netgraph::network_diagnostics_ui};
 
 fn main() {
+    #[cfg(target_os = "linux")]
+    prefer_wslg_x11();
+
     let mut app = app_init(NetworkRole::Client);
 
     app.add_plugins((
@@ -37,9 +40,6 @@ fn main() {
 
     let config = ClientConfig::new();
     let mut client = GameClient::new(app, &config);
-
-    #[cfg(target_os = "linux")]
-    prefer_wslg_x11();
 
     client.run();
 }
