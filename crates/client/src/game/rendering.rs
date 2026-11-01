@@ -1,4 +1,3 @@
-use crate::networking::physics::PredictedBody;
 use crate::networking::prediction::{Prediction, PredictionSettings};
 use crate::networking::{
     interpolation::{InterpolationSample, sample_at_tick},
@@ -57,7 +56,6 @@ pub fn render_remote_circles(
         &NetworkPhysicsState,
         Option<&Owned>,
         Option<&Prediction>,
-        Option<&PredictedBody>,
         &mut Transform,
         &mut InterpolationDebug,
     )>,
@@ -71,15 +69,9 @@ pub fn render_remote_circles(
         .get(&NetworkPhysicsState::NETWORK_ID)
         .is_some_and(|component| component.interpolated);
 
-    for (identity, authoritative, owned, prediction, predicted_body, mut transform, mut debug) in
-        &mut circles
-    {
+    for (identity, authoritative, owned, prediction, mut transform, mut debug) in &mut circles {
         debug.display_tick = display_tick;
         debug.sample = None;
-
-        if predicted_body.is_some() {
-            continue;
-        }
 
         let mut position = authoritative.position;
         if owned.is_some() && prediction_settings.enabled {
@@ -104,6 +96,7 @@ pub fn render_remote_circles(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::networking::physics::PredictedBody;
 
     #[test]
     fn owned_player_uses_server_position_when_prediction_is_disabled() {
@@ -128,6 +121,7 @@ mod tests {
                     velocity: Vec2::ZERO,
                 },
                 Owned,
+                PredictedBody,
                 Prediction::new(NetworkPhysicsState {
                     tick: 0,
                     position: Vec2::new(100.0, 0.0),

@@ -4,7 +4,12 @@ use avian2d::{
     physics_transform::Position,
 };
 use bevy::{app::App, math::Vec2, transform::components::Transform};
-use bevy_ecs::{bundle::Bundle, observer::On, system::Commands};
+use bevy_ecs::{
+    bundle::Bundle,
+    observer::On,
+    query::With,
+    system::{Commands, Query},
+};
 use shared::components::{DisconnectPolicy, Health, NetworkPhysicsState, Player};
 
 use crate::networking::{
@@ -16,7 +21,10 @@ pub fn configure(app: &mut App) {
 }
 
 pub fn new_player_bundle() -> impl Bundle {
-    let spawn = Vec2::new(0.0, 0.0);
+    new_player_bundle_at(Vec2::ZERO)
+}
+
+fn new_player_bundle_at(spawn: Vec2) -> impl Bundle {
     (
         Player,
         Health(100),
@@ -29,14 +37,32 @@ pub fn new_player_bundle() -> impl Bundle {
         AngularVelocity::ZERO,
         LockedAxes::ROTATION_LOCKED,
         Transform::from_xyz(spawn.x, spawn.y, 0.0),
-        CurrentMovementInput::default(),
     )
 }
 
-fn spawn_player_on_intiated(event: On<ClientIntiated>, mut commands: Commands) {
+fn spawn_player_on_intiated(
+    event: On<ClientIntiated>,
+    mut commands: Commands,
+    players: Query<(), (With<Player>, With<CurrentMovementInput>)>,
+) {
+    let player_index = players.iter().count() as f32;
+    let spawn = Vec2::new(player_index * 80.0, 0.0);
     commands.network_spawn_with_ownership_and_policy(
         event.client_id,
         DisconnectPolicy::Despawn,
-        new_player_bundle(),
+        new_player_bundle_at(spawn),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn player_bundle_spawns_with_movement_input() {
+        let mut app = App::new();
+        let entity = app.world_mut().spawn(new_player_bundle()).id();
+
+        assert!(app.world().get::<CurrentMovementInput>(entity).is_some());
+    }
 }

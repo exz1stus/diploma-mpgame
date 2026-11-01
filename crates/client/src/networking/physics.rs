@@ -8,7 +8,7 @@ use avian2d::{
 use bevy::{ecs::schedule::ScheduleLabel, prelude::*};
 use shared::{
     client_messages::ClientMessages,
-    components::NetworkPhysicsState,
+    components::{NetworkPhysicsState, Player},
     movement::{MovementInput, movement_acceleration},
 };
 use std::time::Duration;
@@ -23,7 +23,6 @@ use super::{
 
 const MAX_STEPS_PER_FRAME: usize = 8;
 const INPUT_REDUNDANCY: usize = 32;
-
 
 #[derive(ScheduleLabel, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ClientPhysicsTick;
@@ -81,12 +80,36 @@ pub fn initialize_physics_body(
     }
 }
 
+/// Keep replicated players in the local physics world so prediction can hit them.
+pub fn sync_remote_colliders(
+    mut commands: Commands,
+    mut players: Query<
+        (Entity, &NetworkPhysicsState, Option<&mut PhysicsPosition>),
+        (With<Player>, Without<Owned>),
+    >,
+) {
+    for (entity, state, position) in &mut players {
+        if let Some(mut position) = position {
+            position.0 = state.position;
+        } else {
+            commands.entity(entity).insert((
+                RigidBody::Kinematic,
+                Collider::circle(16.0),
+                PhysicsPosition(state.position),
+            ));
+        }
+    }
+}
+
 /// Uses the same forcesbased controller as the server.
 fn apply_movement(
     mut players: Query<(&CurrentMovementInput, Forces), (With<Owned>, With<PredictedBody>)>,
 ) {
     for (input, mut forces) in &mut players {
-        let acceleration = movement_acceleration(forces.linear_velocity(), input.movement);
+        let acceleration = movement_acceleration(
+            forces.linear_velocity(),
+            Vec2::new(input.movement.x as f32, input.movement.y as f32),
+        );
 
         forces.apply_linear_acceleration(acceleration);
     }
@@ -165,7 +188,6 @@ pub fn run_prediction(world: &mut World) {
                 .expect("Predicted body must have history")
                 .record_state(state);
 
-           
             let mut prediction = entity
                 .get_mut::<Prediction>()
                 .expect("Predicted body must have prediction");
@@ -323,6 +345,107 @@ pub fn log_prediction_status(
             position = ?prediction.state.position,
             velocity = ?prediction.state.velocity,
             "Prediction status"
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn remote_player_receives_a_collision_body_and_follows_server_position() {
+        let mut app = App::new();
+        app.add_systems(Update, sync_remote_colliders);
+        let entity = app
+            .world_mut()
+            .spawn((
+                Player,
+                NetworkPhysicsState {
+                    position: Vec2::new(10.0, 20.0),
+                    ..Default::default()
+                },
+            ))
+            .id();
+
+        app.update();
+        assert_eq!(
+            app.world().get::<PhysicsPosition>(entity).unwrap().0,
+            Vec2::new(10.0, 20.0)
+        );
+        assert_eq!(
+            app.world().get::<RigidBody>(entity),
+            Some(&RigidBody::Kinematic)
+        );
+        assert!(app.world().get::<Collider>(entity).is_some());
+
+        app.world_mut()
+            .get_mut::<NetworkPhysicsState>(entity)
+            .unwrap()
+            .position = Vec2::new(30.0, 40.0);
+        app.update();
+        assert_eq!(
+            app.world().get::<PhysicsPosition>(entity).unwrap().0,
+            Vec2::new(30.0, 40.0)
+        );
+    }
+
+    #[test]
+    fn predicted_player_collides_with_remote_player() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.insert_resource(Time::<Fixed>::from_hz(60.0));
+        configure(&mut app);
+        app.add_systems(Update, sync_remote_colliders);
+        app.finish();
+        app.cleanup();
+
+        let player = app
+            .world_mut()
+            .spawn((
+                Owned,
+                PredictedBody,
+                CurrentMovementInput {
+                    movement: MovementInput {
+                        tick: 0,
+                        x: 0,
+                        y: 0,
+                    },
+                },
+                RigidBody::Dynamic,
+                Collider::circle(16.0),
+                PhysicsPosition(Vec2::ZERO),
+                LinearVelocity::ZERO,
+                AngularVelocity::ZERO,
+                LockedAxes::ROTATION_LOCKED,
+                Transform::default(),
+            ))
+            .id();
+        app.world_mut().spawn((
+            Player,
+            NetworkPhysicsState {
+                position: Vec2::new(48.0, 0.0),
+                ..Default::default()
+            },
+        ));
+        app.update();
+
+        let timestep = app.world().resource::<Time<Fixed>>().timestep();
+        let mut state = NetworkPhysicsState::default();
+        for tick in 1..=60 {
+            state = simulate_prediction_tick(
+                app.world_mut(),
+                player,
+                MovementInput { tick, x: 1, y: 0 },
+                timestep,
+            );
+        }
+
+        assert!(state.position.x > 0.0);
+        assert!(
+            state.position.x <= 17.0,
+            "predicted position: {:?}",
+            state.position
         );
     }
 }

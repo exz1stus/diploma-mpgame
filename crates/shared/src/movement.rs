@@ -2,7 +2,7 @@ use bevy::math::Vec2;
 use serde::{Deserialize, Serialize};
 pub type TickNumber = u64;
 
-pub const MAX_INPUT_BATCH_SIZE: usize = 10;
+pub const MAX_INPUT_BATCH_SIZE: usize = 32;
 
 #[derive(Clone, Debug, Copy, Serialize, Deserialize)]
 pub struct MovementInput {

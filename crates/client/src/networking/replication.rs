@@ -192,9 +192,10 @@ pub fn apply_components(
             continue;
         }
         if component.component_id == NetworkPhysicsState::NETWORK_ID {
-            let Ok(state) = postcard::from_bytes::<NetworkPhysicsState>(&component.data) else {
+            let Ok(mut state) = postcard::from_bytes::<NetworkPhysicsState>(&component.data) else {
                 continue;
             };
+            state.tick = tick;
 
             if replica.owned {
                 remote_world
@@ -223,9 +224,92 @@ pub fn apply_components(
             } else {
                 remote_world.positions.remove(&snapshot.id);
             }
+            replica.last_ticks.insert(component.component_id, tick);
+            commands.queue(move |world: &mut World| {
+                if let Ok(mut entity_mut) = world.get_entity_mut(entity) {
+                    entity_mut.insert(state);
+                }
+            });
+            continue;
         }
         replica.last_ticks.insert(component.component_id, tick);
         let apply = registered.apply;
         commands.queue(move |world: &mut World| apply(world, entity, &component.data));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use shared::role::NetworkRole;
+    use shared::snapshots::ComponentSnapshot;
+
+    #[test]
+    fn physics_state_uses_enclosing_message_tick() {
+        let mut app = shared::app_init(NetworkRole::Client);
+        app.insert_resource(ClientState::default());
+        app.insert_resource(RemoteWorld::default());
+
+        let entity = app.world_mut().spawn_empty().id();
+        app.world_mut()
+            .resource_mut::<RemoteWorld>()
+            .entities
+            .insert(
+                7,
+                ReplicatedEntity {
+                    entity,
+                    owned: true,
+                    last_ticks: HashMap::default(),
+                },
+            );
+
+        let state = NetworkPhysicsState {
+            tick: 1,
+            position: Vec2::new(12.0, 34.0),
+            velocity: Vec2::new(5.0, 6.0),
+        };
+        let bytes = postcard::to_allocvec(&state).unwrap();
+        assert_eq!(
+            bytes,
+            postcard::to_allocvec(&NetworkPhysicsState { tick: 999, ..state }).unwrap()
+        );
+
+        app.add_systems(
+            Update,
+            move |mut commands: Commands,
+                  mut client: ResMut<ClientState>,
+                  mut remote: ResMut<RemoteWorld>,
+                  registry: Res<ReplicationRegistry>| {
+                apply_components(
+                    EntitySnapshot {
+                        id: 7,
+                        components: vec![ComponentSnapshot {
+                            component_id: NetworkPhysicsState::NETWORK_ID,
+                            data: bytes.clone(),
+                        }],
+                        removed_components: vec![],
+                    },
+                    123,
+                    &mut commands,
+                    &mut client,
+                    &mut remote,
+                    &registry,
+                );
+            },
+        );
+
+        app.update();
+
+        let replicated = app.world().get::<NetworkPhysicsState>(entity).unwrap();
+        assert_eq!(replicated.tick, 123);
+        assert_eq!(replicated.position, state.position);
+        assert_eq!(
+            app.world()
+                .resource::<RemoteWorld>()
+                .authoritative_snapshots[0]
+                .1
+                .tick,
+            123
+        );
     }
 }

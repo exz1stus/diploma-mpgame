@@ -125,7 +125,12 @@ fn main() {
     // Then advance the tick that will be simulated.
     app.add_systems(FixedPreUpdate, (receive_messages, advance_tick).chain());
 
-    app.add_systems(FixedUpdate, (select_input, apply_movement).chain());
+    app.add_systems(
+        FixedUpdate,
+        (select_input, apply_movement)
+            .chain()
+            .before(PhysicsSystems::First),
+    );
 
     // Capture only after Avian completes the physics step.
     app.add_systems(
@@ -449,8 +454,8 @@ fn select_input(
 
 fn apply_movement(mut players: Query<(&CurrentInput, Forces), With<MockPlayer>>) {
     for (input, mut forces) in &mut players {
-        let acceleration = movement_acceleration(forces.linear_velocity(), input.0);
-
+        let direction = Vec2::new(input.0.x as f32, input.0.y as f32);
+        let acceleration = movement_acceleration(forces.linear_velocity(), direction);
         forces.apply_linear_acceleration(acceleration);
     }
 }

@@ -15,18 +15,12 @@ use bevy::{
 };
 use bevy_ecs::{
     query::With,
-    {Res, query::With, system::Query},
+    system::{Query, Res},
 };
 use shared::{
+    components::{NetworkPhysicsState, Player},
     movement::movement_acceleration,
     replication::{ReplicationSet, collect_baseline},
-    {
-        Player,
-        components::{
-            movement::movement_acceleration,
-            {NetworkPhysicsState, Player},
-        },
-    },
 };
 
 use crate::networking::{input::CurrentMovementInput, server::TickCounter};
@@ -34,7 +28,12 @@ use crate::networking::{input::CurrentMovementInput, server::TickCounter};
 use super::server::TickSet;
 
 pub(crate) fn configure(app: &mut App) {
-    app.add_systems(FixedUpdate, apply_movement.in_set(TickSet::Simulate));
+    app.add_systems(
+        FixedUpdate,
+        apply_movement
+            .in_set(TickSet::Simulate)
+            .before(avian2d::schedule::PhysicsSystems::First),
+    );
 
     app.add_systems(
         FixedPostUpdate,
@@ -45,8 +44,6 @@ pub(crate) fn configure(app: &mut App) {
                 .in_set(ReplicationSet::Collect),
         ),
     );
-
-    app.add_systems(FixedUpdate, apply_movement.after(TickSet::ProcessInputs));
 
     app.insert_resource(Gravity(Vec2::ZERO));
 }

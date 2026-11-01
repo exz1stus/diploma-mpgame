@@ -1,7 +1,7 @@
 use std::default;
 
 use bevy::math::Vec2;
-use bevy_ecs::{component::Component};
+use bevy_ecs::component::Component;
 use bevy_renet::renet::ClientId;
 use serde::{Deserialize, Serialize};
 
@@ -12,7 +12,8 @@ pub struct Player;
 
 #[derive(Component, Clone, Copy, Serialize, Deserialize, Debug, Default)]
 pub struct NetworkPhysicsState {
-    //State after this simulation tick
+    // Local metadata. The enclosing server message supplies the wire tick.
+    #[serde(skip)]
     pub tick: TickNumber,
     pub position: Vec2,
     pub velocity: Vec2,

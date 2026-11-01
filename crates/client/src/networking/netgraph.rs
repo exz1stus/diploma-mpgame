@@ -78,7 +78,7 @@ pub fn network_diagnostics_ui(
             ui.add(egui::Slider::new(&mut simulation.incoming_delay_ms, 0..=1_000).suffix(" ms"));
         });
         let mut enabled = prediction_settings.enabled;
-        if ui.checkbox(&mut enabled, "Predict owned player").changed() {
+        if ui.checkbox(&mut enabled, "Show predicted player").changed() {
             prediction_settings.enabled = enabled;
         }
         ui.small("Turn off to display the server's collision result for your player.");
