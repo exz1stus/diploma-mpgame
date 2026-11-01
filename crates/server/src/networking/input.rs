@@ -1,23 +1,21 @@
 use std::collections::HashMap;
 
-use avian2d::dynamics::rigid_body::LinearVelocity;
 use bevy::{
     app::{App, FixedUpdate},
     math::Vec2,
     prelude::IntoScheduleConfigs,
-    time::{Fixed, Time},
 };
 use bevy_ecs::{
     component::Component,
     observer::On,
     query::With,
     resource::Resource,
-    system::{Query, Res, ResMut},
+    system::{Query, ResMut},
 };
 use bevy_renet::renet::ClientId;
 use shared::{
     components::{Ownership, Player},
-    movement::{MovementInput, movement_acceleration},
+    movement::MovementInput,
 };
 
 use super::client::ClientLeft;

@@ -1,8 +1,8 @@
-use super::{
+use crate::networking::prediction::{Prediction, PredictionSettings};
+use crate::networking::{
     interpolation::{InterpolationSample, sample_at_tick},
     state::{ClientState, Owned, RemoteWorld},
 };
-use crate::prediction::{Prediction, PredictionSettings};
 use bevy::prelude::*;
 use shared::{
     components::{NetworkPhysicsState, Player},
@@ -72,6 +72,7 @@ pub fn render_remote_circles(
     for (identity, authoritative, owned, prediction, mut transform, mut debug) in &mut circles {
         debug.display_tick = display_tick;
         debug.sample = None;
+
         let mut position = authoritative.position;
         if owned.is_some() && prediction_settings.enabled {
             if let Some(prediction) = prediction {
@@ -95,6 +96,7 @@ pub fn render_remote_circles(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::networking::physics::PredictedBody;
 
     #[test]
     fn owned_player_uses_server_position_when_prediction_is_disabled() {
@@ -114,11 +116,14 @@ mod tests {
             .spawn((
                 NetworkIdentity { id: 1 },
                 NetworkPhysicsState {
+                    tick: 0,
                     position: Vec2::new(50.0, 0.0),
                     velocity: Vec2::ZERO,
                 },
                 Owned,
+                PredictedBody,
                 Prediction::new(NetworkPhysicsState {
+                    tick: 0,
                     position: Vec2::new(100.0, 0.0),
                     velocity: Vec2::ZERO,
                 }),

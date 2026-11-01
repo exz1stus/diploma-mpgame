@@ -1,11 +1,9 @@
 use avian2d::{
-    collision::collider::Collider,
-    dynamics::rigid_body::{LinearVelocity, RigidBody},
-    physics_transform::Position,
+    collision::collider::Collider, dynamics::rigid_body::RigidBody, physics_transform::Position,
 };
 use bevy::prelude::*;
-use shared::components::{Health, Ownership};
+use shared::components::{NetworkPhysicsState, Player};
 
-use crate::{game::player::new_player_bundle, networking::entity::NetworkCommandsExt};
+use crate::networking::entity::NetworkCommandsExt;
 
 pub(super) fn spawn(mut commands: Commands) {}

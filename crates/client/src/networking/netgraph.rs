@@ -2,11 +2,13 @@ use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
 use egui_plot::{Legend, Line, Plot, PlotPoint, PlotPoints, PlotResponse, Points};
 
-use crate::client::{NetworkSimulation, Owned};
-use crate::diagnostics::{MAX_WINDOW_SECONDS, MessageContent, MessageEvent, NetworkDiagnostics};
-use crate::prediction::PredictionSettings;
-use crate::rendering::InterpolationDebug;
-use crate::state::RemoteWorld;
+use crate::game::rendering::InterpolationDebug;
+use crate::networking::client::{NetworkSimulation, Owned};
+use crate::networking::diagnostics::{
+    MAX_WINDOW_SECONDS, MessageContent, MessageEvent, NetworkDiagnostics,
+};
+use crate::networking::prediction::PredictionSettings;
+use crate::networking::state::RemoteWorld;
 use shared::{
     components::{Health, NetworkPhysicsState},
     snapshots::NetworkIdentity,
@@ -76,7 +78,7 @@ pub fn network_diagnostics_ui(
             ui.add(egui::Slider::new(&mut simulation.incoming_delay_ms, 0..=1_000).suffix(" ms"));
         });
         let mut enabled = prediction_settings.enabled;
-        if ui.checkbox(&mut enabled, "Predict owned player").changed() {
+        if ui.checkbox(&mut enabled, "Show predicted player").changed() {
             prediction_settings.enabled = enabled;
         }
         ui.small("Turn off to display the server's collision result for your player.");

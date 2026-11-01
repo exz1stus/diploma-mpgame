@@ -29,6 +29,13 @@ use super::server::TickSet;
 
 pub(crate) fn configure(app: &mut App) {
     app.add_systems(
+        FixedUpdate,
+        apply_movement
+            .in_set(TickSet::Simulate)
+            .before(avian2d::schedule::PhysicsSystems::First),
+    );
+
+    app.add_systems(
         FixedPostUpdate,
         (
             sync_positions.in_set(TickSet::SyncPositions),
@@ -38,11 +45,11 @@ pub(crate) fn configure(app: &mut App) {
         ),
     );
 
-    app.add_systems(FixedUpdate, apply_movement.after(TickSet::ProcessInputs));
-
     app.insert_resource(Gravity(Vec2::ZERO));
 }
 
+/// Applies the same acceleration controller used by client prediction.
+/// Avian integrates the acceleration over the configured fixed timestep.
 fn apply_movement(mut players: Query<(&CurrentMovementInput, Forces), With<Player>>) {
     for (input, mut forces) in &mut players {
         let acceleration = movement_acceleration(forces.linear_velocity(), input.movement);

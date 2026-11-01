@@ -1,17 +1,20 @@
 use std::default;
 
 use bevy::math::Vec2;
-use bevy_ecs::{component::Component, resource::Resource};
+use bevy_ecs::component::Component;
 use bevy_renet::renet::ClientId;
 use serde::{Deserialize, Serialize};
 
-use crate::replication::ReplicatedComponent;
+use crate::{movement::TickNumber, replication::ReplicatedComponent};
 
 #[derive(Component, Serialize, Deserialize, Debug)]
 pub struct Player;
 
 #[derive(Component, Clone, Copy, Serialize, Deserialize, Debug, Default)]
 pub struct NetworkPhysicsState {
+    // Local metadata. The enclosing server message supplies the wire tick.
+    #[serde(skip)]
+    pub tick: TickNumber,
     pub position: Vec2,
     pub velocity: Vec2,
 }

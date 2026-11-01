@@ -1,4 +1,4 @@
-use crate::{
+use super::{
     replication::{apply_components, spawn_remote_entity},
     state::{ClientState, Owned, RemoteWorld},
 };
