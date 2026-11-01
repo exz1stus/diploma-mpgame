@@ -1,26 +1,41 @@
 use std::collections::HashMap;
 
-use avian2d::dynamics::rigid_body::LinearVelocity;
 use bevy::{
     app::{App, FixedUpdate},
-    math::Vec2,
     prelude::IntoScheduleConfigs,
-    time::{Fixed, Time},
 };
 use bevy_ecs::{
+    component::Component,
     observer::On,
     query::With,
     resource::Resource,
-    system::{Query, Res, ResMut},
+    system::{Query, ResMut},
 };
 use bevy_renet::renet::ClientId;
 use shared::{
     components::{Ownership, Player},
-    movement::{MovementInput, movement_acceleration},
+    movement::MovementInput,
 };
 
 use super::client::ClientLeft;
 use super::server::TickSet;
+
+#[derive(Component, Clone, Copy)]
+pub(crate) struct CurrentMovementInput {
+    pub(crate) movement: MovementInput,
+}
+
+impl Default for CurrentMovementInput {
+    fn default() -> Self {
+        Self {
+            movement: MovementInput {
+                tick: 0,
+                x: 0,
+                y: 0,
+            },
+        }
+    }
+}
 
 #[derive(Resource, Default)]
 pub struct InputBuffer {
@@ -49,7 +64,7 @@ impl InputBuffer {
 
 pub(crate) fn configure(app: &mut App) {
     app.init_resource::<InputBuffer>();
-    app.add_systems(FixedUpdate, apply_input.in_set(TickSet::ProcessInputs));
+    app.add_systems(FixedUpdate, select_input.in_set(TickSet::ProcessInputs));
     app.add_observer(clear_disconnected_input);
 }
 
@@ -58,12 +73,11 @@ fn clear_disconnected_input(event: On<ClientLeft>, mut input_buffer: ResMut<Inpu
     input_buffer.last_inputs.remove(&event.client_id);
 }
 
-fn apply_input(
-    time: Res<Time<Fixed>>,
+fn select_input(
     mut input_buffer: ResMut<InputBuffer>,
-    mut players: Query<(&Ownership, &mut LinearVelocity), With<Player>>,
+    mut players: Query<(&Ownership, &mut CurrentMovementInput), With<Player>>,
 ) {
-    for (ownership, mut velocity) in &mut players {
+    for (ownership, mut current) in &mut players {
         let newest_input = input_buffer.pending.remove(&ownership.client_id);
         if let Some(input) = newest_input {
             if input_buffer
@@ -76,34 +90,7 @@ fn apply_input(
         }
 
         if let Some(input) = input_buffer.last_inputs.get(&ownership.client_id).copied() {
-            velocity.0 = next_velocity(velocity.0, input, time.delta_secs());
+            current.movement = input;
         }
-    }
-}
-
-fn next_velocity(velocity: Vec2, input: MovementInput, dt: f32) -> Vec2 {
-    velocity + movement_acceleration(velocity, input) * dt
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn held_input_accumulates_velocity_over_fixed_ticks() {
-        let input = MovementInput {
-            tick: 1,
-            x: 1,
-            y: 0,
-        };
-        let mut velocity = Vec2::ZERO;
-        let dt = 1.0 / 60.0;
-
-        for _ in 0..60 {
-            velocity = next_velocity(velocity, input, dt);
-        }
-
-        assert!(velocity.x > 90.0, "velocity after one second: {velocity:?}");
-        assert_eq!(velocity.y, 0.0);
     }
 }

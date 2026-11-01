@@ -3,7 +3,10 @@ use bevy::{
     platform::collections::{HashMap, HashSet},
     prelude::*,
 };
-use shared::snapshots::{EntitySnapshot, NetworkComponentId, NetworkEntityId};
+use shared::{
+    components::NetworkPhysicsState,
+    snapshots::{EntitySnapshot, NetworkComponentId, NetworkEntityId},
+};
 use std::collections::VecDeque;
 
 #[derive(Resource, Default)]
@@ -30,5 +33,6 @@ pub struct RemoteWorld {
     pub positions: HashMap<NetworkEntityId, VecDeque<PositionSample>>,
     pub pending_updates: VecDeque<(u64, EntitySnapshot)>,
     pub despawned: HashSet<NetworkEntityId>,
-}
 
+    pub authoritative_snapshots: VecDeque<(NetworkEntityId, NetworkPhysicsState)>,
+}

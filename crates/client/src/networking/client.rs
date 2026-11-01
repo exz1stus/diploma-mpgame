@@ -1,15 +1,24 @@
-pub use crate::network::NetworkSimulation;
-pub(crate) use crate::state::Owned;
+pub use crate::networking::network::NetworkSimulation;
+use crate::networking::physics::{
+    self, initialize_physics_body, log_prediction_status, run_prediction,
+};
+use crate::networking::reconciliation::{
+    ReconciliationStatus, apply_reconciliation, compare_authoritative_snapshots,
+    log_reconciliation_status,
+};
+use crate::networking::simulation_clock::ClientSimulationClock;
+pub(crate) use crate::networking::state::Owned;
 
-use crate::network::{
+use crate::game::rendering::{add_circle_visuals, render_remote_circles, setup_circle_assets};
+use crate::networking::network::{
     collect_incoming, release_incoming, release_outgoing, reset_disconnected_client, send_messages,
 };
-use crate::prediction::{PredictionSettings, initialize_prediction, predict_movement};
-use crate::rendering::{add_circle_visuals, render_remote_circles, setup_circle_assets};
-use crate::state::{ClientState, RemoteWorld};
+use crate::networking::prediction::{PredictionSettings, initialize_prediction};
+use crate::networking::state::{ClientState, RemoteWorld};
+use crate::networking::time_sync::TimeSyncEstimates;
 use crate::{
     config::ClientConfig,
-    diagnostics::{NetworkDiagnostics, sample_network},
+    networking::diagnostics::{NetworkDiagnostics, sample_network},
 };
 use bevy::prelude::*;
 use bevy_renet::{
@@ -51,6 +60,11 @@ impl GameClient {
         app.init_resource::<NetworkSimulation>();
         app.init_resource::<PredictionSettings>();
         app.init_resource::<RemoteWorld>();
+        app.init_resource::<ClientSimulationClock>();
+        app.init_resource::<TimeSyncEstimates>();
+        app.init_resource::<ReconciliationStatus>();
+        app.insert_resource(Time::<Fixed>::from_hz(60.0));
+        physics::configure(&mut app);
 
         app.add_systems(Startup, setup_circle_assets);
 
@@ -61,6 +75,12 @@ impl GameClient {
                 release_incoming,
                 add_circle_visuals,
                 initialize_prediction,
+                initialize_physics_body,
+                compare_authoritative_snapshots,
+                apply_reconciliation,
+                log_reconciliation_status,
+                run_prediction,
+                log_prediction_status,
                 render_remote_circles,
                 send_messages,
                 release_outgoing,
@@ -70,7 +90,6 @@ impl GameClient {
         );
 
         app.add_systems(Update, reset_disconnected_client);
-        app.add_systems(FixedUpdate, predict_movement.run_if(client_connected));
         app.add_systems(PostUpdate, sample_network.after(RenetSend));
 
         Self { app }

@@ -1,8 +1,5 @@
 use bevy::math::Vec2;
 use serde::{Deserialize, Serialize};
-
-use crate::snapshots::NetworkEntityId;
-
 pub type TickNumber = u64;
 
 #[derive(Clone, Debug, Copy, Serialize, Deserialize)]

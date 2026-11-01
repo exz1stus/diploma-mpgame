@@ -2,11 +2,13 @@ use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
 use egui_plot::{Legend, Line, Plot, PlotPoint, PlotPoints, PlotResponse, Points};
 
-use crate::client::{NetworkSimulation, Owned};
-use crate::diagnostics::{MAX_WINDOW_SECONDS, MessageContent, MessageEvent, NetworkDiagnostics};
-use crate::prediction::PredictionSettings;
-use crate::rendering::InterpolationDebug;
-use crate::state::RemoteWorld;
+use crate::game::rendering::InterpolationDebug;
+use crate::networking::client::{NetworkSimulation, Owned};
+use crate::networking::diagnostics::{
+    MAX_WINDOW_SECONDS, MessageContent, MessageEvent, NetworkDiagnostics,
+};
+use crate::networking::prediction::PredictionSettings;
+use crate::networking::state::RemoteWorld;
 use shared::{
     components::{Health, NetworkPhysicsState},
     snapshots::NetworkIdentity,

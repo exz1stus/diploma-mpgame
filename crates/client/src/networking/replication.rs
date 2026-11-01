@@ -1,4 +1,4 @@
-use crate::replication_handlers::{
+use crate::networking::replication_handlers::{
     handle_component_remove, handle_entity_despawn, handle_entity_spawn, handle_entity_update,
     handle_initial_state,
 };
@@ -195,17 +195,31 @@ pub fn apply_components(
             let Ok(state) = postcard::from_bytes::<NetworkPhysicsState>(&component.data) else {
                 continue;
             };
-            if registered.interpolated && !replica.owned {
+
+            if replica.owned {
+                remote_world
+                    .authoritative_snapshots
+                    .push_back((snapshot.id, state));
+
+                while remote_world.authoritative_snapshots.len() > 64 {
+                    remote_world.authoritative_snapshots.pop_front();
+                }
+
+                remote_world.positions.remove(&snapshot.id);
+            } else if registered.interpolated {
                 let samples = remote_world.positions.entry(snapshot.id).or_default();
+
                 samples.push_back(PositionSample {
-                    tick,
+                    tick: state.tick,
                     x: state.position.x,
                     y: state.position.y,
                 });
+
                 if samples.len() > 32 {
                     samples.pop_front();
                 }
-                client_state.clock.observe(tick);
+
+                client_state.clock.observe(state.tick);
             } else {
                 remote_world.positions.remove(&snapshot.id);
             }

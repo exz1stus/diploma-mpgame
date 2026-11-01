@@ -16,7 +16,7 @@ use crate::config::AppConfig;
 pub(crate) mod client;
 pub(crate) mod entity;
 mod handlers;
-mod input;
+pub(crate) mod input;
 mod messages;
 mod ownership;
 mod physics;
