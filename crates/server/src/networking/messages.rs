@@ -18,7 +18,7 @@ use shared::{
     server_messages::{ServerMessage, ServerMessages},
 };
 
-use crate::networking::server::TickCounter;
+use crate::networking::{client, server::TickCounter};
 
 use super::{
     client::{ReplicationClients, on_client_initiated},
@@ -141,14 +141,30 @@ fn dispatch_messages(
     };
 
     while let Some(buffered) = buffer.pending.pop_front() {
+        let client_id = buffered.client_id;
+
+        let Some(client_state) = clients.clients.get_mut(&client_id) else {
+            continue;
+        };
+
         match &buffered.message.payload {
+            ClientMessages::Initiated if !client_state.has_intiated() => {
+                on_client_initiated(&mut commands, &buffered, client_state);
+            }
+
+            _ if !client_state.has_intiated() => continue,
+
             ClientMessages::Ping { .. } => {
                 handle_ping(&mut ctx, &buffered);
             }
-            ClientMessages::Initiated => {
-                on_client_initiated(&mut commands, &buffered, &mut clients);
+
+            ClientMessages::MovementInputs { .. } => {
+                handle_input(&buffered, &mut input_buffer);
             }
-            ClientMessages::MovementInputs { .. } => handle_input(&buffered, &mut input_buffer),
+
+            ClientMessages::Initiated => {
+                eprintln!("Already intiated client sent Intiated message");
+            }
         }
     }
 }

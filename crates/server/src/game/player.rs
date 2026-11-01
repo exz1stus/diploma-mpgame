@@ -29,6 +29,7 @@ pub fn new_player_bundle() -> impl Bundle {
         AngularVelocity::ZERO,
         LockedAxes::ROTATION_LOCKED,
         Transform::from_xyz(spawn.x, spawn.y, 0.0),
+        CurrentMovementInput::default(),
     )
 }
 
@@ -39,7 +40,3 @@ fn spawn_player_on_intiated(event: On<ClientIntiated>, mut commands: Commands) {
         new_player_bundle(),
     );
 }
-
-pub fn update_player() {}
-
-pub fn validate_player_movement() {}

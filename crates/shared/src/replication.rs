@@ -147,6 +147,23 @@ fn collect_changes<T>(
     }
 }
 
+pub fn collect_baseline<T>(
+    query: Query<(Entity, &T)>,
+    mut outgoing: ResMut<BufferedComponentChanges>,
+) where
+    T: ReplicatedComponent,
+{
+    for (entity, component) in &query {
+        let Ok(data) = postcard::to_allocvec(component) else {
+            continue;
+        };
+
+        outgoing
+            .changes
+            .insert((entity, T::NETWORK_ID), ComponentChange::Upsert(data));
+    }
+}
+
 fn serialize_component<T: Component + Serialize>(entity: EntityRef<'_>) -> Option<Vec<u8>> {
     postcard::to_allocvec(entity.get::<T>()?).ok()
 }

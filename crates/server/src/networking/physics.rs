@@ -13,21 +13,40 @@ use bevy::{
     math::Vec2,
     prelude::IntoScheduleConfigs,
 };
-use bevy_ecs::{query::With, system::Query};
+use bevy_ecs::{
+    query::With,
+    {Res, query::With, system::Query},
+};
 use shared::{
-    components::{NetworkPhysicsState, Player},
     movement::movement_acceleration,
+    replication::{ReplicationSet, collect_baseline},
+    {
+        Player,
+        components::{
+            movement::movement_acceleration,
+            {NetworkPhysicsState, Player},
+        },
+    },
 };
 
-use super::{input::CurrentMovementInput, server::TickSet};
+use crate::networking::{input::CurrentMovementInput, server::TickCounter};
+
+use super::server::TickSet;
 
 pub(crate) fn configure(app: &mut App) {
     app.add_systems(FixedUpdate, apply_movement.in_set(TickSet::Simulate));
 
     app.add_systems(
         FixedPostUpdate,
-        sync_positions.in_set(TickSet::SyncPositions),
+        (
+            sync_positions.in_set(TickSet::SyncPositions),
+            collect_baseline::<NetworkPhysicsState>
+                .run_if(is_baseline_tick)
+                .in_set(ReplicationSet::Collect),
+        ),
     );
+
+    app.add_systems(FixedUpdate, apply_movement.after(TickSet::ProcessInputs));
 
     app.insert_resource(Gravity(Vec2::ZERO));
 }
@@ -51,4 +70,9 @@ fn sync_positions(
             network.velocity = velocity.0;
         }
     }
+}
+
+fn is_baseline_tick(tick_counter: Res<TickCounter>) -> bool {
+    const BASELINE_INTERVAL: u64 = 3;
+    tick_counter.0.is_multiple_of(BASELINE_INTERVAL)
 }

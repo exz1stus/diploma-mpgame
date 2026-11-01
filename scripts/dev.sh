@@ -57,7 +57,21 @@ start_process() {
     pids+=("$!")
 }
 
-setsid x-terminal-emulator "${terminal_args[@]}" -e env "TEST_SCENE=$scene" "$binary_dir/server" &
+setsid x-terminal-emulator "${terminal_args[@]}" -e env "TEST_SCENE=$scene" \
+    bash -c '
+        if "$@"; then
+            exit 0
+        else
+            status=$?
+        fi
+
+        if (( status != 130 && status != 143 )); then
+            printf "\nServer exited with status %d. Press any key to close this terminal..." "$status"
+            read -r -n 1 -s _
+            printf "\n"
+        fi
+        exit "$status"
+    ' _ "$binary_dir/server" &
 pids+=("$!")
 server_pid=${pids[0]}
 
