@@ -3,12 +3,15 @@ use bevy::prelude::*;
 use shared::{components::NetworkPhysicsState, movement::MovementInput};
 
 use super::{ReconciliationAction, ReconciliationStatus};
-use crate::networking::{
-    physics::{CurrentMovementInput, PredictedBody, replay_prediction_ticks},
-    prediction::Prediction,
-    prediction_history::PredictionHistory,
-    simulation_clock::ClientSimulationClock,
-    state::{Owned, RemoteWorld},
+use crate::{
+    game::rendering::current_visual_position,
+    networking::{
+        physics::{CurrentMovementInput, PredictedBody, replay_prediction_ticks},
+        prediction::Prediction,
+        prediction_history::PredictionHistory,
+        simulation_clock::ClientSimulationClock,
+        state::{Owned, RemoteWorld},
+    },
 };
 
 pub fn apply_reconciliation(world: &mut World) {
@@ -89,6 +92,7 @@ fn rollback_and_replay(
     player: Entity,
     authoritative: NetworkPhysicsState,
 ) -> bool {
+    let visual_position_before_correction = current_visual_position(world, player);
     let Some(completed_tick) = world.resource::<ClientSimulationClock>().completed_tick() else {
         return false;
     };
@@ -110,7 +114,13 @@ fn rollback_and_replay(
     }
 
     let corrected_state = corrected_states.last().copied().unwrap_or(authoritative);
-    finish_rollback(world, player, authoritative.tick, corrected_state);
+    finish_rollback(
+        world,
+        player,
+        authoritative.tick,
+        corrected_state,
+        visual_position_before_correction,
+    );
 
     true
 }
@@ -141,7 +151,9 @@ fn finish_rollback(
     player: Entity,
     authoritative_tick: u64,
     corrected_state: NetworkPhysicsState,
+    old_visual_position: Vec2,
 ) {
+    const MAX_SMOOTH_DISTANCE: f32 = 64.0;
     let mut entity = world.entity_mut(player);
 
     entity
@@ -149,10 +161,18 @@ fn finish_rollback(
         .expect("Reconciliation requires prediction history")
         .accept_authoritative_tick(authoritative_tick);
 
-    entity
+    let mut prediction = entity
         .get_mut::<Prediction>()
-        .expect("Reconciliation requires prediction state")
-        .state = corrected_state;
+        .expect("Reconciliation requires prediction state");
+    prediction.state = corrected_state;
+
+    let new_offset = old_visual_position - corrected_state.position;
+
+    prediction.visual_offset = if new_offset.length() <= MAX_SMOOTH_DISTANCE {
+        new_offset
+    } else {
+        Vec2::ZERO
+    };
 }
 
 fn hard_resync(world: &mut World, player: Entity, authoritative: NetworkPhysicsState) {
@@ -165,6 +185,10 @@ fn hard_resync(world: &mut World, player: Entity, authoritative: NetworkPhysicsS
 
 fn reset_player_prediction(world: &mut World, player: Entity, authoritative: NetworkPhysicsState) {
     let mut entity = world.entity_mut(player);
+
+    let mut prediction = entity.get_mut::<Prediction>().expect("Hard resync requires prediction");
+    prediction.state = authoritative;
+    prediction.visual_offset = Vec2::ZERO;
 
     *entity
         .get_mut::<PredictionHistory>()

@@ -9,11 +9,13 @@ use crate::networking::reconciliation::{
 use crate::networking::simulation_clock::ClientSimulationClock;
 pub(crate) use crate::networking::state::Owned;
 
-use crate::game::rendering::{add_circle_visuals, render_remote_circles, setup_circle_assets};
+use crate::game::rendering::{add_circle_visuals, render_player_visuals, setup_circle_assets};
 use crate::networking::network::{
     collect_incoming, release_incoming, release_outgoing, reset_disconnected_client, send_messages,
 };
-use crate::networking::prediction::{PredictionSettings, initialize_prediction};
+use crate::networking::prediction::{
+    PredictionSettings, initialize_prediction, smooth_prediction_visual,
+};
 use crate::networking::state::{ClientState, RemoteWorld};
 use crate::networking::time_sync::TimeSyncEstimates;
 use crate::{
@@ -81,8 +83,9 @@ impl GameClient {
                 apply_reconciliation,
                 log_reconciliation_status,
                 run_prediction,
+                smooth_prediction_visual,
+                render_player_visuals,
                 log_prediction_status,
-                render_remote_circles,
                 send_messages,
                 release_outgoing,
             )

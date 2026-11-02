@@ -101,7 +101,7 @@ pub fn sync_remote_colliders(
     }
 }
 
-/// Uses the same forcesbased controller as the server.
+/// Uses the same forcesbased controller as the server
 fn apply_movement(
     mut players: Query<(&CurrentMovementInput, Forces), (With<Owned>, With<PredictedBody>)>,
 ) {

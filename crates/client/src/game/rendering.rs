@@ -3,6 +3,7 @@ use crate::networking::{
     interpolation::{InterpolationSample, sample_at_tick},
     state::{ClientState, Owned, RemoteWorld},
 };
+use avian2d::physics_transform::Position as PhysicsPosition;
 use bevy::prelude::*;
 use shared::{
     components::{NetworkPhysicsState, Player},
@@ -21,6 +22,9 @@ pub struct CircleAssets {
     mesh: Handle<Mesh>,
 }
 
+#[derive(Component)]
+pub struct PlayerVisual;
+
 pub fn setup_circle_assets(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>) {
     commands.insert_resource(CircleAssets {
         mesh: meshes.add(Circle::new(16.0)),
@@ -33,116 +37,107 @@ pub fn add_circle_visuals(
     assets: Res<CircleAssets>,
     mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
-    for (entity, identity) in &new_entities {
+    for (player, identity) in &new_entities {
         let hue = ((identity.id % 360) * 137 % 360) as f32;
         let material = materials.add(ColorMaterial::from_color(Color::hsl(hue, 0.8, 0.6)));
 
-        commands.entity(entity).insert((
+        commands
+            .entity(player)
+            .insert((InterpolationDebug::default(),));
+
+        commands.spawn((
+            PlayerVisual,
+            ChildOf(player),
             Mesh2d(assets.mesh.clone()),
             MeshMaterial2d(material),
-            InterpolationDebug::default(),
+            Transform::from_xyz(0.0, 0.0, 0.1),
         ));
     }
 }
 
-pub fn render_remote_circles(
+pub fn render_player_visuals(
     remote_world: Res<RemoteWorld>,
     mut client_state: ResMut<ClientState>,
     registry: Res<ReplicationRegistry>,
     prediction_settings: Res<PredictionSettings>,
     time: Res<Time<Real>>,
-    mut circles: Query<(
-        &NetworkIdentity,
-        &NetworkPhysicsState,
-        Option<&Owned>,
-        Option<&Prediction>,
-        &mut Transform,
-        &mut InterpolationDebug,
-    )>,
+
+    mut players: Query<
+        (
+            &NetworkIdentity,
+            &NetworkPhysicsState,
+            Option<&Owned>,
+            Option<&Prediction>,
+            &Transform,
+            &mut InterpolationDebug,
+        ),
+        Without<PlayerVisual>,
+    >,
+    mut visuals: Query<(&ChildOf, &mut Transform), With<PlayerVisual>>,
 ) {
     if !client_state.initiated {
         return;
     }
     let display_tick = client_state.clock.advance(time.elapsed_secs_f64());
+
     let interpolate = registry
         .components
         .get(&NetworkPhysicsState::NETWORK_ID)
         .is_some_and(|component| component.interpolated);
 
-    for (identity, authoritative, owned, prediction, mut transform, mut debug) in &mut circles {
+    for (child_of, mut visual_transform) in &mut visuals {
+        let player_entity = child_of.parent();
+
+        let Ok((identity, authoritative, owned, prediction, root_transform, mut debug)) =
+            players.get_mut(player_entity)
+        else {
+            continue;
+        };
+
         debug.display_tick = display_tick;
         debug.sample = None;
 
-        let mut position = authoritative.position;
-        if owned.is_some() && prediction_settings.enabled {
-            if let Some(prediction) = prediction {
-                position = prediction.state.position;
+        let root_position = root_transform.translation.truncate();
+
+        let visual_world_position = if owned.is_some() {
+            if prediction_settings.enabled {
+                let offset = prediction.map_or(Vec2::ZERO, |prediction| prediction.visual_offset);
+                root_position + offset
+            } else {
+                authoritative.position
             }
-        } else if owned.is_none() && interpolate {
-            if let Some(sampled) = remote_world
+        } else if interpolate {
+            if let Some(sample) = remote_world
                 .positions
                 .get(&identity.id)
                 .and_then(|samples| sample_at_tick(samples, display_tick))
             {
-                position = sampled.position;
-                debug.sample = Some(sampled);
+                debug.sample = Some(sample);
+                sample.position
+            } else {
+                authoritative.position
             }
-        }
-        transform.translation.x = position.x;
-        transform.translation.y = position.y;
+        } else {
+            authoritative.position
+        };
+        let local_offset = visual_world_position - root_position;
+
+        visual_transform.translation.x = local_offset.x;
+        visual_transform.translation.y = local_offset.y;
     }
 }
+pub fn current_visual_position(world: &World, player: Entity) -> Vec2 {
+    let entity = world.entity(player);
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::networking::physics::PredictedBody;
+    let physics_position = entity
+        .get::<PhysicsPosition>()
+        .expect("Predicted player requires position")
+        .0;
 
-    #[test]
-    fn owned_player_uses_server_position_when_prediction_is_disabled() {
-        let mut app = App::new();
-        app.init_resource::<RemoteWorld>();
-        app.init_resource::<ReplicationRegistry>();
-        app.insert_resource(ClientState {
-            initiated: true,
-            ..Default::default()
-        });
-        app.insert_resource(PredictionSettings { enabled: false });
-        app.insert_resource(Time::<Real>::default());
-        app.add_systems(Update, render_remote_circles);
+    let visual_offset = entity
+        .get::<Prediction>()
+        .expect("Predicted player requires prediction")
+        .visual_offset;
 
-        let entity = app
-            .world_mut()
-            .spawn((
-                NetworkIdentity { id: 1 },
-                NetworkPhysicsState {
-                    tick: 0,
-                    position: Vec2::new(50.0, 0.0),
-                    velocity: Vec2::ZERO,
-                },
-                Owned,
-                PredictedBody,
-                Prediction::new(NetworkPhysicsState {
-                    tick: 0,
-                    position: Vec2::new(100.0, 0.0),
-                    velocity: Vec2::ZERO,
-                }),
-                Transform::default(),
-                InterpolationDebug::default(),
-            ))
-            .id();
-
-        app.update();
-        assert_eq!(
-            app.world().get::<Transform>(entity).unwrap().translation.x,
-            50.0
-        );
-
-        app.world_mut().resource_mut::<PredictionSettings>().enabled = true;
-        app.update();
-        assert_eq!(
-            app.world().get::<Transform>(entity).unwrap().translation.x,
-            100.0
-        );
-    }
+    physics_position + visual_offset
 }

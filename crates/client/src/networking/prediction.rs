@@ -57,3 +57,30 @@ pub fn initialize_prediction(
         .entity(entity)
         .insert((Prediction::new(baseline), PredictionHistory::new(baseline)));
 }
+
+pub fn smooth_prediction_visual(
+    time: Res<Time>,
+    mut predictions: Query<&mut Prediction>,
+) {
+    const HALF_LIFE_SECONDS: f32 = 0.08;
+    const STOP_DISTANCE: f32 = 0.01;
+
+    let dt = time.delta_secs();
+
+    if dt <= 0.0 {
+        return;
+    }
+
+    let remaining =
+        2.0_f32.powf(-dt / HALF_LIFE_SECONDS);
+
+    for mut prediction in &mut predictions {
+        prediction.visual_offset *= remaining;
+
+        if prediction.visual_offset.length_squared()
+            < STOP_DISTANCE * STOP_DISTANCE
+        {
+            prediction.visual_offset = Vec2::ZERO;
+        }
+    }
+}
