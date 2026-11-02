@@ -14,6 +14,7 @@ use shared::replication::{BufferedComponentChanges, NetworkEntityMap};
 use crate::config::AppConfig;
 
 pub(crate) mod client;
+pub mod commands;
 pub(crate) mod entity;
 mod handlers;
 pub(crate) mod input;
@@ -53,9 +54,6 @@ impl Plugin for ServerPlugin {
         app.insert_resource(transport);
         app.insert_resource(self.config.clone());
 
-        app.init_resource::<BufferedComponentChanges>();
-        app.init_resource::<NetworkEntityMap>();
-
         server::configure(app, tickrate as f64);
         messages::configure(app);
         input::configure(app);
@@ -64,5 +62,6 @@ impl Plugin for ServerPlugin {
         ownership::configure(app);
         physics::configure(app);
         replication::configure(app);
+        commands::configure(app);
     }
 }

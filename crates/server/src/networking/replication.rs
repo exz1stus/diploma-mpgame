@@ -26,6 +26,8 @@ use super::{
 type SnapshotBatch = BTreeMap<u8, Vec<EntitySnapshot>>;
 
 pub(crate) fn configure(app: &mut App) {
+    app.init_resource::<NetworkEntityMap>();
+    app.init_resource::<BufferedComponentChanges>();
     app.add_systems(FixedPostUpdate, queue_changes.in_set(TickSet::QueueChanges));
 }
 

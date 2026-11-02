@@ -1,12 +1,13 @@
 use serde::{Deserialize, Serialize};
 
-use crate::movement::MovementInput;
+use crate::{commands::CommandEnvelope, movement::MovementInput};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum ClientMessages {
     Ping { text: String },
     Initiated,
     MovementInputs { inputs: Vec<MovementInput> },
+    NetworkCommand(CommandEnvelope),
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

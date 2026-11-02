@@ -15,10 +15,11 @@ use bevy_renet::{
 use serde::{Deserialize, Serialize};
 use shared::{
     client_messages::{ClientMessage, ClientMessages},
+    commands::CommandsRegistry,
     server_messages::{ServerMessage, ServerMessages},
 };
 
-use crate::networking::{client, server::TickCounter};
+use crate::networking::{commands::handle_command, server::TickCounter};
 
 use super::{
     client::{ReplicationClients, on_client_initiated},
@@ -127,6 +128,7 @@ fn receive_messages(
 fn dispatch_messages(
     tick_counter: Res<TickCounter>,
     mut commands: Commands,
+    mut commands_registry: ResMut<CommandsRegistry>,
     mut buffer: ResMut<MessageBuffer>,
     mut clients: ResMut<ReplicationClients>,
     mut input_buffer: ResMut<InputBuffer>,
@@ -153,6 +155,9 @@ fn dispatch_messages(
             }
 
             _ if !client_state.has_intiated() => continue,
+            ClientMessages::Initiated => {
+                eprintln!("Already intiated client sent Intiated message");
+            }
 
             ClientMessages::Ping { .. } => {
                 handle_ping(&mut ctx, &buffered);
@@ -161,10 +166,13 @@ fn dispatch_messages(
             ClientMessages::MovementInputs { .. } => {
                 handle_input(&buffered, &mut input_buffer);
             }
-
-            ClientMessages::Initiated => {
-                eprintln!("Already intiated client sent Intiated message");
-            }
+            ClientMessages::NetworkCommand(command_envelope) => handle_command(
+                &mut ctx,
+                &buffered,
+                &mut commands,
+                command_envelope,
+                &mut commands_registry,
+            ),
         }
     }
 }

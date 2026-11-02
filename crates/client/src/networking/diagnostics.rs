@@ -55,6 +55,7 @@ impl MessageEvent {
                 ClientMessages::Ping { .. } => "Ping",
                 ClientMessages::Initiated => "Initiated",
                 ClientMessages::MovementInputs { .. } => "Movement inputs",
+                ClientMessages::NetworkCommand(_) => todo!(),
             },
             MessageContent::Received(message) => match message.payload {
                 ServerMessages::Pong(_) => "Pong",
@@ -63,6 +64,7 @@ impl MessageEvent {
                 ServerMessages::EntityUpdate(_) => "Entity update",
                 ServerMessages::EntityDespawn(_) => "Entity despawn",
                 ServerMessages::ComponentRemove { .. } => "Component remove",
+                ServerMessages::NetworkCommandError(command_error) => todo!(),
             },
         }
     }
@@ -75,6 +77,7 @@ impl MessageEvent {
                 ClientMessages::MovementInputs { inputs } => {
                     format!("{inputs:?}")
                 }
+                ClientMessages::NetworkCommand(command_envelope) => todo!(),
             },
             MessageContent::Received(message) => match &message.payload {
                 ServerMessages::Pong(text) => {
@@ -103,6 +106,7 @@ impl MessageEvent {
                 } => {
                     format!("entity id: {entity_id}\nremoved component: {component_id}")
                 }
+                ServerMessages::NetworkCommandError(command_error) => todo!(),
             },
         }
     }

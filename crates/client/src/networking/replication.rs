@@ -76,6 +76,7 @@ pub fn process_server_message(
             );
         }
         ServerMessages::Pong(_) => {}
+        ServerMessages::NetworkCommandError(command_error) => todo!(),
     }
     false
 }

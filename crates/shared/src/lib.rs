@@ -5,6 +5,7 @@ use crate::replication::ReplicatedComponentAppExt;
 use crate::role::NetworkRole;
 
 pub mod client_messages;
+pub mod commands;
 pub mod components;
 pub mod movement;
 pub mod replication;

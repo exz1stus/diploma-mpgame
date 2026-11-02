@@ -1,5 +1,3 @@
-use std::default;
-
 use bevy::math::Vec2;
 use bevy_ecs::component::Component;
 use bevy_renet::renet::ClientId;
@@ -33,21 +31,27 @@ pub struct Ownership {
     pub disconnect_policy: DisconnectPolicy,
 }
 
-impl ReplicatedComponent for Ownership {
-    const NETWORK_ID: u16 = 1;
-}
-
-impl ReplicatedComponent for Player {
-    const NETWORK_ID: u16 = 2;
-}
-
-impl ReplicatedComponent for NetworkPhysicsState {
-    const NETWORK_ID: u16 = 3;
-}
-
 #[derive(Component, Serialize, Deserialize)]
 pub struct Health(pub u16);
 
-impl ReplicatedComponent for Health {
-    const NETWORK_ID: u16 = 4;
+macro_rules! assign_network_ids {
+    ($first:ident $(, $rest:ident)* $(,)?) => {
+        #[repr(u16)]
+        enum ComponentId {
+            $first = 1,
+            $($rest,)*
+        }
+
+        impl ReplicatedComponent for $first {
+            const NETWORK_ID: u16 = ComponentId::$first as u16;
+        }
+
+        $(
+            impl ReplicatedComponent for $rest {
+                const NETWORK_ID: u16 = ComponentId::$rest as u16;
+            }
+        )*
+    };
 }
+
+assign_network_ids!(Ownership, Player, NetworkPhysicsState, Health);
