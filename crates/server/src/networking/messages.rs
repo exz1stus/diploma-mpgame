@@ -164,7 +164,7 @@ fn dispatch_messages(
             }
 
             ClientMessages::MovementInputs { .. } => {
-                handle_input(&buffered, &mut input_buffer);
+                handle_input(&buffered, &mut input_buffer, tick_counter.0);
             }
             ClientMessages::NetworkCommand(command_envelope) => handle_command(
                 &mut ctx,

@@ -4,7 +4,7 @@ use shared::{components::NetworkPhysicsState, movement::MovementInput};
 
 use super::{ReconciliationAction, ReconciliationStatus};
 use crate::{
-    game::rendering::current_visual_position,
+    game::rendering::{LocalVisualPosition, current_visual_position},
     networking::{
         physics::{CurrentMovementInput, PredictedBody, replay_prediction_ticks},
         prediction::Prediction,
@@ -177,6 +177,9 @@ fn finish_rollback(
 
 fn hard_resync(world: &mut World, player: Entity, authoritative: NetworkPhysicsState) {
     restore_authoritative_state(world, player, authoritative);
+    if let Some(mut visual) = world.entity_mut(player).get_mut::<LocalVisualPosition>() {
+        *visual = LocalVisualPosition::default();
+    }
     reset_player_prediction(world, player, authoritative);
     reset_simulation_clock(world, authoritative.tick);
 

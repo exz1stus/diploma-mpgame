@@ -11,7 +11,11 @@ pub(crate) fn handle_ping(ctx: &mut MessageContext, req: &BufferedClientMessage)
     ctx.reply(req, ServerMessages::Pong("Pong".to_string()));
 }
 
-pub(crate) fn handle_input(req: &BufferedClientMessage, input_buffer: &mut InputBuffer) {
+pub(crate) fn handle_input(
+    req: &BufferedClientMessage,
+    input_buffer: &mut InputBuffer,
+    server_tick: u64,
+) {
     let MovementInputs { inputs } = &req.message.payload else {
         return;
     };
@@ -22,6 +26,6 @@ pub(crate) fn handle_input(req: &BufferedClientMessage, input_buffer: &mut Input
     }
 
     for &input in inputs.iter() {
-        input_buffer.record(req.client_id, input);
+        input_buffer.record(req.client_id, input, server_tick);
     }
 }

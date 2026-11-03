@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use bevy::{
     app::{App, FixedUpdate},
@@ -19,7 +19,7 @@ use shared::{
 };
 
 use super::client::ClientLeft;
-use super::server::TickSet;
+use super::server::{TickCounter, TickSet};
 
 pub(crate) fn configure(app: &mut App) {
     app.init_resource::<InputBuffer>();
@@ -29,26 +29,36 @@ pub(crate) fn configure(app: &mut App) {
 
 #[derive(Resource, Default)]
 pub struct InputBuffer {
-    pending: HashMap<ClientId, MovementInput>,
+    pending: HashMap<ClientId, BTreeMap<u64, MovementInput>>,
     last_input: HashMap<ClientId, MovementInput>,
 }
 
 impl InputBuffer {
-    pub(crate) fn record(&mut self, client_id: ClientId, input: MovementInput) {
+    pub(crate) fn record(&mut self, client_id: ClientId, input: MovementInput, server_tick: u64) {
         const MAX_FUTURE_TICKS: u64 = 20;
-        if self.last_input.get(&client_id).is_some_and(|last| {
-            input.tick <= last.tick || input.tick > last.tick + MAX_FUTURE_TICKS
-        }) {
+        if input.tick < server_tick
+            || input.tick > server_tick.saturating_add(MAX_FUTURE_TICKS)
+        {
             return;
         }
 
-        if self
-            .pending
-            .get(&client_id)
-            .is_none_or(|pending| input.tick > pending.tick)
-        {
-            self.pending.insert(client_id, input);
+        self.pending
+            .entry(client_id)
+            .or_default()
+            .insert(input.tick, input);
+    }
+
+    fn take_for_tick(&mut self, client_id: ClientId, server_tick: u64) -> Option<MovementInput> {
+        let pending = self.pending.get_mut(&client_id)?;
+        let newest_ready = pending
+            .range(..=server_tick)
+            .next_back()
+            .map(|(_, input)| *input);
+        pending.retain(|tick, _| *tick > server_tick);
+        if pending.is_empty() {
+            self.pending.remove(&client_id);
         }
+        newest_ready
     }
 }
 
@@ -64,10 +74,11 @@ pub(crate) struct CurrentMovementInput {
 
 fn consume_input(
     mut input_buffer: ResMut<InputBuffer>,
+    tick: bevy_ecs::system::Res<TickCounter>,
     mut players: Query<(&Ownership, &mut CurrentMovementInput), With<Player>>,
 ) {
     for (ownership, mut current_movement) in &mut players {
-        let newest_input = input_buffer.pending.remove(&ownership.client_id);
+        let newest_input = input_buffer.take_for_tick(ownership.client_id, tick.0);
         if let Some(input) = newest_input
             && input_buffer
                 .last_input
@@ -80,5 +91,29 @@ fn consume_input(
         if let Some(input) = input_buffer.last_input.get(&ownership.client_id).copied() {
             current_movement.movement = Vec2::new(input.x as f32, input.y as f32);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn future_input_waits_for_its_tick_and_missing_tick_holds_previous_input() {
+        let mut buffer = InputBuffer::default();
+        let client_id = 7;
+        buffer.record(client_id, MovementInput { tick: 102, x: 1, y: 0 }, 100);
+        assert!(buffer.take_for_tick(client_id, 100).is_none());
+        assert!(buffer.take_for_tick(client_id, 101).is_none());
+        assert_eq!(buffer.take_for_tick(client_id, 102).unwrap().x, 1);
+        assert!(buffer.take_for_tick(client_id, 103).is_none());
+    }
+
+    #[test]
+    fn late_input_cannot_replace_current_movement() {
+        let mut buffer = InputBuffer::default();
+        let client_id = 7;
+        buffer.record(client_id, MovementInput { tick: 99, x: -1, y: 0 }, 100);
+        assert!(buffer.take_for_tick(client_id, 100).is_none());
     }
 }

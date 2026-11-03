@@ -76,7 +76,9 @@ pub fn process_server_message(
             );
         }
         ServerMessages::Pong(_) => {}
-        ServerMessages::NetworkCommandError(command_error) => todo!(),
+        ServerMessages::NetworkCommandError(command_error) => {
+            warn!("Server rejected network command: {command_error:?}");
+        }
     }
     false
 }

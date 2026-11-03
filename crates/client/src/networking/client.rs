@@ -1,6 +1,7 @@
+use crate::game::commands::send_shoot_command;
 pub use crate::networking::network::NetworkSimulation;
 use crate::networking::physics::{
-    self, initialize_physics_body, log_prediction_status, run_prediction, sync_remote_colliders,
+    self, initialize_physics_body, log_prediction_status, run_prediction,
 };
 use crate::networking::reconciliation::{
     ReconciliationStatus, apply_reconciliation, compare_authoritative_snapshots,
@@ -78,7 +79,6 @@ impl GameClient {
                 add_circle_visuals,
                 initialize_prediction,
                 initialize_physics_body,
-                sync_remote_colliders,
                 compare_authoritative_snapshots,
                 apply_reconciliation,
                 log_reconciliation_status,
@@ -87,6 +87,7 @@ impl GameClient {
                 render_player_visuals,
                 log_prediction_status,
                 send_messages,
+                send_shoot_command,
                 release_outgoing,
             )
                 .chain()

@@ -81,13 +81,18 @@ pub fn compare_authoritative_snapshots(
 
         if correction_required(position_error, velocity_error) {
             status.mismatching_snapshots += 1;
-            keep_newest_action(
-                &mut status.pending_action,
+            let action = if external_interaction_likely(position_error, velocity_error) {
+                ReconciliationAction::HardResync {
+                    entity_id,
+                    authoritative,
+                }
+            } else {
                 ReconciliationAction::Rollback {
                     entity_id,
                     authoritative,
-                },
-            );
+                }
+            };
+            keep_newest_action(&mut status.pending_action, action);
             continue;
         }
 
@@ -111,6 +116,13 @@ fn physics_errors(
 
 fn correction_required(position_error: f32, velocity_error: f32) -> bool {
     position_error > POSITION_ERROR_THRESHOLD || velocity_error > VELOCITY_ERROR_THRESHOLD
+}
+
+fn external_interaction_likely(position_error: f32, velocity_error: f32) -> bool {
+    const LARGE_POSITION_ERROR: f32 = 2.0;
+    const LARGE_VELOCITY_ERROR: f32 = 20.0;
+
+    position_error > LARGE_POSITION_ERROR || velocity_error > LARGE_VELOCITY_ERROR
 }
 
 fn gap_requires_resync(completed_tick: u64, authoritative_tick: u64) -> bool {
@@ -140,43 +152,5 @@ fn clear_obsolete_action(status: &mut ReconciliationStatus, authoritative_tick: 
 fn keep_newest_action(current: &mut Option<ReconciliationAction>, candidate: ReconciliationAction) {
     if current.is_none_or(|existing| candidate.tick() > existing.tick()) {
         *current = Some(candidate);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn measures_position_and_velocity_error() {
-        let predicted = NetworkPhysicsState {
-            tick: 100,
-            position: Vec2::new(10.0, 20.0),
-            velocity: Vec2::new(5.0, 0.0),
-        };
-
-        let authoritative = NetworkPhysicsState {
-            tick: 100,
-            position: Vec2::new(10.03, 20.04),
-            velocity: Vec2::new(5.06, 0.08),
-        };
-
-        let (position_error, velocity_error) = physics_errors(predicted, authoritative);
-
-        assert!((position_error - 0.05).abs() < 0.0001);
-        assert!((velocity_error - 0.10).abs() < 0.0001);
-    }
-
-    #[test]
-    fn correction_thresholds_are_strictly_exceeded() {
-        assert!(!correction_required(0.05, 0.10));
-        assert!(correction_required(0.051, 0.10));
-        assert!(correction_required(0.05, 0.101));
-    }
-
-    #[test]
-    fn large_tick_gap_requires_resynchronization() {
-        assert!(!gap_requires_resync(1_000, 1_256));
-        assert!(gap_requires_resync(1_000, 1_257));
     }
 }

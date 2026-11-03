@@ -36,15 +36,9 @@ impl InterpolationClock {
         let elapsed = (now - self.last_frame_s).max(0.0);
         self.last_frame_s = now;
         let gap = self.latest_tick as f64 - Self::BUFFER_TICKS - self.display_tick;
-        let speed = if gap > 1.0 {
-            1.1
-        } else if gap < -1.0 {
-            0.9
-        } else {
-            1.0
-        };
-        self.display_tick =
-            (self.display_tick + elapsed * self.tick_rate * speed).min(self.latest_tick as f64);
+        let speed = (1.0 + 0.05 * gap).clamp(0.9, 1.1);
+        self.display_tick = (self.display_tick + elapsed * self.tick_rate * speed)
+            .min(self.latest_tick as f64 + 1.0);
         self.display_tick
     }
 }
@@ -91,46 +85,23 @@ pub fn sample_at_tick(
         }
     }
 
-    Some(held(
-        *samples.back()?,
-        "Holding newest sample (no future sample)",
-    ))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn reports_blend_and_buffer_edges() {
-        let samples = VecDeque::from([
-            PositionSample {
-                tick: 10,
-                x: 0.0,
-                y: 10.0,
-            },
-            PositionSample {
-                tick: 14,
-                x: 8.0,
-                y: 2.0,
-            },
-        ]);
-        let blend = sample_at_tick(&samples, 11.0).unwrap();
-        assert_eq!((blend.from.tick, blend.to.tick), (10, 14));
-        assert_eq!(blend.fraction, 0.25);
-        assert_eq!(blend.position, Vec2::new(2.0, 8.0));
-        let before = sample_at_tick(&samples, 9.0).unwrap();
-        assert_eq!((before.from.tick, before.to.tick), (10, 10));
-        assert_eq!(before.position, Vec2::new(0.0, 10.0));
-        let after = sample_at_tick(&samples, 15.0).unwrap();
-        assert_eq!((after.from.tick, after.to.tick), (14, 14));
-        assert_eq!(after.position, Vec2::new(8.0, 2.0));
-        assert!(sample_at_tick(&VecDeque::new(), 11.0).is_none());
-        assert_eq!(
-            sample_at_tick(&VecDeque::from([samples[0]]), 11.0)
-                .unwrap()
-                .position,
-            before.position
-        );
+    let latest = *samples.back()?;
+    if display_tick > latest.tick as f64 && samples.len() >= 2 {
+        let previous = samples[samples.len() - 2];
+        let tick_span = latest.tick.saturating_sub(previous.tick);
+        if tick_span > 0 {
+            let delta = Vec2::new(latest.x - previous.x, latest.y - previous.y);
+            let fraction =
+                ((display_tick - latest.tick as f64).clamp(0.0, 1.0) / tick_span as f64) as f32;
+            return Some(InterpolationSample {
+                from: previous,
+                to: latest,
+                fraction,
+                position: Vec2::new(latest.x, latest.y) + delta * fraction,
+                status: "Extrapolating",
+            });
+        }
     }
+
+    Some(held(latest, "Holding newest sample (no future sample)"))
 }

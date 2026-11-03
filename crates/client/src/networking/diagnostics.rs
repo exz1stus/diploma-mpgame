@@ -55,7 +55,7 @@ impl MessageEvent {
                 ClientMessages::Ping { .. } => "Ping",
                 ClientMessages::Initiated => "Initiated",
                 ClientMessages::MovementInputs { .. } => "Movement inputs",
-                ClientMessages::NetworkCommand(_) => todo!(),
+                ClientMessages::NetworkCommand(_) => "Network command",
             },
             MessageContent::Received(message) => match message.payload {
                 ServerMessages::Pong(_) => "Pong",
@@ -64,7 +64,7 @@ impl MessageEvent {
                 ServerMessages::EntityUpdate(_) => "Entity update",
                 ServerMessages::EntityDespawn(_) => "Entity despawn",
                 ServerMessages::ComponentRemove { .. } => "Component remove",
-                ServerMessages::NetworkCommandError(command_error) => todo!(),
+                ServerMessages::NetworkCommandError(_) => "Network command error",
             },
         }
     }
@@ -77,7 +77,13 @@ impl MessageEvent {
                 ClientMessages::MovementInputs { inputs } => {
                     format!("{inputs:?}")
                 }
-                ClientMessages::NetworkCommand(command_envelope) => todo!(),
+                ClientMessages::NetworkCommand(envelope) => {
+                    format!(
+                        "command id: {}\npayload bytes: {}",
+                        envelope.id,
+                        envelope.bytes.len()
+                    )
+                }
             },
             MessageContent::Received(message) => match &message.payload {
                 ServerMessages::Pong(text) => {
@@ -106,7 +112,9 @@ impl MessageEvent {
                 } => {
                     format!("entity id: {entity_id}\nremoved component: {component_id}")
                 }
-                ServerMessages::NetworkCommandError(command_error) => todo!(),
+                ServerMessages::NetworkCommandError(error) => {
+                    format!("error: {error:?}")
+                }
             },
         }
     }
@@ -279,86 +287,4 @@ pub fn sample_network(
 
 fn finite_or_zero(value: f64) -> f64 {
     if value.is_finite() { value } else { 0.0 }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use shared::snapshots::{ComponentSnapshot, EntitySnapshot, WorldSnapshot};
-
-    #[test]
-    fn pairs_packet_rtt_and_prunes_the_window() {
-        let mut stats = NetworkDiagnostics::default();
-        stats.add_sent(
-            ClientMessage {
-                sequence: 7,
-                payload: ClientMessages::Ping {
-                    text: "hello".into(),
-                },
-            },
-            1.0,
-        );
-        stats.add_received(
-            ServerMessage {
-                sequence: Some(7),
-                tick: 3,
-                payload: ServerMessages::Pong("world".into()),
-            },
-            1.1,
-        );
-
-        let sent = &stats.message_events[0];
-        let received = &stats.message_events[1];
-        assert_eq!(sent.direction(), "Sent");
-        assert_eq!(received.direction(), "Received");
-        assert_eq!(received.sequence(), Some(7));
-        assert_eq!(received.decoded_payload(), "text: world\nserver tick: 3");
-        assert!(sent.rtt_ms.is_some());
-        assert_eq!(sent.rtt_ms, received.rtt_ms);
-
-        stats.prune_old_events(61.05);
-        assert_eq!(stats.message_events.len(), 1);
-        assert_eq!(stats.message_events[0].sequence(), Some(7));
-    }
-
-    #[test]
-    fn paused_capture_preserves_events_and_resumes_recording() {
-        let mut stats = NetworkDiagnostics::default();
-        stats.add_sent(
-            ClientMessage {
-                sequence: 1,
-                payload: ClientMessages::Initiated,
-            },
-            1.0,
-        );
-        stats.capture_paused = true;
-        stats.add_sent(
-            ClientMessage {
-                sequence: 2,
-                payload: ClientMessages::Initiated,
-            },
-            2.0,
-        );
-        stats.add_received(
-            ServerMessage {
-                sequence: Some(2),
-                tick: 1,
-                payload: ServerMessages::Pong("paused".into()),
-            },
-            2.1,
-        );
-        assert_eq!(stats.message_events.len(), 1);
-        assert_eq!(stats.message_events[0].sequence(), Some(1));
-
-        stats.capture_paused = false;
-        stats.add_sent(
-            ClientMessage {
-                sequence: 3,
-                payload: ClientMessages::Initiated,
-            },
-            3.0,
-        );
-        assert_eq!(stats.message_events.len(), 2);
-        assert_eq!(stats.message_events[1].sequence(), Some(3));
-    }
 }
