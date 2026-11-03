@@ -81,18 +81,13 @@ pub fn compare_authoritative_snapshots(
 
         if correction_required(position_error, velocity_error) {
             status.mismatching_snapshots += 1;
-            let action = if external_interaction_likely(position_error, velocity_error) {
-                ReconciliationAction::HardResync {
-                    entity_id,
-                    authoritative,
-                }
-            } else {
+            keep_newest_action(
+                &mut status.pending_action,
                 ReconciliationAction::Rollback {
                     entity_id,
                     authoritative,
-                }
-            };
-            keep_newest_action(&mut status.pending_action, action);
+                },
+            );
             continue;
         }
 
@@ -116,13 +111,6 @@ fn physics_errors(
 
 fn correction_required(position_error: f32, velocity_error: f32) -> bool {
     position_error > POSITION_ERROR_THRESHOLD || velocity_error > VELOCITY_ERROR_THRESHOLD
-}
-
-fn external_interaction_likely(position_error: f32, velocity_error: f32) -> bool {
-    const LARGE_POSITION_ERROR: f32 = 2.0;
-    const LARGE_VELOCITY_ERROR: f32 = 20.0;
-
-    position_error > LARGE_POSITION_ERROR || velocity_error > LARGE_VELOCITY_ERROR
 }
 
 fn gap_requires_resync(completed_tick: u64, authoritative_tick: u64) -> bool {
