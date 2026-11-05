@@ -9,7 +9,6 @@ pub(crate) struct GamePlugin;
 
 impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
-        app.add_command::<Shoot>();
         app.add_plugins(test_scenes::TestScenesPlugin::from_env());
 
         player::configure(app);
