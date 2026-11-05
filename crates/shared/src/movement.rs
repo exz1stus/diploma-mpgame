@@ -12,8 +12,7 @@ pub struct MovementInput {
 }
 
 pub fn movement_acceleration(velocity: Vec2, movement: Vec2) -> Vec2 {
-    const SPEED: f32 = 200.0;
-    const MAX_ACCEL: f32 = 200.0;
+    const SPEED: f32 = 500.0;
     const GAIN: f32 = 10.0;
 
     let target_velocity = movement.normalize_or_zero() * SPEED;
