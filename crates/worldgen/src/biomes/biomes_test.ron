@@ -1,0 +1,229 @@
+// Cold asteroid example: 32 surface biomes, using the existing Biome schema.
+// Temperature is Celsius [-50, 40); height is normalized [0, 1).
+// All ranges are [min, max), with complete coverage and no overlaps.
+//
+// 27 biomes occupy [-20, 20), including five distinct surfaces in [-2, 2).
+// Height splits emphasize the commonly sampled middle of signed fBm after
+// normalization. Region size is controlled by noise frequency, not this table.
+// Extreme temperatures use broad bands, rather than spending many definitions
+// on the small tails of the temperature distribution. Actual area/rarity still
+// depends on the temperature sampler and elevation noise.
+//
+// Cold temperatures give the poles pale ice caps. Surface variation follows
+// height and temperature; there is no independent latitude or shadow mask in
+// this schema. "Shadow" and "crater" names are visual/geological inspiration,
+// not a guarantee of simulated lighting or actual crater geometry.
+// No vegetation or substantial atmosphere is assumed.
+[
+    // Deep polar cold: one continuous cap across all heights.
+    (
+        name: "permanent_polar_ice",
+        color: "#F3FAFF",
+        height: (min: 0.0, max: 1.0),
+        temperature: (min: -50.0, max: -30.0),
+    ),
+
+    // Outer polar ice: low fractured sheets and brighter elevated ice.
+    (
+        name: "fractured_ice_basins",
+        color: "#B7DCEB",
+        height: (min: 0.0, max: 0.5),
+        temperature: (min: -30.0, max: -20.0),
+    ),
+    (
+        name: "polar_ice_highlands",
+        color: "#E0EDF7",
+        height: (min: 0.5, max: 1.0),
+        temperature: (min: -30.0, max: -20.0),
+    ),
+
+    // Ice-rich transition: wide height bands retain large connected regions.
+    (
+        name: "buried_ice_basins",
+        color: "#597E9A",
+        height: (min: 0.0, max: 0.42),
+        temperature: (min: -20.0, max: -12.0),
+    ),
+    (
+        name: "blue_ice_plains",
+        color: "#83BDDA",
+        height: (min: 0.42, max: 0.5),
+        temperature: (min: -20.0, max: -12.0),
+    ),
+    (
+        name: "sintered_frost_fields",
+        color: "#B9CFD8",
+        height: (min: 0.5, max: 0.58),
+        temperature: (min: -20.0, max: -12.0),
+    ),
+    (
+        name: "glacier_ridges",
+        color: "#DFE7F2",
+        height: (min: 0.58, max: 1.0),
+        temperature: (min: -20.0, max: -12.0),
+    ),
+
+    // Frost-dominated terrain, keeping the warmer edges of the ice caps pale.
+    (
+        name: "cold_trap_ice",
+        color: "#3D637D",
+        height: (min: 0.0, max: 0.42),
+        temperature: (min: -12.0, max: -6.0),
+    ),
+    (
+        name: "frosted_crater_floors",
+        color: "#8DAAB9",
+        height: (min: 0.42, max: 0.5),
+        temperature: (min: -12.0, max: -6.0),
+    ),
+    (
+        name: "ice_cemented_regolith",
+        color: "#A2AEB5",
+        height: (min: 0.5, max: 0.58),
+        temperature: (min: -12.0, max: -6.0),
+    ),
+    (
+        name: "rime_covered_ridges",
+        color: "#CEDBE5",
+        height: (min: 0.58, max: 1.0),
+        temperature: (min: -12.0, max: -6.0),
+    ),
+
+    // Near freezing: patchy frost and more exposed rock.
+    (
+        name: "frozen_shadow_basins",
+        color: "#304658",
+        height: (min: 0.0, max: 0.42),
+        temperature: (min: -6.0, max: -2.0),
+    ),
+    (
+        name: "frost_margin_regolith",
+        color: "#76868B",
+        height: (min: 0.42, max: 0.5),
+        temperature: (min: -6.0, max: -2.0),
+    ),
+    (
+        name: "frosted_breccia",
+        color: "#8D9497",
+        height: (min: 0.5, max: 0.58),
+        temperature: (min: -6.0, max: -2.0),
+    ),
+    (
+        name: "patchy_ice_highlands",
+        color: "#B3BEC8",
+        height: (min: 0.58, max: 1.0),
+        temperature: (min: -6.0, max: -2.0),
+    ),
+
+    // Most detailed band: the common, near-zero part of the distribution.
+    (
+        name: "dark_crater_floors",
+        color: "#2E3542",
+        height: (min: 0.0, max: 0.38),
+        temperature: (min: -2.0, max: 2.0),
+    ),
+    (
+        name: "salt_crust_pans",
+        color: "#BEB8A4",
+        height: (min: 0.38, max: 0.46),
+        temperature: (min: -2.0, max: 2.0),
+    ),
+    (
+        name: "mixed_ice_regolith",
+        color: "#8B9F9D",
+        height: (min: 0.46, max: 0.54),
+        temperature: (min: -2.0, max: 2.0),
+    ),
+    (
+        name: "silicate_gravel_plains",
+        color: "#7D8089",
+        height: (min: 0.54, max: 0.62),
+        temperature: (min: -2.0, max: 2.0),
+    ),
+    (
+        name: "bright_ejecta_ridges",
+        color: "#C3C0B7",
+        height: (min: 0.62, max: 1.0),
+        temperature: (min: -2.0, max: 2.0),
+    ),
+
+    // Cool exposed surfaces: dark carbon-rich lows and pale rocky highs.
+    (
+        name: "carbonaceous_basins",
+        color: "#32313A",
+        height: (min: 0.0, max: 0.42),
+        temperature: (min: 2.0, max: 8.0),
+    ),
+    (
+        name: "ochre_dust_plains",
+        color: "#A18B68",
+        height: (min: 0.42, max: 0.5),
+        temperature: (min: 2.0, max: 8.0),
+    ),
+    (
+        name: "weathered_basalt",
+        color: "#5B626B",
+        height: (min: 0.5, max: 0.58),
+        temperature: (min: 2.0, max: 8.0),
+    ),
+    (
+        name: "exposed_anorthosite",
+        color: "#ACA9A2",
+        height: (min: 0.58, max: 1.0),
+        temperature: (min: 2.0, max: 8.0),
+    ),
+
+    // Mild sun-facing belts.
+    (
+        name: "dark_basalt_depressions",
+        color: "#3E414D",
+        height: (min: 0.0, max: 0.45),
+        temperature: (min: 8.0, max: 14.0),
+    ),
+    (
+        name: "iron_rich_regolith",
+        color: "#96715D",
+        height: (min: 0.45, max: 0.55),
+        temperature: (min: 8.0, max: 14.0),
+    ),
+    (
+        name: "rocky_crater_uplands",
+        color: "#8C8986",
+        height: (min: 0.55, max: 1.0),
+        temperature: (min: 8.0, max: 14.0),
+    ),
+
+    // Warmer exposed terrain, still inside the main -20 to +20 C range.
+    (
+        name: "sunlit_crater_floors",
+        color: "#645347",
+        height: (min: 0.0, max: 0.45),
+        temperature: (min: 14.0, max: 20.0),
+    ),
+    (
+        name: "copper_toned_scree",
+        color: "#AD8060",
+        height: (min: 0.45, max: 0.55),
+        temperature: (min: 14.0, max: 20.0),
+    ),
+    (
+        name: "barren_silicate_ridges",
+        color: "#ABA18B",
+        height: (min: 0.55, max: 1.0),
+        temperature: (min: 14.0, max: 20.0),
+    ),
+
+    // Rare warm tails: broad coverage without spending many biome slots here.
+    (
+        name: "warm_exposed_rock",
+        color: "#B99572",
+        height: (min: 0.0, max: 1.0),
+        temperature: (min: 20.0, max: 30.0),
+    ),
+    (
+        name: "hot_dark_regolith",
+        color: "#6F4F42",
+        height: (min: 0.0, max: 1.0),
+        temperature: (min: 30.0, max: 40.0),
+    ),
+]

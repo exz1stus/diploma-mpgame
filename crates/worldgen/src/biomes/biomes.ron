@@ -1,0 +1,50 @@
+[
+    (
+        name: "icy_plains",
+        color: "#98d5ea",
+        height: (min: 0.0, max: 0.25),
+        temperature: (min: -45.0, max: 0.0),
+    ),
+    (
+        name: "icy_craters",
+        color: "#2d3841",
+        height: (min: 0.25, max: 0.65),
+        temperature: (min: -45.0, max: 0.0),
+    ),
+    (
+        name: "icy_mountains",
+        color: "#E3F1F5",
+        height: (min: 0.65, max: 1.0),
+        temperature: (min: -45.0, max: 0.0),
+    ),
+    (
+        name: "water_islands",
+        color: "#0022ff",
+        height: (min: 0.0, max: 0.5),
+        temperature: (min: 0.0, max: 20.0),
+    ),
+    (
+        name: "plains",
+        color: "#1e222a",
+        height: (min: 0.0, max: 0.5),
+        temperature: (min: 20.0, max: 55.0),
+    ),
+    (
+        name: "brown",
+        color: "#2f1c01",
+        height: (min: 0.5, max: 0.75),
+        temperature: (min: 0.0, max: 13.0),
+    ),
+    (
+        name: "craters",
+        color: "#1b1e39",
+        height: (min: 0.5, max: 0.8),
+        temperature: (min: 13.0, max: 55.0),
+    ),
+    (
+        name: "mountains",
+        color: "#606060",
+        height: (min: 0.8, max: 1.0),
+        temperature: (min: 0.0, max: 55.0),
+    ),
+]
