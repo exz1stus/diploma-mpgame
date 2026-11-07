@@ -8,9 +8,9 @@ use std::{
 };
 
 use worldgen::{
-    BasinGenerator, BiomeMap, CraterGenerator, ElevationNoise, ElevationSampler, NoiseConfig,
-    NoiseSource, PlanetParams, TemperatureCoefficients, TemperatureRegionsNoise,
-    TemperatureSampler, TilePos, VolcanoGenerator, WorldGenerator, WorldGeneratorConfig,
+    BasinGenerator, BiomeMap, CraterGenerator, ElevationNoise, NoiseConfig, NoiseSource,
+    PlanetParams, TemperatureCoefficients, TemperatureModel, TemperatureRegionsNoise, TilePos,
+    VolcanoGenerator, WorldGenerator, WorldGeneratorConfig, WorldGeography,
 };
 
 #[derive(serde::Serialize)]
@@ -566,17 +566,21 @@ impl NoiseSource for PreviewNoise {
 
 fn preview_generator(settings: &PreviewSettings) -> WorldGenerator {
     let source = ElevationNoise::with_config(settings.elevation_seed, settings.elevation);
-    WorldGenerator::new(
+    build_world_generator_with_elevation(
         settings.config,
         settings.biomes.clone(),
-        settings.planet,
-        ElevationSampler::new(PreviewNoise {
+        PreviewNoise {
             source,
             frequency: settings.frequency,
-        }),
-        TemperatureSampler::with_config(
+        },
+        TemperatureModel::with_config(
             settings.temperature,
             TemperatureRegionsNoise::with_config(settings.region_seed, settings.region),
+            WorldGeography::new(
+                settings.config.chunk_size,
+                settings.config.world_size_chunks,
+            ),
+            settings.planet,
         ),
         settings.craters,
         settings.basins.clone(),
@@ -840,8 +844,8 @@ fn region_bytes(query: &str) -> Result<Vec<u8>, String> {
                         x: (base_x + offset).min(side - 1) as i64,
                         y: (base_y + offset).min(side - 1) as i64,
                     };
-                    let tile = generator.tile_at(pos);
-                    if let Some(biome) = &tile.biome {
+                    let tile = generator.draft_at(pos);
+                    if let Some(biome) = tile.biome.and_then(|id| generator.biomes().get(id)) {
                         output.push(1);
                         output.extend_from_slice(&color_rgb(&biome.color)?);
                     } else {
@@ -1017,7 +1021,7 @@ mod tests {
     }
 
     #[test]
-    fn temperature_coefficients_and_planet_controls_reach_the_sampler() {
+    fn temperature_coefficients_and_planet_controls_reach_the_model() {
         let original = first_metrics(EQUATOR_QUERY);
         for setting in [
             "temperature_base=-20",
@@ -1098,7 +1102,7 @@ mod tests {
     }
 
     fn assert_record(bytes: &[u8], generator: &WorldGenerator, pos: TilePos) {
-        let tile = generator.tile_at(pos);
+        let tile = generator.draft_at(pos);
         assert_eq!(
             f32::from_le_bytes(bytes[4..8].try_into().unwrap()),
             tile.height as f32
@@ -1107,7 +1111,7 @@ mod tests {
             f32::from_le_bytes(bytes[8..12].try_into().unwrap()),
             tile.temperature as f32
         );
-        if let Some(biome) = &tile.biome {
+        if let Some(biome) = tile.biome.and_then(|id| generator.biomes().get(id)) {
             assert_eq!(bytes[0], 1);
             assert_eq!(bytes[1..4], color_rgb(&biome.color).unwrap());
         } else {
@@ -1275,9 +1279,7 @@ mod tests {
             );
         }
         assert_eq!(
-            selected_biomes(&params("biome=biomes%2Eron"))
-                .unwrap()
-                .0,
+            selected_biomes(&params("biome=biomes%2Eron")).unwrap().0,
             "biomes.ron"
         );
     }

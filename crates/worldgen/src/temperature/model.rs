@@ -19,9 +19,13 @@ impl Default for PlanetParams {
     }
 }
 
-pub struct TemperatureSampler {
+/// Daily-average climate temperature at a world position and terrain height.
+/// Owns the world geography, seasonal settings, coefficients, and regional noise.
+pub struct TemperatureModel {
     config: TemperatureCoefficients,
     region_noise: Box<dyn NoiseSource>,
+    geography: WorldGeography,
+    planet: PlanetParams,
 }
 
 // all coefficients are in Celsius
@@ -44,12 +48,17 @@ impl Default for TemperatureCoefficients {
     }
 }
 
-impl TemperatureSampler {
-    pub fn new(noise: impl NoiseSource) -> Self {
-        Self::with_config(TemperatureCoefficients::default(), noise)
+impl TemperatureModel {
+    pub fn new(noise: impl NoiseSource, geography: WorldGeography, planet: PlanetParams) -> Self {
+        Self::with_config(TemperatureCoefficients::default(), noise, geography, planet)
     }
 
-    pub fn with_config(config: TemperatureCoefficients, noise: impl NoiseSource) -> Self {
+    pub fn with_config(
+        config: TemperatureCoefficients,
+        noise: impl NoiseSource,
+        geography: WorldGeography,
+        planet: PlanetParams,
+    ) -> Self {
         assert!(
             [config.base, config.region, config.solar, config.altitude]
                 .iter()
@@ -59,20 +68,16 @@ impl TemperatureSampler {
         Self {
             config,
             region_noise: Box::new(noise),
+            geography,
+            planet,
         }
     }
 
-    /// Daily average temperature in Celsius for the supplied season.
+    /// Daily average temperature in Celsius for the configured season.
     /// Height is measured in kilometers.
-    pub fn sample_average(
-        &self,
-        pos: TilePos,
-        height: f64,
-        world_geography: &WorldGeography,
-        planet: &PlanetParams,
-    ) -> f64 {
-        let geo_pos = world_geography.geo(pos);
-        let daily_sun = self.daily_average_sun_exposure(geo_pos, planet);
+    pub fn average_at(&self, pos: TilePos, height: f64) -> f64 {
+        let geo_pos = self.geography.geo(pos);
+        let daily_sun = self.daily_average_sun_exposure(geo_pos, &self.planet);
         let region_noise = self.region_noise.sample(pos.x as f64, pos.y as f64);
 
         self.config.base + self.config.solar * daily_sun + self.config.region * region_noise

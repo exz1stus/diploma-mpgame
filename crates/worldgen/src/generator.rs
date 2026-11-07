@@ -1,137 +1,91 @@
-use crate::features::feature::{FeatureLayer, TerrainFeature, WorldBounds};
-use crate::{
-    BasinGenerator, Biome, BiomeMap, CraterGenerator, ElevationSampler, PlanetParams,
-    TemperatureSampler, TileSampler, VolcanoGenerator, WorldGeneratorConfig, WorldGeography,
-};
+use std::sync::Arc;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct TilePos {
-    pub x: i64,
-    pub y: i64,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct ChunkPos {
-    pub x: i64,
-    pub y: i64,
-}
-
-impl ChunkPos {
-    pub fn world_bounds(&self, chunk_size: u32) -> WorldBounds {
-        let min_x = self.x * chunk_size as i64;
-        let min_y = self.y * chunk_size as i64;
-
-        WorldBounds {
-            min_x: min_x as f64,
-            min_y: min_y as f64,
-            max_x: (min_x + chunk_size as i64) as f64,
-            max_y: (min_y + chunk_size as i64) as f64,
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct Tile {
-    /// Normalized elevation after terrain features, in [0, 1].
-    pub height: f64,
-    /// Daily average Celsius temperature for the configured season.
-    pub temperature: f64,
-    /// None when no biome definition covers this height and temperature.
-    pub biome: Option<Biome>,
-}
+use crate::{BiomeMap, GenerationStage, Tile, TileDraft, TilePos};
 
 pub struct WorldGenerator {
-    biomes: BiomeMap,
-    world_geography: WorldGeography,
-    planet: PlanetParams,
-    elevation: ElevationSampler,
-    temperature: TemperatureSampler,
-    craters: FeatureLayer<CraterGenerator>,
-    basins: FeatureLayer<BasinGenerator>,
-    volcanoes: FeatureLayer<VolcanoGenerator>,
+    stages: Vec<Box<dyn GenerationStage>>,
+    biomes: Arc<BiomeMap>,
 }
 
 impl WorldGenerator {
-    pub fn new(
-        config: WorldGeneratorConfig,
-        biomes: BiomeMap,
-        planet: PlanetParams,
-        elevation: ElevationSampler,
-        temperature: TemperatureSampler,
-        craters: CraterGenerator,
-        basins: BasinGenerator,
-        volcanoes: VolcanoGenerator,
-    ) -> Self {
-        assert!(craters.cell_size > 0, "crater cell size must be positive");
-        assert!(craters.min_radius.is_finite() && craters.min_radius > 0.0);
-        assert!(craters.max_radius.is_finite() && craters.max_radius >= craters.min_radius);
-        assert!(craters.density.is_finite() && (0.0..=4.0).contains(&craters.density));
-        volcanoes.validate();
-        Self {
-            biomes,
-            world_geography: WorldGeography::new(config.chunk_size, config.world_size_chunks),
-            planet,
-            elevation,
-            temperature,
-            craters: FeatureLayer {
-                seed: config.seed ^ 0x4352_4154,
-                generator: craters,
-            },
-            basins: FeatureLayer {
-                seed: config.seed ^ 0x4352_4152,
-                generator: basins,
-            },
-            volcanoes: FeatureLayer {
-                seed: config.seed ^ 0x564F_4C43,
-                generator: volcanoes,
-            },
-        }
+    /// Execute stages in the supplied order. Biome stages and feature IDs must
+    /// use the supplied registry; pipeline assembly determines stage dependencies.
+    pub fn new(stages: Vec<Box<dyn GenerationStage>>, biomes: Arc<BiomeMap>) -> Self {
+        Self { stages, biomes }
     }
 
-    /// Sample elevation, basins, volcanoes, craters, average temperature, and biome.
-    /// Coordinates are global tiles. Sampling is independent of chunk boundaries.
-    pub fn tile_at(&self, pos: TilePos) -> Tile {
-        let x = pos.x as f64;
-        let y = pos.y as f64;
-        let mut height = (self.elevation.sample(pos) + 1.0) * 0.5;
-        let mut biome = None;
-        let bounds = self
-            .world_geography
-            .global_to_chunk(pos)
-            .world_bounds(self.world_geography.chunk_size);
+    /// Run every stage without requiring biome coverage, for tools such as previews.
+    pub fn draft_at(&self, pos: TilePos) -> TileDraft {
+        let mut draft = TileDraft::default();
+        for stage in &self.stages {
+            stage.apply(pos, &mut draft);
+        }
+        draft
+    }
 
-        if self.basins.generator.probability > 0.0 {
-            for basin in self.basins.features_in(bounds) {
-                height = basin.apply_height(x, y, height);
-            }
-        }
-        if self.craters.generator.density > 0.0 {
-            for crater in self.craters.features_in(bounds) {
-                height = crater.apply_height(x, y, height);
-            }
-        }
-        if self.volcanoes.generator.probability > 0.0 {
-            for volcano in self.volcanoes.features_in(bounds) {
-                height = volcano.apply_height(x, y, height);
-            }
-        }
-        let height = height.clamp(0.0, 1.0);
-        let temperature =
-            self.temperature
-                .sample_average(pos, height, &self.world_geography, &self.planet);
-        biome = self.biomes.determine_biome(temperature, height).cloned();
-        Tile {
-            height,
-            temperature,
-            biome,
-        }
+    /// Sample a completed tile in global coordinates, independently of chunk bounds.
+    /// Panics if no stage assigned a biome for the generated height and temperature.
+    pub fn tile_at(&self, pos: TilePos) -> Tile {
+        self.draft_at(pos).finish()
+    }
+
+    pub fn biomes(&self) -> &BiomeMap {
+        &self.biomes
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{NoiseSource, Range, TemperatureCoefficients};
+    use crate::{
+        BasinGenerator, Biome, BiomeId, BiomeStage, ClampHeightStage, CraterGenerator,
+        ElevationStage, NoiseSource, PlanetParams, Range, TemperatureCoefficients,
+        TemperatureModel, TemperatureStage, VolcanoGenerator, WorldGeneratorConfig, WorldGeography,
+        build_world_generator_with_elevation,
+    };
+
+    #[test]
+    fn custom_stages_feed_climate_and_preserve_biome_overrides() {
+        struct ConeStage;
+        impl GenerationStage for ConeStage {
+            fn apply(&self, pos: TilePos, tile: &mut TileDraft) {
+                if pos.x == 0 {
+                    tile.height += 2.0;
+                    tile.biome_override = Some(BiomeId(0));
+                }
+            }
+        }
+
+        let biomes = Arc::new(BiomeMap::parse());
+        let stages: Vec<Box<dyn GenerationStage>> = vec![
+            Box::new(ElevationStage::new(FlatNoise)),
+            Box::new(ConeStage),
+            Box::new(ClampHeightStage),
+            Box::new(TemperatureStage::new(TemperatureModel::with_config(
+                TemperatureCoefficients {
+                    base: 0.0,
+                    solar: 0.0,
+                    region: 0.0,
+                    altitude: 10.0,
+                },
+                FlatNoise,
+                WorldGeography::new(16, 4),
+                PlanetParams::default(),
+            ))),
+            Box::new(BiomeStage::new(Arc::clone(&biomes))),
+        ];
+        let generator = WorldGenerator::new(stages, biomes);
+        let cone = generator.tile_at(TilePos { x: 0, y: 0 });
+        assert_eq!(cone.height, 1.0);
+        assert_eq!(cone.temperature, -10.0);
+        // Height 1 is outside the classifier's exclusive upper limit, so the
+        // final tile can only finish if its feature override was preserved.
+        assert_eq!(cone.biome, BiomeId(0));
+        let plain = generator.tile_at(TilePos { x: 1, y: 0 });
+        assert_eq!(plain.height, 0.5);
+        assert_eq!(plain.temperature, -5.0);
+        assert_ne!(plain.biome, cone.biome);
+    }
 
     struct FlatNoise;
     impl NoiseSource for FlatNoise {
@@ -152,7 +106,7 @@ mod tests {
                 max: 100.0,
             },
         };
-        WorldGenerator::new(
+        build_world_generator_with_elevation(
             WorldGeneratorConfig {
                 seed: 42,
                 chunk_size,
@@ -164,9 +118,8 @@ mod tests {
                 biome("volcanic_highlands", 0.55, 1.0),
             ])
             .unwrap(),
-            PlanetParams::default(),
-            ElevationSampler::new(FlatNoise),
-            TemperatureSampler::with_config(
+            FlatNoise,
+            TemperatureModel::with_config(
                 TemperatureCoefficients {
                     base: 0.0,
                     solar: 0.0,
@@ -174,6 +127,8 @@ mod tests {
                     altitude: 10.0,
                 },
                 FlatNoise,
+                WorldGeography::new(chunk_size, 64 / chunk_size),
+                PlanetParams::default(),
             ),
             CraterGenerator {
                 density: 0.0,
@@ -216,7 +171,10 @@ mod tests {
                 assert_eq!(baseline.height, 0.5);
                 if tile.height > 0.55 {
                     raised += 1;
-                    assert_eq!(tile.biome.as_ref().unwrap().name, "volcanic_highlands");
+                    assert_eq!(
+                        small_chunks.biomes().get(tile.biome).unwrap().name,
+                        "volcanic_highlands"
+                    );
                     assert!(tile.temperature < baseline.temperature);
                 }
             }

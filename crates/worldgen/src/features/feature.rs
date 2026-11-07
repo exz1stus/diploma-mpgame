@@ -1,4 +1,13 @@
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
+
 use crate::features::hash::hash_cell;
+use crate::{TileDraft, TilePos, WorldBounds};
+
+use rand::SeedableRng;
+use rand_chacha::ChaCha8Rng;
 
 pub trait TerrainFeature: Send + Sync {
     /// Center in world coordinates.
@@ -8,12 +17,13 @@ pub trait TerrainFeature: Send + Sync {
     /// influence terrain.
     fn influence_radius(&self) -> f64;
 
-    /// Modify terrain at a world-space position.
-    fn apply_height(&self, x: f64, y: f64, height: f64) -> f64;
+    /// Modify terrain at a world-space position. Chunk queries may select this
+    /// feature for tiles outside its influence; leave those tiles unchanged.
+    fn apply(&self, pos: TilePos, tile: &mut TileDraft);
 }
 
 pub trait FeatureGenerator: Send + Sync {
-    type Feature: TerrainFeature;
+    type Feature: TerrainFeature + Clone;
 
     /// Size of the spatial generation cells.
     fn cell_size(&self) -> i64;
@@ -30,36 +40,38 @@ pub trait FeatureGenerator: Send + Sync {
     ) -> Vec<Self::Feature>;
 }
 
-#[derive(Clone, Copy)]
-pub struct WorldBounds {
-    pub min_x: f64,
-    pub min_y: f64,
-    pub max_x: f64,
-    pub max_y: f64,
-}
-
-impl WorldBounds {
-    pub fn intersects_circle(&self, x: f64, y: f64, radius: f64) -> bool {
-        let closest_x = x.clamp(self.min_x, self.max_x);
-        let closest_y = y.clamp(self.min_y, self.max_y);
-
-        let dx = x - closest_x;
-        let dy = y - closest_y;
-
-        dx * dx + dy * dy <= radius * radius
-    }
-}
-
 pub struct FeatureLayer<G: FeatureGenerator> {
     pub seed: u64,
     pub generator: G,
+    features_cache: Mutex<HashMap<(i64, i64), Arc<[G::Feature]>>>,
 }
 
 impl<G: FeatureGenerator> FeatureLayer<G> {
-    pub fn features_in(&self, bounds: WorldBounds) -> Vec<G::Feature> {
-        use rand::SeedableRng;
-        use rand_chacha::ChaCha8Rng;
+    pub fn new(seed: u64, generator: G) -> Self {
+        Self {
+            seed,
+            generator,
+            features_cache: Mutex::new(HashMap::new()),
+        }
+    }
 
+    fn cell_features(&self, cx: i64, cy: i64) -> Arc<[G::Feature]> {
+        let mut cache = self.features_cache.lock().expect("feature cache poisoned");
+
+        let features = cache.entry((cx, cy)).or_insert_with(|| {
+            let seed = hash_cell(self.seed, cx, cy);
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+
+            let generated: Arc<[G::Feature]> =
+                self.generator.generate_cell(cx, cy, &mut rng).into();
+
+            generated
+        });
+
+        Arc::clone(features)
+    }
+
+    pub fn features_in(&self, bounds: WorldBounds) -> Vec<G::Feature> {
         let size = self.generator.cell_size();
         let padding = self.generator.max_influence_radius();
 
@@ -69,21 +81,17 @@ impl<G: FeatureGenerator> FeatureLayer<G> {
         let max_x = ((bounds.max_x + padding) / size as f64).floor() as i64;
         let max_y = ((bounds.max_y + padding) / size as f64).floor() as i64;
 
-        let mut result = Vec::new();
+        let mut result: Vec<G::Feature> = Vec::new();
 
         for cy in min_y..=max_y {
             for cx in min_x..=max_x {
-                let cell_seed = hash_cell(self.seed, cx, cy);
+                let features = self.cell_features(cx, cy);
 
-                let mut rng = ChaCha8Rng::seed_from_u64(cell_seed);
-
-                let features = self.generator.generate_cell(cx, cy, &mut rng);
-
-                for feature in features {
+                for feature in features.iter() {
                     let (x, y) = feature.center();
 
                     if bounds.intersects_circle(x, y, feature.influence_radius()) {
-                        result.push(feature);
+                        result.push(feature.clone());
                     }
                 }
             }

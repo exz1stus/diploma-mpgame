@@ -1,7 +1,9 @@
 use rand::{Rng, RngExt};
 
 use crate::features::feature::{FeatureGenerator, TerrainFeature};
+use crate::{TileDraft, TilePos};
 
+#[derive(Clone)]
 pub struct Crater {
     pub x: f64,
     pub y: f64,
@@ -19,21 +21,23 @@ impl TerrainFeature for Crater {
         self.radius * 1.5
     }
 
-    fn apply_height(&self, x: f64, y: f64, height: f64) -> f64 {
+    fn apply(&self, pos: TilePos, tile: &mut TileDraft) {
+        let x = pos.x as f64;
+        let y = pos.y as f64;
         let dx = x - self.x;
         let dy = y - self.y;
 
         let r = (dx * dx + dy * dy).sqrt() / self.radius;
 
         if r >= 1.5 {
-            return height;
+            return;
         }
 
         let bowl = -self.depth * (1.0 - r * r).max(0.0).powi(2);
 
         let rim = self.rim_height * (-((r - 1.0) / 0.12).powi(2)).exp();
 
-        height + bowl + rim
+        tile.height = tile.height + bowl + rim;
     }
 }
 

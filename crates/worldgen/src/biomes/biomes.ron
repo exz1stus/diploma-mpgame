@@ -1,4 +1,6 @@
 // Cold asteroid example: 32 surface biomes, using the existing Biome schema.
+// Biome IDs are zero-based indices in this sequence. Append new biomes;
+// inserting, deleting, or reordering existing entries requires world regeneration.
 // Temperature is Celsius [-50, 40); height is normalized [0, 1).
 // All ranges are [min, max), with complete coverage and no overlaps.
 //
@@ -7,7 +9,7 @@
 // normalization. Region size is controlled by noise frequency, not this table.
 // Extreme temperatures use broad bands, rather than spending many definitions
 // on the small tails of the temperature distribution. Actual area/rarity still
-// depends on the temperature sampler and elevation noise.
+// depends on the temperature model and elevation noise.
 //
 // Cold temperatures give the poles pale ice caps. Surface variation follows
 // height and temperature; there is no independent latitude or shadow mask in

@@ -1,5 +1,4 @@
   [
-    // Warmer exposed terrain, still inside the main -20 to +20 C range.
     (
         name: "basin",
         color: "#645347",

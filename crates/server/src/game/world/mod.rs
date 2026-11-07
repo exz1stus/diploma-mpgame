@@ -21,14 +21,14 @@ impl Plugin for WorldGeneration {
         let config = WorldGeneratorConfig::default();
         let mut coarse_elevation = worldgen::ElevationNoise::default_config();
         coarse_elevation.octaves = 2;
-        app.insert_resource(WorldGenerator(worldgen::WorldGenerator::new(
+        app.insert_resource(WorldGenerator(worldgen::build_world_generator(
             config,
             worldgen::BiomeMap::parse(),
-            worldgen::PlanetParams::default(),
-            worldgen::ElevationSampler::new(worldgen::ElevationNoise::new(config.seed)),
-            worldgen::TemperatureSampler::new(worldgen::TemperatureRegionsNoise::new(
-                config.seed ^ 0x5445_4d50,
-            )),
+            worldgen::TemperatureModel::new(
+                worldgen::TemperatureRegionsNoise::new(config.seed ^ 0x5445_4d50),
+                worldgen::WorldGeography::new(config.chunk_size, config.world_size_chunks),
+                worldgen::PlanetParams::default(),
+            ),
             worldgen::CraterGenerator::default(),
             worldgen::BasinGenerator::new(worldgen::ElevationNoise::with_config(
                 config.seed,

@@ -1,0 +1,135 @@
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
+
+use super::feature::{FeatureGenerator, FeatureLayer, TerrainFeature};
+use crate::{ChunkPos, GenerationStage, TileDraft, TilePos};
+
+pub struct FeatureStage<G: FeatureGenerator> {
+    layer: FeatureLayer<G>,
+    chunk_size: u32,
+    chunk_features: Mutex<HashMap<ChunkPos, Arc<[G::Feature]>>>,
+}
+
+impl<G: FeatureGenerator> FeatureStage<G> {
+    pub fn new(seed: u64, generator: G, chunk_size: u32) -> Self {
+        assert!(chunk_size > 0, "chunk_size must be positive");
+        Self {
+            layer: FeatureLayer::new(seed, generator),
+            chunk_size,
+            chunk_features: Mutex::new(HashMap::new()),
+        }
+    }
+
+    fn features_for_chunk(&self, chunk: ChunkPos) -> Arc<[G::Feature]> {
+        let mut cache = self
+            .chunk_features
+            .lock()
+            .expect("chunk feature cache poisoned");
+        Arc::clone(cache.entry(chunk).or_insert_with(|| {
+            self.layer
+                .features_in(chunk.world_bounds(self.chunk_size))
+                .into()
+        }))
+    }
+}
+
+impl<G: FeatureGenerator> GenerationStage for FeatureStage<G> {
+    fn apply(&self, pos: TilePos, tile: &mut TileDraft) {
+        let size = i64::from(self.chunk_size);
+        let chunk = ChunkPos {
+            x: pos.x.div_euclid(size),
+            y: pos.y.div_euclid(size),
+        };
+        for feature in self.features_for_chunk(chunk).iter() {
+            feature.apply(pos, tile);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[derive(Clone)]
+    struct BorderFeature;
+
+    impl TerrainFeature for BorderFeature {
+        fn center(&self) -> (f64, f64) {
+            (15.0, 8.0)
+        }
+
+        fn influence_radius(&self) -> f64 {
+            4.0
+        }
+
+        fn apply(&self, pos: TilePos, tile: &mut TileDraft) {
+            let distance = (pos.x as f64 - 15.0).hypot(pos.y as f64 - 8.0);
+            tile.height += (self.influence_radius() - distance).max(0.0);
+        }
+    }
+
+    struct CountingGenerator {
+        queries: Arc<AtomicUsize>,
+    }
+
+    impl FeatureGenerator for CountingGenerator {
+        type Feature = BorderFeature;
+
+        fn cell_size(&self) -> i64 {
+            16
+        }
+
+        fn max_influence_radius(&self) -> f64 {
+            self.queries.fetch_add(1, Ordering::Relaxed);
+            4.0
+        }
+
+        fn generate_cell(
+            &self,
+            cell_x: i64,
+            cell_y: i64,
+            _rng: &mut impl rand::Rng,
+        ) -> Vec<Self::Feature> {
+            if cell_x == 0 && cell_y == 0 {
+                vec![BorderFeature]
+            } else {
+                Vec::new()
+            }
+        }
+    }
+
+    #[test]
+    fn chunk_queries_are_reused_and_include_features_beyond_the_first_tile() {
+        let queries = Arc::new(AtomicUsize::new(0));
+        let stage = FeatureStage::new(
+            42,
+            CountingGenerator {
+                queries: Arc::clone(&queries),
+            },
+            16,
+        );
+        let sample = |x| {
+            let mut tile = TileDraft::default();
+            stage.apply(TilePos { x, y: 8 }, &mut tile);
+            tile.height
+        };
+
+        // The first tile is far from the feature, but its chunk intersects it.
+        assert_eq!(sample(0), 0.0);
+        assert_eq!(sample(15), 4.0);
+        assert_eq!(queries.load(Ordering::Relaxed), 1);
+
+        // A feature owned by the neighboring cell also reaches this chunk.
+        assert_eq!(sample(16), 3.0);
+        assert_eq!(sample(17), 2.0);
+        assert_eq!(queries.load(Ordering::Relaxed), 2);
+
+        // Negative coordinates use Euclidean division and empty lists are cached.
+        assert_eq!(sample(-1), 0.0);
+        assert_eq!(sample(-16), 0.0);
+        assert_eq!(queries.load(Ordering::Relaxed), 3);
+    }
+}

@@ -2,11 +2,12 @@ use std::sync::Arc;
 
 use rand::{Rng, RngExt};
 
-use crate::NoiseSource;
 use crate::features::feature::{FeatureGenerator, TerrainFeature};
+use crate::{NoiseSource, TileDraft, TilePos};
 
 /// A broad, shallow impact with a worn rim and reduced interior terrain detail.
 /// Height, depth, and rim height use the normalized terrain-height scale.
+#[derive(Clone)]
 pub struct Basin {
     pub x: f64,
     pub y: f64,
@@ -31,10 +32,13 @@ impl TerrainFeature for Basin {
         self.radius * 1.5
     }
 
-    fn apply_height(&self, x: f64, y: f64, height: f64) -> f64 {
+    fn apply(&self, pos: TilePos, tile: &mut TileDraft) {
+        let x = pos.x as f64;
+        let y = pos.y as f64;
+        let height = tile.height;
         let u = (x - self.x).hypot(y - self.y) / self.radius;
         if u >= 1.5 {
-            return height;
+            return;
         }
 
         let bowl = (1.0 - u * u).max(0.0).powi(2);
@@ -50,7 +54,7 @@ impl TerrainFeature for Basin {
 
         // Fade the entire profile out so both height and slope join the terrain
         // continuously at the influence boundary. Clamp only after all layers.
-        smoothed + edge * (depression + rim)
+        tile.height = smoothed + edge * (depression + rim);
     }
 }
 
