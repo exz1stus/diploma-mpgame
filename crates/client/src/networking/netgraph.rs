@@ -82,7 +82,7 @@ pub fn network_diagnostics_ui(
             prediction_settings.enabled = enabled;
         }
         ui.small("Turn off to display the server's collision result for your player.");
-        ui.small("Delay changes apply to new messages. RTT starts when a ping is sent and includes incoming Pong delay.");
+        ui.small("Delay changes apply to new messages. RTT includes outgoing and incoming simulated delay.");
         ui.collapsing("Replicated entities", |ui| {
             let mut rows: Vec<_> = entities.iter().collect();
             rows.sort_by_key(|(_, identity, _, _, _, _)| identity.id);

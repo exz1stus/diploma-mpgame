@@ -189,7 +189,9 @@ fn hard_resync(world: &mut World, player: Entity, authoritative: NetworkPhysicsS
 fn reset_player_prediction(world: &mut World, player: Entity, authoritative: NetworkPhysicsState) {
     let mut entity = world.entity_mut(player);
 
-    let mut prediction = entity.get_mut::<Prediction>().expect("Hard resync requires prediction");
+    let mut prediction = entity
+        .get_mut::<Prediction>()
+        .expect("Hard resync requires prediction");
     prediction.state = authoritative;
     prediction.visual_offset = Vec2::ZERO;
 

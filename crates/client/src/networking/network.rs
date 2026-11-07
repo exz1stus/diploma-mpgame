@@ -217,20 +217,28 @@ pub(crate) fn queue_outgoing(
 pub fn send_messages(
     mut simulation: ResMut<NetworkSimulation>,
     mut client_state: ResMut<ClientState>,
+    mut stats: ResMut<NetworkDiagnostics>,
     time: Res<Time<Real>>,
+    mut next_ping_at: Local<f64>,
 ) {
     if !client_state.initiated {
         return;
     }
 
-    // queue_outgoing(
-    //     &mut simulation,
-    //     &mut client_state,
-    //     ClientMessages::Ping {
-    //         text: String::from("client ping"),
-    //     },
-    //     time.elapsed_secs_f64(),
-    // );
+    let now = time.elapsed_secs_f64();
+    if now < *next_ping_at {
+        return;
+    }
+    *next_ping_at = now + 1.0;
+    queue_outgoing(
+        &mut simulation,
+        &mut client_state,
+        ClientMessages::Ping {
+            text: String::from("ping"),
+        },
+        now,
+    );
+    stats.record_ping_queued(client_state.sequence);
 }
 
 pub fn release_outgoing(

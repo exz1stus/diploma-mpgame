@@ -95,7 +95,6 @@ impl ClientSimulationClock {
         self.in_progress_tick
     }
 
-   
     pub fn begin_tick(&mut self, now_secs: f64) -> Option<TickNumber> {
         if self.in_progress_tick.is_some() {
             return None;

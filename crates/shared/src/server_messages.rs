@@ -2,7 +2,8 @@ use bevy_renet::renet::ClientId;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    commands::{CommandError, CommandResult}, snapshots::{EntitySnapshot, NetworkComponentId, NetworkEntityId, WorldSnapshot},
+    commands::{CommandError, CommandResult},
+    snapshots::{EntitySnapshot, NetworkComponentId, NetworkEntityId, WorldSnapshot},
 };
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

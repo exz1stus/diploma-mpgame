@@ -190,7 +190,7 @@ assign_command_ids!(Shoot);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CommandOutcome {
-    Shoot {hit: Option<NetworkEntityId>},
+    Shoot { hit: Option<NetworkEntityId> },
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommandResult {

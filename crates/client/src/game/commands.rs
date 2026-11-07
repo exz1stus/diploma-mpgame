@@ -5,6 +5,8 @@ use std::{
 
 use avian2d::physics_transform::Position as PhysicsPosition;
 use bevy::prelude::*;
+use bevy::window::PrimaryWindow;
+use bevy_egui::input::EguiWantsInput;
 use shared::{
     client_messages::ClientMessages,
     commands::{
@@ -147,6 +149,59 @@ impl PredictedVisuals {
 pub struct ShootPrediction {
     target: Option<NetworkEntityId>,
 }
+
+const SHOOTING_RANGE: f32 = 500.0;
+
+#[derive(Clone, Copy)]
+pub struct ShootAim {
+    origin: Vec2,
+    direction: Vec2,
+}
+
+#[derive(Resource, Default)]
+pub struct ShootAimState(Option<ShootAim>);
+
+pub fn update_shoot_aim(
+    mut aim: ResMut<ShootAimState>,
+    client_state: Res<ClientState>,
+    egui_input: Res<EguiWantsInput>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    cameras: Query<(&Camera, &GlobalTransform), With<Camera2d>>,
+    players: Query<&PhysicsPosition, With<Owned>>,
+) {
+    aim.0 = None;
+    if !client_state.initiated || egui_input.wants_any_pointer_input() {
+        return;
+    }
+
+    let (Ok(window), Ok((camera, camera_transform)), Ok(player_position)) =
+        (windows.single(), cameras.single(), players.single())
+    else {
+        return;
+    };
+    let Some(cursor) = window.cursor_position() else {
+        return;
+    };
+    let Ok(cursor_world) = camera.viewport_to_world_2d(camera_transform, cursor) else {
+        return;
+    };
+    let origin = player_position.0;
+    let Some(direction) = (cursor_world - origin).try_normalize() else {
+        return;
+    };
+    aim.0 = Some(ShootAim { origin, direction });
+}
+
+pub fn draw_shoot_aim(aim: Res<ShootAimState>, mut gizmos: Gizmos) {
+    let Some(aim) = aim.0 else {
+        return;
+    };
+    let color = Color::srgba(1.0, 0.85, 0.2, 0.8);
+    let end = aim.origin + aim.direction * SHOOTING_RANGE;
+    gizmos.line_2d(aim.origin + aim.direction * 20.0, end, color);
+    gizmos.circle_2d(end, 3.0, color);
+}
+
 impl PredictedCommand for Shoot {
     type Prediction = ShootPrediction;
     fn predict(&self, world: &mut World) -> Self::Prediction {
@@ -200,7 +255,7 @@ fn predict_shot_hit(world: &mut World, origin: Vec2, direction: Vec2) -> Option<
             let to_center = state.position - origin;
             let distance_along_ray = to_center.dot(direction);
 
-            if !(0.0..=500.0).contains(&distance_along_ray) {
+            if !(0.0..=SHOOTING_RANGE).contains(&distance_along_ray) {
                 return None;
             }
 
@@ -221,7 +276,15 @@ pub fn send_shoot_command(world: &mut World) {
     {
         return;
     }
-    if let Err(error) = submit(world, Shoot { direction: Vec2::X }) {
+    let Some(aim) = world.resource::<ShootAimState>().0 else {
+        return;
+    };
+    if let Err(error) = submit(
+        world,
+        Shoot {
+            direction: aim.direction,
+        },
+    ) {
         warn!("Failed to send Shoot command: {error:?}");
     }
 }

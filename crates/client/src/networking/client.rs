@@ -1,4 +1,7 @@
-use crate::game::commands::{PendingCommands, PredictedVisuals, send_shoot_command};
+use crate::game::commands::{
+    PendingCommands, PredictedVisuals, ShootAimState, draw_shoot_aim, send_shoot_command,
+    update_shoot_aim,
+};
 pub use crate::networking::network::NetworkSimulation;
 use crate::networking::physics::{
     self, initialize_physics_body, log_prediction_status, run_prediction,
@@ -69,6 +72,7 @@ impl GameClient {
 
         app.init_resource::<PendingCommands>();
         app.init_resource::<PredictedVisuals>();
+        app.init_resource::<ShootAimState>();
         app.insert_resource(Time::<Fixed>::from_hz(60.0));
         physics::configure(&mut app);
 
@@ -88,6 +92,8 @@ impl GameClient {
                 run_prediction,
                 smooth_prediction_visual,
                 render_player_visuals,
+                update_shoot_aim,
+                draw_shoot_aim,
                 log_prediction_status,
                 send_messages,
                 send_shoot_command,

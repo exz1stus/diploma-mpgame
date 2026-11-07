@@ -36,9 +36,7 @@ pub struct InputBuffer {
 impl InputBuffer {
     pub(crate) fn record(&mut self, client_id: ClientId, input: MovementInput, server_tick: u64) {
         const MAX_FUTURE_TICKS: u64 = 20;
-        if input.tick < server_tick
-            || input.tick > server_tick.saturating_add(MAX_FUTURE_TICKS)
-        {
+        if input.tick < server_tick || input.tick > server_tick.saturating_add(MAX_FUTURE_TICKS) {
             return;
         }
 
@@ -102,7 +100,15 @@ mod tests {
     fn future_input_waits_for_its_tick_and_missing_tick_holds_previous_input() {
         let mut buffer = InputBuffer::default();
         let client_id = 7;
-        buffer.record(client_id, MovementInput { tick: 102, x: 1, y: 0 }, 100);
+        buffer.record(
+            client_id,
+            MovementInput {
+                tick: 102,
+                x: 1,
+                y: 0,
+            },
+            100,
+        );
         assert!(buffer.take_for_tick(client_id, 100).is_none());
         assert!(buffer.take_for_tick(client_id, 101).is_none());
         assert_eq!(buffer.take_for_tick(client_id, 102).unwrap().x, 1);
@@ -113,7 +119,15 @@ mod tests {
     fn late_input_cannot_replace_current_movement() {
         let mut buffer = InputBuffer::default();
         let client_id = 7;
-        buffer.record(client_id, MovementInput { tick: 99, x: -1, y: 0 }, 100);
+        buffer.record(
+            client_id,
+            MovementInput {
+                tick: 99,
+                x: -1,
+                y: 0,
+            },
+            100,
+        );
         assert!(buffer.take_for_tick(client_id, 100).is_none());
     }
 }

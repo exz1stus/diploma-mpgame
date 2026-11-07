@@ -190,12 +190,22 @@ pub struct NetworkDiagnostics {
     pub ping_ms: u64,
     pub capture_paused: bool,
     sent_at: BTreeMap<u64, SentPacket>,
+    ping_queued_at: BTreeMap<u64, Instant>,
     next_event_id: u64,
     pub message_events: VecDeque<MessageEvent>,
     pub samples: VecDeque<NetworkSample>,
 }
 
 impl NetworkDiagnostics {
+    pub fn record_ping_queued(&mut self, sequence: u64) {
+        if self.capture_paused {
+            return;
+        }
+        self.ping_queued_at.insert(sequence, Instant::now());
+        self.ping_queued_at
+            .retain(|_, started| started.elapsed().as_secs_f64() < MAX_WINDOW_SECONDS);
+    }
+
     pub fn add_sent(&mut self, message: ClientMessage, time_s: f64) {
         if self.capture_paused {
             return;
@@ -217,21 +227,26 @@ impl NetworkDiagnostics {
             return;
         }
         let rtt_ms = if matches!(message.payload, ServerMessages::Pong(_)) {
-            message
-                .sequence
-                .and_then(|sequence| self.sent_at.remove(&sequence))
-                .map(|sent| {
-                    let rtt_ms = sent.at.elapsed().as_secs_f64() * 1_000.0;
-                    self.ping_ms = rtt_ms.round() as u64;
-                    if let Some(event) = self
-                        .message_events
-                        .iter_mut()
-                        .find(|event| event.id == sent.event_id)
-                    {
-                        event.rtt_ms = Some(rtt_ms);
-                    }
-                    rtt_ms
-                })
+            message.sequence.and_then(|sequence| {
+                let queued_at = self.ping_queued_at.remove(&sequence);
+                let sent = self.sent_at.remove(&sequence);
+                queued_at
+                    .or_else(|| sent.as_ref().map(|sent| sent.at))
+                    .map(|started| {
+                        let rtt_ms = started.elapsed().as_secs_f64() * 1_000.0;
+                        self.ping_ms = rtt_ms.round() as u64;
+                        if let Some(sent) = sent {
+                            if let Some(event) = self
+                                .message_events
+                                .iter_mut()
+                                .find(|event| event.id == sent.event_id)
+                            {
+                                event.rtt_ms = Some(rtt_ms);
+                            }
+                        }
+                        rtt_ms
+                    })
+            })
         } else {
             None
         };
