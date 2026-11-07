@@ -6,13 +6,18 @@ mod elevation;
 mod features;
 mod generator;
 mod geographical;
+mod hash;
 mod noise;
 mod pipeline;
 mod stage;
 mod temperature;
 mod tile;
 
-pub use biomes::{Biome, BiomeId, BiomeMap, BiomeMapError, BiomeStage, Range};
+pub use biomes::{
+    Biome, BiomeId, BiomeMap, BiomeMapDefinition, BiomeMapError, BiomePaletteEntry,
+    BiomeRepository, BiomeRepositoryError, BiomeRule, BiomeStage, PaletteStage, Range,
+    ResolvedBiomeRule,
+};
 pub use config::WorldGeneratorConfig;
 pub use elevation::{ClampHeightStage, ElevationStage};
 pub use features::basin::BasinGenerator;

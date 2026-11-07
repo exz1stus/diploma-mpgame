@@ -16,9 +16,10 @@
       <h1>Explore the world<br><em>before it exists.</em></h1>
       <p class="intro">A live, chunk-based view of your Rust generator. Save a generator change to rebuild the map. Drag to pan, scroll to zoom.</p>
       <section class="biome-panel" aria-label="Biome definitions">
-        <label class="field biome-file-field" for="biome-file"><span>Biome file</span><select id="biome-file" disabled><option>Loading files…</option></select></label>
+        <label class="field biome-file-field" for="biome-file"><span>Default biome map</span><select id="biome-file" disabled><option>Loading maps…</option></select></label>
         <details class="biome-ranges" open>
           <summary>Height × temperature</summary>
+          <label class="field biome-file-field" for="biome-map-view"><span>View map</span><select id="biome-map-view"><option value="Default">Default</option></select></label>
           <svg id="biome-chart" viewBox="0 0 286 234" role="img" aria-label="Biome ranges by temperature and height"></svg>
           <p id="biome-chart-readout" class="settings-hint" aria-live="polite">Loading biome definitions…</p>
         </details>

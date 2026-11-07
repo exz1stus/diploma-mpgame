@@ -1,7 +1,8 @@
 use rand::{Rng, RngExt};
+use serde::Deserialize;
 
 use crate::features::feature::{FeatureGenerator, TerrainFeature};
-use crate::{TileDraft, TilePos};
+use crate::{BiomeMapDefinition, TileDraft, TilePos};
 
 /// A volcanic cone with a summit caldera. Vertical dimensions use normalized height.
 #[derive(Clone)]
@@ -12,6 +13,7 @@ pub struct Volcano {
     pub height: f64,
     pub caldera_ratio: f64,
     pub caldera_depth: f64,
+    pub temperature_offset: f64,
 }
 
 impl TerrainFeature for Volcano {
@@ -23,12 +25,12 @@ impl TerrainFeature for Volcano {
         self.radius
     }
 
-    fn apply(&self, pos: TilePos, tile: &mut TileDraft) {
+    fn apply(&self, pos: TilePos, tile: &mut TileDraft) -> bool {
         let x = pos.x as f64;
         let y = pos.y as f64;
         let u = (x - self.x).hypot(y - self.y) / self.radius;
         if u >= 1.0 {
-            return;
+            return false;
         }
         // Smooth summit and foot avoid a central spike or a seam at the base.
         let cone = self.height * (1.0 - u).powi(2) * (1.0 + 2.0 * u);
@@ -39,10 +41,13 @@ impl TerrainFeature for Volcano {
             0.0
         };
         tile.height = tile.height + cone - caldera;
+        tile.temperature_offset += self.temperature_offset * (1.0 - u).powi(2);
+        true
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct VolcanoGenerator {
     pub cell_size: i64,
     pub min_radius: f64,
@@ -54,24 +59,22 @@ pub struct VolcanoGenerator {
     /// Caldera radius as a fraction of the volcano radius, in [0, 1).
     pub caldera_ratio: f64,
     pub caldera_depth: f64,
+    pub temperature_offset: f64,
+    pub biome_map: BiomeMapDefinition,
 }
 
 impl Default for VolcanoGenerator {
     fn default() -> Self {
-        Self {
-            cell_size: 4096,
-            min_radius: 128.0,
-            max_radius: 1024.0,
-            probability: 0.15,
-            min_height: 0.15,
-            max_height: 0.4,
-            caldera_ratio: 0.2,
-            caldera_depth: 0.15,
-        }
+        Self::from_ron(include_str!("volcano.ron"))
+            .expect("bundled volcano definition must be valid")
     }
 }
 
 impl VolcanoGenerator {
+    pub fn from_ron(source: &str) -> Result<Self, ron::error::SpannedError> {
+        ron::from_str(source)
+    }
+
     pub(crate) fn validate(&self) {
         assert!(self.cell_size > 0, "volcano cell size must be positive");
         assert!(self.min_radius.is_finite() && self.min_radius > 0.0);
@@ -81,11 +84,16 @@ impl VolcanoGenerator {
         assert!(self.max_height.is_finite() && self.max_height >= self.min_height);
         assert!(self.caldera_ratio.is_finite() && (0.0..1.0).contains(&self.caldera_ratio));
         assert!(self.caldera_depth.is_finite() && self.caldera_depth >= 0.0);
+        assert!(self.temperature_offset.is_finite());
     }
 }
 
 impl FeatureGenerator for VolcanoGenerator {
     type Feature = Volcano;
+
+    fn biome_map(&self) -> BiomeMapDefinition {
+        self.biome_map.clone()
+    }
 
     fn cell_size(&self) -> i64 {
         self.cell_size
@@ -107,6 +115,7 @@ impl FeatureGenerator for VolcanoGenerator {
             height: rng.random_range(self.min_height..=self.max_height),
             caldera_ratio: self.caldera_ratio,
             caldera_depth: self.caldera_depth,
+            temperature_offset: self.temperature_offset,
         }]
     }
 }

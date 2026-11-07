@@ -1,4 +1,5 @@
-use crate::BiomeId;
+use crate::{BiomeId, BiomeMap};
+use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct TilePos {
@@ -53,28 +54,39 @@ pub struct Tile {
     /// Daily average Celsius temperature for the configured season.
     pub temperature: f64,
     pub biome: BiomeId,
+    /// Biome supplying the appearance, which can differ from feature territory.
+    pub surface_biome: BiomeId,
+    /// Index into `surface_biome`'s palette, shared by preview and game renderers.
+    pub palette_index: u16,
 }
 
 #[derive(Default)]
 pub struct TileDraft {
     pub height: f64,
+    /// Terrain height immediately before the feature marking this territory.
+    pub environment_height: f64,
     pub temperature: f64,
-    pub max_temperature: f64,
-    pub biome_override: Option<BiomeId>,
+    /// Feature heating/cooling added to climate temperature after terrain changes.
+    pub temperature_offset: f64,
+    /// Selected feature map; only the biome stage evaluates its rules.
+    pub biome_map: Option<Arc<BiomeMap>>,
     pub biome: Option<BiomeId>,
+    pub surface_biome: Option<BiomeId>,
+    pub palette_index: u16,
 }
 
 impl TileDraft {
-    /// Finish a tile after all stages. A feature biome takes precedence.
-    /// Panics if neither a feature nor the biome map assigned a biome.
+    /// Finish a tile after all stages. Only biome stages assign the final biome.
+    /// Panics if no biome stage assigned a biome.
     pub fn finish(&self) -> Tile {
         Tile {
             height: self.height,
             temperature: self.temperature,
-            biome: self
-                .biome_override
-                .or(self.biome)
-                .expect("no biome covers the generated tile"),
+            biome: self.biome.expect("no biome covers the generated tile"),
+            surface_biome: self
+                .surface_biome
+                .expect("no appearance covers the generated tile"),
+            palette_index: self.palette_index,
         }
     }
 }
@@ -84,16 +96,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn draft_prefers_feature_biome() {
+    fn draft_finishes_with_the_classified_biome() {
         let classified = BiomeId(0);
-        let mut draft = TileDraft {
+        let draft = TileDraft {
             biome: Some(classified),
+            surface_biome: Some(classified),
             ..Default::default()
         };
         assert_eq!(draft.finish().biome, classified);
-        let feature = BiomeId(1);
-        draft.biome_override = Some(feature);
-        assert_eq!(draft.finish().biome, feature);
     }
 
     #[test]

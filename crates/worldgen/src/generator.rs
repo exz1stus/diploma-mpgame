@@ -1,16 +1,16 @@
 use std::sync::Arc;
 
-use crate::{BiomeMap, GenerationStage, Tile, TileDraft, TilePos};
+use crate::{BiomeRepository, GenerationStage, Tile, TileDraft, TilePos};
 
 pub struct WorldGenerator {
     stages: Vec<Box<dyn GenerationStage>>,
-    biomes: Arc<BiomeMap>,
+    biomes: Arc<BiomeRepository>,
 }
 
 impl WorldGenerator {
-    /// Execute stages in the supplied order. Biome stages and feature IDs must
-    /// use the supplied registry; pipeline assembly determines stage dependencies.
-    pub fn new(stages: Vec<Box<dyn GenerationStage>>, biomes: Arc<BiomeMap>) -> Self {
+    /// Execute stages in the supplied order. All biome maps must be resolved
+    /// against this repository; pipeline assembly determines stage dependencies.
+    pub fn new(stages: Vec<Box<dyn GenerationStage>>, biomes: Arc<BiomeRepository>) -> Self {
         Self { stages, biomes }
     }
 
@@ -29,7 +29,7 @@ impl WorldGenerator {
         self.draft_at(pos).finish()
     }
 
-    pub fn biomes(&self) -> &BiomeMap {
+    pub fn biomes(&self) -> &BiomeRepository {
         &self.biomes
     }
 }
@@ -38,28 +38,33 @@ impl WorldGenerator {
 mod tests {
     use super::*;
     use crate::{
-        BasinGenerator, Biome, BiomeId, BiomeStage, ClampHeightStage, CraterGenerator,
-        ElevationStage, NoiseSource, PlanetParams, Range, TemperatureCoefficients,
-        TemperatureModel, TemperatureStage, VolcanoGenerator, WorldGeneratorConfig, WorldGeography,
-        build_world_generator_with_elevation,
+        BasinGenerator, BiomeMap, BiomeMapDefinition, BiomeStage, ClampHeightStage,
+        CraterGenerator, ElevationStage, NoiseSource, PaletteStage, PlanetParams,
+        TemperatureCoefficients, TemperatureModel, TemperatureStage, VolcanoGenerator,
+        WorldGeneratorConfig, WorldGeography, build_world_generator,
     };
 
     #[test]
-    fn custom_stages_feed_climate_and_preserve_biome_overrides() {
-        struct ConeStage;
+    fn custom_stages_feed_climate_and_defer_biome_maps() {
+        struct ConeStage(Arc<BiomeMap>);
         impl GenerationStage for ConeStage {
             fn apply(&self, pos: TilePos, tile: &mut TileDraft) {
                 if pos.x == 0 {
+                    tile.environment_height = tile.height;
                     tile.height += 2.0;
-                    tile.biome_override = Some(BiomeId(0));
+                    tile.temperature_offset += 12.0;
+                    tile.biome_map = Some(Arc::clone(&self.0));
                 }
             }
         }
 
-        let biomes = Arc::new(BiomeMap::parse());
+        let biomes = Arc::new(BiomeRepository::parse());
         let stages: Vec<Box<dyn GenerationStage>> = vec![
             Box::new(ElevationStage::new(FlatNoise)),
-            Box::new(ConeStage),
+            Box::new(ConeStage(Arc::new(BiomeMap::from_ron(
+                r#"[(biome: "volcano", height: (min: 0.8, max: 1.0), temperature: (min: 1.0, max: 3.0))]"#,
+                &biomes,
+            ).unwrap()))),
             Box::new(ClampHeightStage),
             Box::new(TemperatureStage::new(TemperatureModel::with_config(
                 TemperatureCoefficients {
@@ -72,15 +77,18 @@ mod tests {
                 WorldGeography::new(16, 4),
                 PlanetParams::default(),
             ))),
-            Box::new(BiomeStage::new(Arc::clone(&biomes))),
+            Box::new(BiomeStage::new(Arc::new(BiomeMap::parse(&biomes)))),
+            Box::new(PaletteStage::new(Arc::clone(&biomes))),
         ];
-        let generator = WorldGenerator::new(stages, biomes);
+        let generator = WorldGenerator::new(stages, Arc::clone(&biomes));
         let cone = generator.tile_at(TilePos { x: 0, y: 0 });
         assert_eq!(cone.height, 1.0);
-        assert_eq!(cone.temperature, -10.0);
-        // Height 1 is outside the classifier's exclusive upper limit, so the
-        // final tile can only finish if its feature override was preserved.
-        assert_eq!(cone.biome, BiomeId(0));
+        assert_eq!(cone.temperature, 2.0);
+        assert_eq!(cone.biome, biomes.id("volcano").unwrap());
+        assert_eq!(
+            cone.palette_index, 3,
+            "palette must use clamped height and final temperature"
+        );
         let plain = generator.tile_at(TilePos { x: 1, y: 0 });
         assert_eq!(plain.height, 0.5);
         assert_eq!(plain.temperature, -5.0);
@@ -97,27 +105,23 @@ mod tests {
     fn volcanic_world(chunk_size: u32, probability: f64) -> WorldGenerator {
         let mut basins = BasinGenerator::new(FlatNoise);
         basins.probability = 0.0;
-        let biome = |name: &str, min, max| Biome {
-            name: name.into(),
-            color: "#123456".into(),
-            height: Range { min, max },
-            temperature: Range {
-                min: -100.0,
-                max: 100.0,
-            },
-        };
-        build_world_generator_with_elevation(
+        let biomes = BiomeRepository::parse();
+        let biome_map = BiomeMap::from_ron(
+            r#"[
+                (biome: "dark_crater_floors", height: (min: 0.0, max: 0.55), temperature: (min: -100.0, max: 100.0)),
+                (biome: "volcano", height: (min: 0.55, max: 1.0), temperature: (min: -100.0, max: 100.0)),
+            ]"#,
+            &biomes,
+        ).unwrap();
+        build_world_generator(
             WorldGeneratorConfig {
                 seed: 42,
                 chunk_size,
                 world_size_chunks: 64 / chunk_size,
                 ..Default::default()
             },
-            BiomeMap::new(vec![
-                biome("low", 0.0, 0.55),
-                biome("volcanic_highlands", 0.55, 1.0),
-            ])
-            .unwrap(),
+            biomes,
+            biome_map,
             FlatNoise,
             TemperatureModel::with_config(
                 TemperatureCoefficients {
@@ -138,6 +142,7 @@ mod tests {
             VolcanoGenerator {
                 cell_size: 64,
                 probability,
+                biome_map: BiomeMapDefinition::default(),
                 min_radius: 48.0,
                 max_radius: 64.0,
                 ..Default::default()
@@ -173,7 +178,7 @@ mod tests {
                     raised += 1;
                     assert_eq!(
                         small_chunks.biomes().get(tile.biome).unwrap().name,
-                        "volcanic_highlands"
+                        "volcano"
                     );
                     assert!(tile.temperature < baseline.temperature);
                 }

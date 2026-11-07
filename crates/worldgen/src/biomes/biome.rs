@@ -14,20 +14,24 @@ impl Range {
         self.min <= value && value < self.max
     }
 
-    fn is_valid(&self) -> bool {
+    /// Include the clamped terrain endpoint when this range ends at height 1.
+    pub fn in_height_range(&self, value: f64) -> bool {
+        self.in_range(value) || (value == 1.0 && self.max == 1.0)
+    }
+
+    pub(crate) fn is_valid(&self) -> bool {
         self.min.is_finite() && self.max.is_finite() && self.min < self.max
     }
 }
 
-/// Zero-based index in the biome definitions' RON sequence.
-/// Append new definitions to preserve IDs; reordering requires world regeneration.
+/// Zero-based index in the shared biome repository's RON sequence.
+/// Append definitions to preserve IDs; reordering requires world regeneration.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 #[repr(transparent)]
 pub struct BiomeId(pub u16);
 
 impl BiomeId {
-    /// Construct an ID from a sequence index. Supports 65,536 definitions.
     pub fn from_index(index: usize) -> Option<Self> {
         u16::try_from(index).ok().map(Self)
     }
@@ -37,131 +41,199 @@ impl BiomeId {
     }
 }
 
+/// Shared biome properties. Biome selection ranges belong to maps;
+/// appearance selection ranges belong to individual palette entries.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Biome {
     pub name: String,
+    /// An empty palette inherits the default terrain appearance.
+    #[serde(default)]
+    pub palette: Vec<BiomePaletteEntry>,
+    /// Minimum uplift above the marked territory's environment for this palette.
+    #[serde(default)]
+    pub palette_height_threshold: f64,
+}
+
+impl Biome {
+    /// First matching appearance rule wins, using final tile properties.
+    /// Entry 0 is the fallback if no rule covers the height and temperature.
+    pub fn palette_index_at(&self, temperature: f64, height: f64) -> Option<u16> {
+        if self.palette.is_empty() {
+            return None;
+        }
+        Some(
+            self.palette
+                .iter()
+                .position(|entry| {
+                    temperature.is_finite()
+                        && (0.0..=1.0).contains(&height)
+                        && entry.temperature.in_range(temperature)
+                        && entry.height.in_height_range(height)
+                })
+                .unwrap_or(0) as u16,
+        )
+    }
+}
+
+fn full_height_range() -> Range {
+    Range { min: 0.0, max: 1.0 }
+}
+fn full_temperature_range() -> Range {
+    Range {
+        min: -f64::MAX,
+        max: f64::MAX,
+    }
+}
+
+/// A tile appearance variant. The preview uses its color; a game renderer can
+/// associate textures with the same biome and palette index.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BiomePaletteEntry {
     pub color: String,
-    /// Temperature in degrees Celsius.
-    pub temperature: Range,
-    /// Normalized height in [0, 1).
+    #[serde(default = "full_height_range")]
     pub height: Range,
+    #[serde(default = "full_temperature_range")]
+    pub temperature: Range,
 }
 
 #[derive(Clone, Debug)]
-pub struct BiomeMap {
+pub struct BiomeRepository {
     biomes: Vec<Biome>,
     by_name: HashMap<String, BiomeId>,
 }
 
-impl BiomeMap {
+impl BiomeRepository {
     pub fn parse() -> Self {
-        Self::from_ron(include_str!("biomes.ron")).expect("bundled biome definitions must be valid")
+        Self::from_ron(include_str!("biomes.ron")).expect("bundled biome repository must be valid")
     }
 
-    pub fn new(biomes: Vec<Biome>) -> Result<Self, BiomeMapError> {
+    pub fn new(biomes: Vec<Biome>) -> Result<Self, BiomeRepositoryError> {
         if biomes.len() > usize::from(u16::MAX) + 1 {
-            return Err(BiomeMapError::TooManyBiomes {
+            return Err(BiomeRepositoryError::TooManyBiomes {
                 count: biomes.len(),
             });
         }
         let mut by_name = HashMap::with_capacity(biomes.len());
         for (index, biome) in biomes.iter().enumerate() {
+            if biome.palette.len() > usize::from(u16::MAX) + 1 {
+                return Err(BiomeRepositoryError::InvalidPalette {
+                    biome: biome.name.clone(),
+                    count: biome.palette.len(),
+                });
+            }
+            if !biome.palette_height_threshold.is_finite()
+                || !(0.0..=1.0).contains(&biome.palette_height_threshold)
+            {
+                return Err(BiomeRepositoryError::InvalidPaletteThreshold {
+                    biome: biome.name.clone(),
+                });
+            }
+            for (entry_index, entry) in biome.palette.iter().enumerate() {
+                for (field, range) in [("height", entry.height), ("temperature", entry.temperature)]
+                {
+                    if !range.is_valid()
+                        || (field == "height" && (range.min < 0.0 || range.max > 1.0))
+                    {
+                        return Err(BiomeRepositoryError::InvalidPaletteRange {
+                            biome: biome.name.clone(),
+                            entry: entry_index,
+                            field,
+                        });
+                    }
+                }
+            }
             let id = BiomeId::from_index(index).expect("biome count was checked");
             if by_name.insert(biome.name.clone(), id).is_some() {
-                return Err(BiomeMapError::DuplicateName {
+                return Err(BiomeRepositoryError::DuplicateName {
                     name: biome.name.clone(),
                 });
             }
-            for (field, range) in [("temperature", biome.temperature), ("height", biome.height)] {
-                if !range.is_valid() || (field == "height" && (range.min < 0.0 || range.max > 1.0))
-                {
-                    return Err(BiomeMapError::InvalidRange {
-                        biome: biome.name.clone(),
-                        field,
-                    });
-                }
-            }
         }
         Ok(Self { biomes, by_name })
+    }
+
+    pub fn from_ron(source: &str) -> Result<Self, BiomeRepositoryError> {
+        Self::new(ron::from_str(source).map_err(BiomeRepositoryError::Parse)?)
     }
 
     pub fn get(&self, id: BiomeId) -> Option<&Biome> {
         self.biomes.get(id.index())
     }
 
-    /// Resolve a definition or feature's biome name to this registry's compact ID.
     pub fn id(&self, name: &str) -> Option<BiomeId> {
         self.by_name.get(name).copied()
-    }
-
-    pub fn from_ron(source: &str) -> Result<Self, BiomeMapError> {
-        Self::new(ron::from_str(source).map_err(BiomeMapError::Parse)?)
     }
 
     pub fn biomes(&self) -> &[Biome] {
         &self.biomes
     }
-
-    /// Classify Celsius temperature and normalized elevation using [min, max) ranges.
-    pub fn determine_biome(&self, temperature: f64, elevation: f64) -> Option<BiomeId> {
-        if !temperature.is_finite() || !(0.0..1.0).contains(&elevation) {
-            return None;
-        }
-        self.biomes
-            .iter()
-            .position(|biome| {
-                biome.temperature.in_range(temperature) && biome.height.in_range(elevation)
-            })
-            .and_then(BiomeId::from_index)
-    }
 }
 
-impl Default for BiomeMap {
+impl Default for BiomeRepository {
     fn default() -> Self {
         Self::parse()
     }
 }
 
 #[derive(Debug)]
-pub enum BiomeMapError {
+pub enum BiomeRepositoryError {
     Parse(ron::error::SpannedError),
-    InvalidRange { biome: String, field: &'static str },
-    DuplicateName { name: String },
-    TooManyBiomes { count: usize },
+    DuplicateName {
+        name: String,
+    },
+    TooManyBiomes {
+        count: usize,
+    },
+    InvalidPalette {
+        biome: String,
+        count: usize,
+    },
+    InvalidPaletteRange {
+        biome: String,
+        entry: usize,
+        field: &'static str,
+    },
+    InvalidPaletteThreshold {
+        biome: String,
+    },
 }
 
-impl fmt::Display for BiomeMapError {
+impl fmt::Display for BiomeRepositoryError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Parse(error) => write!(f, "invalid biome definitions: {error}"),
+            Self::Parse(error) => write!(f, "invalid biome repository: {error}"),
             Self::DuplicateName { name } => write!(f, "duplicate biome name: {name:?}"),
             Self::TooManyBiomes { count } => write!(
                 f,
-                "biome definitions have {count} entries; compact IDs support at most 65536",
+                "biome repository has {count} entries; at most 65536 are supported"
             ),
-            Self::InvalidRange {
+            Self::InvalidPalette { biome, count } => write!(
+                f,
+                "biome {biome:?} has {count} palette entries; at most 65536 are supported"
+            ),
+            Self::InvalidPaletteRange {
                 biome,
-                field: "height",
+                entry,
+                field,
             } => write!(
                 f,
-                "biome {biome:?} has invalid height range: expected finite 0 <= min < max <= 1",
+                "biome {biome:?} palette entry {entry} has an invalid {field} range"
             ),
-            Self::InvalidRange { biome, field } => write!(
+            Self::InvalidPaletteThreshold { biome } => write!(
                 f,
-                "biome {biome:?} has invalid {field} range: expected finite min < max (Celsius for temperature)",
+                "biome {biome:?} palette height threshold must be in [0, 1]"
             ),
         }
     }
 }
 
-impl Error for BiomeMapError {
+impl Error for BiomeRepositoryError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Parse(error) => Some(error),
-            Self::InvalidRange { .. } | Self::DuplicateName { .. } | Self::TooManyBiomes { .. } => {
-                None
-            }
+            _ => None,
         }
     }
 }
@@ -170,39 +242,29 @@ impl Error for BiomeMapError {
 mod tests {
     use super::*;
 
-    fn biome(name: &str, min: f64, max: f64) -> Biome {
+    fn biome(name: &str) -> Biome {
         Biome {
             name: name.into(),
-            color: "#123456".into(),
-            temperature: Range {
-                min: -100.0,
-                max: 100.0,
-            },
-            height: Range { min, max },
+            palette_height_threshold: 0.0,
+            palette: vec![BiomePaletteEntry {
+                color: "#123456".into(),
+                height: full_height_range(),
+                temperature: full_temperature_range(),
+            }],
         }
     }
 
     #[test]
     fn appending_biomes_preserves_existing_indices() {
-        let low = biome("low", 0.0, 0.5);
-        let high = biome("high", 0.5, 1.0);
-        let original = BiomeMap::new(vec![low.clone(), high.clone()]).unwrap();
-        let appended = BiomeMap::new(vec![low, high, biome("new", 0.0, 1.0)]).unwrap();
-
-        assert_eq!(original.id("low"), Some(BiomeId(0)));
-        assert_eq!(original.id("high"), Some(BiomeId(1)));
-        assert_eq!(appended.id("new"), Some(BiomeId(2)));
-
-        for height in [0.25, 0.75] {
-            let saved_id = original.determine_biome(0.0, height).unwrap();
-            let encoded = serde_json::to_string(&saved_id).unwrap();
-            let loaded_id: BiomeId = serde_json::from_str(&encoded).unwrap();
-            assert_eq!(appended.determine_biome(0.0, height), Some(loaded_id));
-            assert_eq!(
-                original.get(saved_id).unwrap().name,
-                appended.get(loaded_id).unwrap().name
-            );
+        let original = BiomeRepository::new(vec![biome("low"), biome("high")]).unwrap();
+        let appended =
+            BiomeRepository::new(vec![biome("low"), biome("high"), biome("new")]).unwrap();
+        for name in ["low", "high"] {
+            assert_eq!(original.id(name), appended.id(name));
+            let id = original.id(name).unwrap();
+            assert_eq!(original.get(id), appended.get(id));
         }
+        assert_eq!(appended.id("new"), Some(BiomeId(2)));
         assert!(appended.id("missing").is_none());
         assert!(appended.get(BiomeId(3)).is_none());
     }
@@ -210,28 +272,71 @@ mod tests {
     #[test]
     fn ids_are_serialized_as_zero_based_u16_indices() {
         assert_eq!(std::mem::size_of::<BiomeId>(), 2);
-        let first = BiomeId::from_index(0).unwrap();
-        assert_eq!(serde_json::to_string(&first).unwrap(), "0");
-        assert_eq!(serde_json::from_str::<BiomeId>("0").unwrap(), first);
-        assert_eq!(BiomeId::from_index(65535).unwrap().index(), 65535);
+        assert_eq!(serde_json::to_string(&BiomeId(0)).unwrap(), "0");
+        assert_eq!(
+            serde_json::from_str::<BiomeId>("65535").unwrap(),
+            BiomeId(65535)
+        );
         assert!(BiomeId::from_index(65536).is_none());
         assert!(serde_json::from_str::<BiomeId>("65536").is_err());
     }
 
     #[test]
-    fn definitions_exceeding_id_capacity_are_rejected() {
-        let definitions = vec![biome("same", 0.0, 1.0); 65537];
+    fn invalid_repositories_are_rejected() {
         assert!(matches!(
-            BiomeMap::new(definitions),
-            Err(BiomeMapError::TooManyBiomes { count: 65537 })
+            BiomeRepository::new(vec![biome("same"); 65537]),
+            Err(BiomeRepositoryError::TooManyBiomes { .. })
         ));
+        assert!(matches!(
+            BiomeRepository::new(vec![biome("same"); 2]),
+            Err(BiomeRepositoryError::DuplicateName { .. })
+        ));
+        for count in [65537] {
+            let mut invalid = biome("invalid");
+            invalid.palette = vec![
+                BiomePaletteEntry {
+                    color: "#123456".into(),
+                    height: full_height_range(),
+                    temperature: full_temperature_range(),
+                };
+                count
+            ];
+            assert!(matches!(
+                BiomeRepository::new(vec![invalid]),
+                Err(BiomeRepositoryError::InvalidPalette { .. })
+            ));
+        }
     }
 
     #[test]
-    fn duplicate_names_are_rejected() {
-        assert!(matches!(
-            BiomeMap::new(vec![biome("same", 0.0, 0.5), biome("same", 0.5, 1.0)]),
-            Err(BiomeMapError::DuplicateName { .. })
-        ));
+    fn invalid_palette_ranges_are_rejected() {
+        for (height, temperature) in [
+            ("(min: 0.8, max: 0.2)", "(min: -10.0, max: 10.0)"),
+            ("(min: -0.1, max: 1.0)", "(min: -10.0, max: 10.0)"),
+            ("(min: 0.0, max: 1.1)", "(min: -10.0, max: 10.0)"),
+            ("(min: 0.0, max: 1.0)", "(min: NaN, max: 10.0)"),
+        ] {
+            let source = format!(
+                r##"[(name: "test", palette: [(color: "#123456", height: {height}, temperature: {temperature})])]"##
+            );
+            assert!(matches!(
+                BiomeRepository::from_ron(&source),
+                Err(BiomeRepositoryError::InvalidPaletteRange { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn territory_biomes_may_omit_palettes_and_palette_thresholds_are_validated() {
+        let repository = BiomeRepository::from_ron(r#"[(name: "crater")]"#).unwrap();
+        assert!(repository.biomes()[0].palette.is_empty());
+        assert_eq!(repository.biomes()[0].palette_index_at(0.0, 0.5), None);
+        for threshold in ["-0.01", "1.1", "NaN"] {
+            let source = format!(r#"[(name: "volcano", palette_height_threshold: {threshold})]"#);
+            assert!(matches!(
+                BiomeRepository::from_ron(&source),
+                Err(BiomeRepositoryError::InvalidPaletteThreshold { .. })
+            ));
+        }
     }
 }

@@ -6,7 +6,7 @@ fn mix64(mut x: u64) -> u64 {
     x ^ (x >> 31)
 }
 
-pub fn hash_cell(seed: u64, x: i64, y: i64) -> u64 {
+pub(crate) fn hash_cell(seed: u64, x: i64, y: i64) -> u64 {
     let x = mix64(x as u64);
     let y = mix64(y as u64);
 

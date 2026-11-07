@@ -1,29 +1,52 @@
 # World generation
 
-Engine-independent generation shared by the server and local preview. Bevy resources, HTTP, rendering, chunks, and worker scheduling belong to consumers.
+Engine-independent generation shared by the server and preview. The pipeline is:
 
-`pipeline.rs` assembles the configured stage sequence. Call `build_world_generator(config, biomes, temperature, craters, basins, volcanoes)` with a configured `TemperatureModel` and feature generators. Assembly validates feature settings, selects enabled stages, and derives their seeds. Elevation noise uses the world seed; crater, basin, and volcano placement use separately derived world seeds. `build_world_generator_with_elevation(config, biomes, noise, temperature, craters, basins, volcanoes)` accepts a custom elevation noise source for previews and other consumers.
+`elevation → terrain features → height clamp → temperature → biome → palette`
 
-`WorldGenerator` only executes the supplied pipeline. `WorldGenerator::new(stages, biomes)` takes an ordered `Vec<Box<dyn GenerationStage>>` and an `Arc<BiomeMap>`. Custom pipelines must use that same registry for biome stages and feature IDs. Each stage owns its dependencies and applies itself to a shared `TileDraft`.
+`build_world_generator(config, biomes, biome_map, noise, temperature, craters, basins, volcanoes)` assembles that sequence. Supply a shared `BiomeRepository`, a default `BiomeMap` resolved against it, an elevation `NoiseSource`, a `TemperatureModel`, and the feature generators. `ElevationNoise::new(config.seed)` provides default elevation noise. `WorldGenerator` executes the supplied stages through `draft_at(pos)` or `tile_at(pos)`; consumers assemble chunks themselves.
 
-The default stage order is elevation, basins, craters, volcanoes, height clamp, temperature, then biome. Elevation normalizes signed noise; feature stages apply terrain in global tile coordinates; height is clamped to [0, 1] before altitude cooling and daily-average Celsius temperature calculation. Biome resolution uses the final height and temperature unless a feature supplied an override. `Tile` contains `height`, `temperature`, and a required `BiomeId`. `tile_at(TilePos)` finishes the draft and panics if no biome was assigned. `draft_at(TilePos)` runs the same pipeline without requiring biome coverage, allowing previews to retain metrics for unclassified terrain. Consumers iterate global positions to build their own chunks.
+Features only deform height, accumulate Celsius `temperature_offset`, and mark their territory with a biome map and the height before that feature. Every tile inside a feature footprint is marked, including weak effects and unchanged terrain. There are no feature-level classification thresholds or volcano-specific override hooks. In overlaps, the last feature in pipeline/cell order marks the territory. Cell and chunk caches reuse deterministic feature generation and intersection results.
 
-Shared tile and coordinate types live in `tile.rs`, and the `GenerationStage` trait lives in `stage.rs`. Elevation, feature, temperature, and biome stage implementations live in their own modules' `stage.rs` files. `FeatureStage::new(seed, generator, chunk_size)` wraps the existing deterministic feature generator and cell cache. It queries the containing chunk's full world bounds, including neighboring generation cells, and caches the selected feature list once per chunk for reuse across tiles. `TerrainFeature::apply(pos, draft)` can modify any draft property and must leave tiles outside its influence unchanged.
+After all features, height is clamped to [0, 1] and climate temperature is calculated from final height, world geography, regional noise, and planet settings, plus feature temperature offsets. `BiomeStage` then selects the territory biome using the feature map, falling back to the default map if no rule matches. It also classifies the default terrain appearance from the same final height and temperature.
 
-`BiomeId` is a zero-based `u16` index assigned by the biome definitions' RON sequence: the first entry is ID 0, the second ID 1, and so on. Append new biomes to preserve existing IDs. Inserting, deleting, or reordering existing entries requires world regeneration. Use the index directly in saves and network messages; all consumers must use the same definition order. There is no name palette or ID remapping.
+`PaletteStage` applies the selected biome's appearance policy:
 
-`BiomeMap::id(name)` resolves a unique name to its index, and `get(id)` directly accesses its definition. `BiomeId` occupies two bytes in memory and serializes as a `u16`; `Option<BiomeId>` occupies four bytes in memory and may add a presence tag when serialized. Up to 65,536 definitions are supported. Tiles do not own biome definitions. `TileDraft::finish()` prefers its biome override over its classified biome.
+- No palette: keep the default terrain appearance.
+- An owned palette: use it when its `palette_height_threshold` is met; otherwise keep the default terrain appearance. Zero disables the height gate.
+- Within the chosen palette, the first matching height-temperature entry wins. Entry 0 is the fallback if no entry matches.
 
-`ElevationNoise::with_config(seed, NoiseConfig)` and `TemperatureRegionsNoise::with_config(seed, NoiseConfig)` configure frequency, octaves, lacunarity, and persistence; each source exposes `default_config()`. The `new(seed)` constructors use these defaults. `ElevationStage::new(noise)` samples a `NoiseSource` directly; there is no intermediate elevation sampler or tile sampler trait.
+The height threshold compares final clamped height with the height before the feature marking the territory. Volcanic biome definitions use `palette_height_threshold: 0.01`, so raised volcanic terrain receives its own appearance while shallow edges and depressions inherit terrain colors. Temperature changes never hide territory markers.
 
-`TemperatureModel` is independent of tiles and stages. It owns the regional noise, coefficients, world geography, and seasonal planet settings. `new(noise, geography, planet)` uses default coefficients; `with_config(coefficients, noise, geography, planet)` accepts base, solar, altitude, and regional coefficients. Construct its geography with `WorldGeography::new(config.chunk_size, config.world_size_chunks)` to match the world. `average_at(pos, height)` provides daily-average Celsius temperature; `TemperatureStage::new(model)` only assigns that result to the draft. Regional noise is signed, approximately [-1, 1]. The pipeline currently treats normalized height as kilometers for altitude cooling, so the default 6.5 coefficient subtracts 0 to 6.5 degrees Celsius. There is no time-of-day mode.
+Craters and basins have no owned palettes. Their deformations affect default height-temperature classification, and their biome IDs still identify the territory through the API. They introduce no painted patches. Future biome behavior can use those IDs; no biome objects are implemented.
 
-`CraterGenerator` configures generation cell size, minimum and maximum radius in tiles, and density (the expected number per cell, between 0 and 4). Density zero disables craters. The default uses 1024-tile cells, 32–512-tile radii, and density 1. Features from neighboring cells are included wherever their influence reaches a sampled tile, so crater shapes cross cell and chunk boundaries. Generation uses deterministic cell seeds and does not depend on sampling order. A crater's depth is radius × 0.001, rim height is radius × 0.0002, and influence extends to 1.5 radii.
+A completed `Tile` contains `height`, `temperature`, `biome`, `surface_biome`, and `palette_index`. `biome` identifies territory; `surface_biome` identifies the appearance source. `palette_index` indexes that source's palette. The same appearance entry can later refer to a texture in a game renderer. `tile_at` requires both a biome and an appearance; `draft_at` retains metrics and territory even when appearance is unclassified.
 
-`BasinGenerator::new(coarse_elevation)` generates at most one impact basin per generation cell. Defaults are 8192-tile cells, probability 0.12, radii 800–2400, depths 0.06–0.18, rim heights 0.005–0.02, and smoothing 0.8. Probability zero disables the layer. Supply signed elevation noise with the same seed and coordinate scale as base terrain, using fewer octaves. Apply basins before craters so smoothing preserves younger crater detail. The preview exposes all basin parameters plus coarse octave count (default 2, capped at the elevation octave count).
+Definitions live in:
 
-`BiomeMap::parse()` loads bundled `src/biomes/biomes.ron`; `from_ron(source)` loads custom definitions. Ranges include their minimum and exclude their maximum; overlaps use the first match. Temperature ranges use Celsius and height ranges lie within [0, 1]. `WorldGeography` maps the square world's northwest origin to latitude/longitude, with signed chunk coordinates using Euclidean division.
+- `src/biomes/biomes.ron`: the single repository of biome names, optional palettes, and optional palette height thresholds.
+- `src/biomes/maps/default.ron`: default height-temperature selection rules.
+- `src/features/{basin,crater,volcano}.ron`: generation settings, temperature offsets, and territory biome maps.
 
-`VolcanoGenerator::default()` places at most one volcano per 4096-tile cell with probability 0.15, radii 128–1024 tiles, and normalized cone heights 0.15–0.4. The caldera radius defaults to 0.2 of the cone radius, with depth 0.15. Probability zero disables the layer; caldera ratio zero produces solid cones. Cones and calderas join smoothly to surrounding terrain, including across cell and chunk boundaries. Volcanoes modify height before altitude cooling and biome classification; they do not add heat or override biome colors. The preview exposes every parameter with a `volcano_` prefix, limits maximum radius to cell size, and validates minimum/maximum ranges.
+```ron
+// Territory only; use the default terrain's appearance.
+(name: "crater"),
 
-Run `cargo test --offline -p worldgen --all-targets` to check generation and the preview adapter.
+// Appearance is owned by the biome, not the feature generator.
+(name: "volcano", palette_height_threshold: 0.01, palette: [
+    (color: "#343C47", height: (min: 0.0, max: 0.65)),
+    (color: "#9AA4AA", height: (min: 0.65, max: 1.0)),
+]),
+```
+
+Palette entries may also specify Celsius `temperature` ranges. Omitted ranges cover all heights or all finite temperatures. All selection uses [min, max), except height 1 is included in ranges ending at 1. Repository loading validates ranges and thresholds; map loading resolves names to compact IDs before generation.
+
+`BiomeId` is the zero-based `u16` index in the shared repository. Existing IDs are preserved, including palette-free feature territories. Append new definitions to preserve IDs; reordering or changing generation rules requires regenerating saved terrain. `BiomeRepository::id(name)` resolves a name, and `get(id)` retrieves the definition.
+
+`WorldGenerator::new(stages, Arc<BiomeRepository>)` supports custom pipelines. Resolve every map against that repository and keep biome selection before palette selection. `FeatureStage::new(seed, generator, chunk_size, &biomes)` adapts a feature generator to the pipeline. `TerrainFeature::apply` returns whether a tile is inside the feature territory; it must leave outside tiles unchanged.
+
+`ElevationNoise::with_config(seed, NoiseConfig)` and `TemperatureRegionsNoise::with_config(seed, NoiseConfig)` configure noise frequency, octaves, lacunarity, and persistence. `TemperatureModel::with_config(coefficients, noise, geography, planet)` configures daily-average Celsius climate. Use `WorldGeography::new(config.chunk_size, config.world_size_chunks)` to match the world. Normalized height is currently treated as kilometers for altitude cooling.
+
+Crater defaults favor small impacts within 24–384 tiles, use density 1.25 per 1024-tile cell, and cap depth at 0.22 and rim height at 0.06. Basins use 6144-tile cells, probability 0.2, 768–2048-tile radii, and smoothing 0.9. Volcanoes use 4096-tile cells, probability 0.2, 192–896-tile radii, 0.14–0.32 cone heights, and a caldera radius ratio of 0.28 with depth 0.18. Generation is deterministic in global coordinates and independent of chunk boundaries and sampling order.
+
+Run `cargo test --offline -p worldgen --all-targets` to check the generator and preview adapter.

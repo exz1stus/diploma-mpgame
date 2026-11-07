@@ -21,9 +21,13 @@ impl Plugin for WorldGeneration {
         let config = WorldGeneratorConfig::default();
         let mut coarse_elevation = worldgen::ElevationNoise::default_config();
         coarse_elevation.octaves = 2;
+        let biomes = worldgen::BiomeRepository::parse();
+        let biome_map = worldgen::BiomeMap::parse(&biomes);
         app.insert_resource(WorldGenerator(worldgen::build_world_generator(
             config,
-            worldgen::BiomeMap::parse(),
+            biomes,
+            biome_map,
+            worldgen::ElevationNoise::new(config.seed),
             worldgen::TemperatureModel::new(
                 worldgen::TemperatureRegionsNoise::new(config.seed ^ 0x5445_4d50),
                 worldgen::WorldGeography::new(config.chunk_size, config.world_size_chunks),

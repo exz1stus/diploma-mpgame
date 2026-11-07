@@ -3,8 +3,8 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use crate::features::hash::hash_cell;
-use crate::{TileDraft, TilePos, WorldBounds};
+use crate::hash::hash_cell;
+use crate::{BiomeMapDefinition, TileDraft, TilePos, WorldBounds};
 
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
@@ -19,11 +19,17 @@ pub trait TerrainFeature: Send + Sync {
 
     /// Modify terrain at a world-space position. Chunk queries may select this
     /// feature for tiles outside its influence; leave those tiles unchanged.
-    fn apply(&self, pos: TilePos, tile: &mut TileDraft);
+    /// Return true inside the territory, even for weak or zero changes.
+    /// Biomes and appearance are decided by later stages.
+    fn apply(&self, pos: TilePos, tile: &mut TileDraft) -> bool;
 }
 
 pub trait FeatureGenerator: Send + Sync {
     type Feature: TerrainFeature + Clone;
+
+    fn biome_map(&self) -> BiomeMapDefinition {
+        BiomeMapDefinition::default()
+    }
 
     /// Size of the spatial generation cells.
     fn cell_size(&self) -> i64;

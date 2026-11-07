@@ -1,4 +1,4 @@
-export const SAMPLE_BYTES = 12;
+export const SAMPLE_BYTES = 18;
 
 export const MAP_MODES = {
   biomes: { label: 'Biomes' },
@@ -32,6 +32,9 @@ export function readSample(bytes, index) {
     color: `#${[1, 2, 3].map(channel => view.getUint8(offset + channel).toString(16).padStart(2, '0')).join('')}`,
     height: view.getFloat32(offset + 4, true),
     temperature: view.getFloat32(offset + 8, true),
+    biomeId: [1, 2].includes(view.getUint8(offset)) ? view.getUint16(offset + 12, true) : null,
+    surfaceBiomeId: view.getUint8(offset) === 1 ? view.getUint16(offset + 14, true) : null,
+    paletteIndex: view.getUint8(offset) === 1 ? view.getUint16(offset + 16, true) : null,
   };
 }
 
@@ -52,7 +55,7 @@ export function decodePixels(buffer, size, mode = 'biomes') {
       pixels[pixel] = bytes[offset + 1];
       pixels[pixel + 1] = bytes[offset + 2];
       pixels[pixel + 2] = bytes[offset + 3];
-    } else if (bytes[offset] === 0) {
+    } else {
       pixels[pixel] = 54; pixels[pixel + 1] = 43; pixels[pixel + 2] = 61;
     }
     pixels[pixel + 3] = bytes[offset] === 255 ? 0 : 255;

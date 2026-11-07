@@ -1,7 +1,7 @@
 import { zoomMetrics, fitWorldZoom, clampCamera } from './zoom.mjs';
 import { SAMPLE_BYTES, readSample, MAP_MODES, readMapMode } from './protocol.mjs';
 import { settingsError, readSettings, settingsQuery } from './settings.mjs';
-import { biomeForSample, renderBiomes } from './biomes.mjs';
+import { biomeForSample, surfaceForSample, renderBiomes } from './biomes.mjs';
 
 const canvas = document.querySelector('#map');
 const viewport = document.querySelector('.viewport');
@@ -33,6 +33,15 @@ const biomeSelect = document.querySelector('#biome-file');
 let biomeFiles = [];
 let biomeFile = '';
 let biomes = [];
+let biomeMaps = {};
+const biomeMapView = document.querySelector('#biome-map-view');
+
+function renderBiomeMap() {
+  renderBiomes(document.querySelector('#biome-chart'), document.querySelector('#biome-legend'),
+    document.querySelector('#biome-chart-readout'), biomeMaps[biomeMapView.value] || [], biomes);
+}
+
+biomeMapView.addEventListener('change', renderBiomeMap);
 let biomeReady = false;
 const initialSize = Number(params.get('chunk') ?? 32);
 let config = { size: Number.isInteger(initialSize) && initialSize >= 4 && initialSize <= 128 ? initialSize : 32 };
@@ -105,9 +114,9 @@ function installControls(nextControls) {
       'Temperature region noise': 'Leave seed override blank to derive it from the world seed.',
       'Temperature coefficients': 'Temperature is always the daily average for the selected season.',
       Planet: 'Orbit: 0 / 0.5 equinox, 0.25 northern summer, 0.75 northern winter.',
-      Craters: 'Density is the expected number per cell; 0 disables craters. Maximum radius × 1.5 must fit within a cell.',
-      'Impact basins': 'Large, rare impacts applied before craters. Probability 0 disables basins; 1 tests every cell. Use Fit world (□) to see their extent. Smoothing octaves are capped by elevation octaves.',
-      Volcanoes: 'Raised cones with summit calderas, applied after basins and before craters. Probability 0 disables volcanoes; 1 places one per cell. Heights and depths use the normalized height scale. Caldera radius 0 makes a solid cone. Use Fit world (□) to find sparse volcanoes.',
+      Craters: 'Territory is marked without replacing terrain colors. Temperature offsets heat or cool affected tiles before biome selection. Density is the expected number per cell; 0 disables craters. Maximum radius × 1.5 must fit within a cell.',
+      'Impact basins': 'Territory is marked without replacing terrain colors. Temperature offsets heat or cool basin interiors before biome selection. Large, rare impacts applied before craters. Probability 0 disables basins; 1 tests every cell. Use Fit world (□) to see their extent. Smoothing octaves are capped by elevation octaves.',
+      Volcanoes: 'Temperature offsets heat or cool affected tiles before biome selection. Raised cones with summit calderas, applied after basins and craters. Volcano territory is always marked. Its biome palette appears above the configured height threshold; other tiles use the terrain appearance. Probability 0 disables volcanoes; 1 places one per cell. Heights and depths use the normalized height scale. Caldera radius 0 makes a solid cone. Use Fit world (□) to find sparse volcanoes.',
     };
     const hint = document.createElement('p');
     hint.className = 'settings-hint'; hint.textContent = hints[group] || '';
@@ -377,7 +386,8 @@ function updateReadout() {
   const tileX = Math.min(world.width - 1, cell.x * stride + offset);
   const tileY = Math.min(world.height - 1, cell.y * stride + offset);
   const biome = biomeForSample(biomes, sample);
-  const title = sample ? (mapMode === 'biomes' ? (sample.status === 1 ? (biome?.name || sample.color) : 'No matching biome') : MAP_MODES[mapMode].label) : 'Loading tile…';
+  const surface = surfaceForSample(biomes, sample);
+  const title = sample ? (mapMode === 'biomes' ? (biome ? biome.name : 'No matching biome') : MAP_MODES[mapMode].label) : 'Loading tile…';
   const temperature = sample && Number.isFinite(sample.temperature) ? `${sample.temperature.toFixed(1)} °C` : '—';
   const height = sample && Number.isFinite(sample.height) ? sample.height.toFixed(4) : '—';
   labels.readout.textContent = mapMode === 'biomes' ? `${title} · ${temperature} · height ${height}`
@@ -385,7 +395,7 @@ function updateReadout() {
   tooltipFields.tile.textContent = `${m.lod === 0 ? 'Tile' : 'Sample'} ${tileX}, ${tileY} · ${title}`;
   tooltipFields.temperature.textContent = temperature;
   tooltipFields.height.textContent = height;
-  tooltipFields.note.textContent = `Height 0–1 · daily average temperature${m.lod ? ` · LOD ${m.lod}` : ''}`;
+  tooltipFields.note.textContent = `${sample?.status === 1 ? `Surface: ${surface?.name || sample.color} · palette entry ${sample.paletteIndex + 1} · ${sample.color} · ` : ''}Height 0–1 · daily average temperature${m.lod ? ` · LOD ${m.lod}` : ''}`;
   tooltip.hidden = false;
   const tooltipWidth = tooltip.offsetWidth;
   const tooltipHeight = tooltip.offsetHeight;
@@ -486,12 +496,14 @@ async function pollBuild() {
     if (biomeFile) query.set('biome', biomeFile);
     const response = await fetch(`${apiBase}/api/meta?${query}`, { cache: 'no-store' });
     if (!response.ok) throw new Error(response.status === 400 ? await response.text() : 'Generator is rebuilding or unavailable. Waiting for the local server…');
-    const { build, protocol, world: nextWorld, controls: nextControls, biome_files: nextFiles, biome_file: nextFile, biomes: nextBiomes } = await response.json();
+    const { build, protocol, world: nextWorld, controls: nextControls, biome_files: nextFiles, biome_file: nextFile,
+      biomes: nextBiomes, biome_rules: nextRules, feature_biome_maps: nextFeatureMaps } = await response.json();
     if (request !== metaRequest) return;
-    if (protocol !== 2 || !nextWorld || !Number.isSafeInteger(nextWorld.width) || !Number.isSafeInteger(nextWorld.height)
+    if (protocol !== 5 || !nextWorld || !Number.isSafeInteger(nextWorld.width) || !Number.isSafeInteger(nextWorld.height)
       || nextWorld.width <= 0 || nextWorld.height <= 0 || !Array.isArray(nextControls) || !nextControls.length) throw new Error('Unsupported preview metadata');
     if (JSON.stringify(controls) !== JSON.stringify(nextControls)) installControls(nextControls);
-    if (!Array.isArray(nextFiles) || !nextFiles.includes(nextFile) || !Array.isArray(nextBiomes)) throw new Error('Unsupported biome metadata');
+    if (!Array.isArray(nextFiles) || !nextFiles.includes(nextFile) || !Array.isArray(nextBiomes)
+      || !Array.isArray(nextRules) || !nextFeatureMaps) throw new Error('Unsupported biome metadata');
     if (JSON.stringify(biomeFiles) !== JSON.stringify(nextFiles)) {
       biomeFiles = nextFiles;
       biomeSelect.replaceChildren(...biomeFiles.map(file => {
@@ -506,9 +518,18 @@ async function pollBuild() {
       if (biomeFile !== nextFile) { pollBuild(); return; }
     }
     biomeSelect.value = biomeFile;
-    if (!biomeReady || JSON.stringify(biomes) !== JSON.stringify(nextBiomes)) {
+    const nextMaps = { Default: nextRules, ...nextFeatureMaps };
+    if (!biomeReady || JSON.stringify(biomes) !== JSON.stringify(nextBiomes)
+      || JSON.stringify(biomeMaps) !== JSON.stringify(nextMaps)) {
       biomes = nextBiomes;
-      renderBiomes(document.querySelector('#biome-chart'), document.querySelector('#biome-legend'), document.querySelector('#biome-chart-readout'), biomes);
+      biomeMaps = nextMaps;
+      const selectedMap = biomeMapView.value;
+      biomeMapView.replaceChildren(...Object.keys(biomeMaps).map(name => {
+        const option = document.createElement('option');
+        option.value = name; option.textContent = name; return option;
+      }));
+      biomeMapView.value = Object.hasOwn(biomeMaps, selectedMap) ? selectedMap : 'Default';
+      renderBiomeMap();
     }
     biomeReady = true;
     updateUrl();

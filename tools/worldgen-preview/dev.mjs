@@ -69,8 +69,9 @@ function compile() {
 function schedule() { clearTimeout(timer); timer = setTimeout(compile, 180); }
 const watchers = [
   watch(source, (_, name) => { if (name?.endsWith('.rs')) schedule(); }),
-  watch(resolve(source, 'features'), (_, name) => { if (name?.endsWith('.rs')) schedule(); }),
+  watch(resolve(source, 'features'), (_, name) => { if (name?.endsWith('.rs') || name?.endsWith('.ron')) schedule(); }),
   watch(resolve(source, 'biomes'), (_, name) => { if (name?.endsWith('.rs') || name?.endsWith('.ron')) schedule(); }),
+  watch(resolve(source, 'biomes/maps'), (_, name) => { if (name?.endsWith('.ron')) schedule(); }),
   watch(example, (_, name) => { if (name === 'worldgen_preview.rs') schedule(); }),
   watch(manifest, schedule),
 ];

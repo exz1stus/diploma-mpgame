@@ -13,6 +13,6 @@ impl TemperatureStage {
 
 impl GenerationStage for TemperatureStage {
     fn apply(&self, pos: TilePos, tile: &mut TileDraft) {
-        tile.temperature = self.model.average_at(pos, tile.height);
+        tile.temperature = self.model.average_at(pos, tile.height) + tile.temperature_offset;
     }
 }

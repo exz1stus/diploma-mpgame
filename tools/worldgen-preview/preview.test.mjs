@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { SAMPLE_BYTES, decodePixels, readSample, readMapMode } from './dist/protocol.mjs';
 import { zoomMetrics, fitWorldZoom, clampCamera } from './dist/zoom.mjs';
 import { defaultSettings, settingsError, readSettings, settingsQuery } from './dist/settings.mjs';
-import { biomeAt, biomeForSample, temperatureDomain } from './dist/biomes.mjs';
+import { biomeAt, biomeForSample, surfaceForSample, biomeDescription, paletteIndexAt, paletteRegions, temperatureDomain } from './dist/biomes.mjs';
 
 const controls = [
   { key: 'size', label: 'Chunk size', default: 32, min: 4, max: 128, step: '1' },
@@ -82,8 +82,11 @@ test('generator colors and Celsius/height data survive binary decoding', () => {
     bytes.set([1, 56, 71, 106], i * SAMPLE_BYTES);
     view.setFloat32(i * SAMPLE_BYTES + 4, 0.625, true);
     view.setFloat32(i * SAMPLE_BYTES + 8, -12.5, true);
+    view.setUint16(i * SAMPLE_BYTES + 12, 65535, true);
+    view.setUint16(i * SAMPLE_BYTES + 14, 42, true);
+    view.setUint16(i * SAMPLE_BYTES + 16, 3, true);
   }
-  assert.deepEqual(readSample(bytes, 0), { status: 1, color: '#38476a', height: 0.625, temperature: -12.5 });
+  assert.deepEqual(readSample(bytes, 0), { status: 1, color: '#38476a', height: 0.625, temperature: -12.5, biomeId: 65535, surfaceBiomeId: 42, paletteIndex: 3 });
   assert.deepEqual([...decodePixels(buffer, 2).slice(0, 4)], [56, 71, 106, 255]);
 });
 
@@ -177,11 +180,11 @@ test('biome ranges use both axes, exclusive upper bounds, and definition order',
   assert.equal(biomeAt(biomes, 0, 0.49), low);
   assert.equal(biomeAt(biomes, -20, 0.5), high);
   assert.equal(biomeAt(biomes, 10, 0.5), undefined);
-  assert.equal(biomeAt(biomes, 0, 1), undefined);
+  assert.equal(biomeAt(biomes, 0, 1), high);
   assert.deepEqual(temperatureDomain(biomes), { min: -20, max: 10 });
   assert.ok(Number.isFinite(temperatureDomain([]).min));
-  assert.equal(biomeForSample(biomes, { status: 1, color: '#aabbcc', temperature: 0, height: 0.499 }), low);
-  assert.equal(biomeForSample(biomes, { status: 1, color: '#aabbcc', temperature: 0, height: 0.5 }), low);
+  assert.equal(biomeForSample(biomes, { status: 1, biomeId: 0, color: '#aabbcc', temperature: 0, height: 0.499 }), low);
+  assert.equal(biomeForSample(biomes, { status: 1, biomeId: 0, color: '#aabbcc', temperature: 0, height: 0.5 }), low);
   assert.equal(biomeForSample(biomes, { status: 0, color: '#aabbcc', temperature: 0, height: 0.49 }), null);
 });
 
@@ -207,4 +210,102 @@ test('volcano controls round-trip and reject invalid radius, height and caldera 
   const restored = readSettings(new URLSearchParams('temperature_base=-42&volcano_min_height=0.6'), [...controls, ...volcanoControls]);
   assert.equal(restored.temperature_base, -42);
   for (const key of Object.keys(defaults)) assert.equal(restored[key], defaults[key]);
+});
+
+
+test('feature sample names use the shared repository independently of selection ranges', () => {
+  const repository = [{ name: 'frozen_volcano', color: '#a6adb8' }];
+  assert.equal(biomeForSample(repository, { status: 1, biomeId: 0, color: '#a6adb8', height: 1, temperature: -20 }), repository[0]);
+  assert.equal(biomeForSample(repository, { status: 0, color: '#a6adb8', height: 1, temperature: -20 }), null);
+});
+
+
+test('biome IDs distinguish feature and default biomes sharing a color', () => {
+  const repository = [{ name: 'default', color: '#645347' }, { name: 'basin', color: '#645347' }];
+  assert.equal(biomeForSample(repository, { status: 1, biomeId: 1, color: '#645347' }), repository[1]);
+  assert.equal(biomeForSample(repository, { status: 1, biomeId: 0, color: '#645347' }), repository[0]);
+  assert.equal(biomeForSample(repository, { status: 1, biomeId: 65535 }), null);
+  const buffer = new ArrayBuffer(SAMPLE_BYTES);
+  const sample = readSample(new Uint8Array(buffer), 0);
+  assert.equal(sample.biomeId, null, 'unclassified samples have no biome ID');
+});
+
+
+test('feature temperature offsets survive URLs and support heating and cooling', () => {
+  const featureControls = ['crater', 'basin', 'volcano'].map(prefix => ({
+    key: `${prefix}_temperature_offset`, label: 'Peak temperature offset', default: 0, min: -1000, max: 1000, step: 'any',
+  }));
+  const values = { crater_temperature_offset: -12.5, basin_temperature_offset: 8, volcano_temperature_offset: 50 };
+  assert.deepEqual(readSettings(settingsQuery(values, featureControls, true), featureControls), values);
+  assert.equal(settingsError(values, featureControls), '');
+  assert.match(settingsError({ ...values, volcano_temperature_offset: 1001 }, featureControls), /Peak temperature offset/);
+});
+
+test('palette indices and colors decode independently of biome identity', () => {
+  const repository = [{ name: 'volcano', palette: [{ color: '#AD8060' }, { color: '#5B4640' }] }];
+  const buffer = new ArrayBuffer(2 * SAMPLE_BYTES);
+  const bytes = new Uint8Array(buffer);
+  const view = new DataView(buffer);
+  bytes.set([1, 173, 128, 96], 0);
+  bytes.set([1, 91, 70, 64], SAMPLE_BYTES);
+  view.setUint16(SAMPLE_BYTES + 16, 1, true);
+  const first = readSample(bytes, 0);
+  const second = readSample(bytes, 1);
+  assert.equal(first.biomeId, second.biomeId);
+  assert.equal(first.paletteIndex, 0);
+  assert.equal(second.paletteIndex, 1);
+  assert.equal(first.color, repository[0].palette[0].color.toLowerCase());
+  assert.equal(second.color, repository[0].palette[1].color.toLowerCase());
+  assert.equal(biomeForSample(repository, first), biomeForSample(repository, second));
+  assert.match(biomeDescription(repository[0]), /2 palette entries/);
+});
+
+
+test('palette rules use final height and temperature with first match and fallback', () => {
+  const biome = { palette: [
+    { color: '#111111', height: { min: 0, max: 0.5 }, temperature: { min: -20, max: 0 } },
+    { color: '#222222', height: { min: 0.5, max: 1 }, temperature: { min: -20, max: 0 } },
+    { color: '#333333', height: { min: 0, max: 0.5 }, temperature: { min: 0, max: 20 } },
+    { color: '#444444' },
+  ] };
+  for (const [height, temperature, expected] of [[0.25, -10, 0], [0.75, -10, 1], [0.25, 10, 2], [0.75, 10, 3], [0.5, -20, 1], [1, -10, 1], [0.25, 0, 2], [0.25, 20, 3]]) {
+    assert.equal(paletteIndexAt(biome, temperature, height), expected);
+  }
+  assert.equal(paletteIndexAt({ palette: biome.palette.slice(0, 1) }, 100, 1), 0);
+});
+
+test('palette chart regions intersect real rules with biome map bounds', () => {
+  const biome = { height: { min: 0.3, max: 0.8 }, temperature: { min: -5, max: 10 }, palette: [
+    { color: '#111111', height: { min: 0, max: 0.5 }, temperature: { min: -20, max: 0 } },
+    { color: '#222222', height: { min: 0.5, max: 1 }, temperature: { min: 0, max: 20 } },
+    { color: '#333333', height: { min: 0.8, max: 1 }, temperature: { min: 0, max: 20 } },
+  ] };
+  assert.deepEqual(paletteRegions(biome), [
+    { color: '#111111', paletteIndex: 0, height: { min: 0.3, max: 0.5 }, temperature: { min: -5, max: 0 } },
+    { color: '#222222', paletteIndex: 1, height: { min: 0.5, max: 0.8 }, temperature: { min: 0, max: 10 } },
+  ]);
+});
+
+
+test('territory and surface identities decode separately, including unpainted territories', () => {
+  const repository = [
+    { name: 'terrain', palette: [{ color: '#abcdef' }] },
+    { name: 'crater', palette: [] },
+  ];
+  const bytes = new Uint8Array(2 * SAMPLE_BYTES);
+  const view = new DataView(bytes.buffer);
+  bytes.set([1, 171, 205, 239]);
+  view.setUint16(12, 1, true);
+  view.setUint16(14, 0, true);
+  const sample = readSample(bytes, 0);
+  assert.equal(biomeForSample(repository, sample), repository[1]);
+  assert.equal(surfaceForSample(repository, sample), repository[0]);
+  assert.equal(paletteIndexAt(repository[1], 0, 0.5), null);
+  assert.match(biomeDescription(repository[1]), /terrain appearance/);
+  bytes[SAMPLE_BYTES] = 2;
+  view.setUint16(SAMPLE_BYTES + 12, 1, true);
+  const unpainted = readSample(bytes, 1);
+  assert.equal(biomeForSample(repository, unpainted), repository[1]);
+  assert.equal(unpainted.surfaceBiomeId, null);
+  assert.equal(unpainted.paletteIndex, null);
 });
