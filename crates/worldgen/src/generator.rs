@@ -1,161 +1,229 @@
-use crate::temperature::{PlanetParams, TemperatureSampler};
-use crate::{BiomeMap, TilePos, WorldGeography};
+use crate::features::feature::{FeatureLayer, TerrainFeature, WorldBounds};
+use crate::{
+    BasinGenerator, Biome, BiomeMap, CraterGenerator, ElevationSampler, PlanetParams,
+    TemperatureSampler, TileSampler, VolcanoGenerator, WorldGeneratorConfig, WorldGeography,
+};
 
-use super::config::WorldGeneratorConfig;
-use super::noise::{ElevationNoise, NoiseSource, TemperatureRegionsNoise};
-use super::sampler::{ElevationSampler, TileSampler};
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Tile(pub String);
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TerrainChunk {
-    pub x: i32,
-    pub y: i32,
-    pub size: u32,
-    /// Row-major tiles, starting at the chunk's lowest x and y coordinates.
-    /// None preserves a cell whose climate/height has no configured biome.
-    pub tiles: Vec<Option<Tile>>,
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct TilePos {
+    pub x: i64,
+    pub y: i64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct TileData {
-    /// Normalized elevation for biome classification, in [0, 1].
-    pub height: f64,
-    /// Daily average temperature in Celsius for the configured season.
-    pub temperature: f64,
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ChunkPos {
+    pub x: i64,
+    pub y: i64,
 }
 
-impl TerrainChunk {
-    pub fn tile(&self, x: u32, y: u32) -> Option<Tile> {
-        if x >= self.size || y >= self.size {
-            return None;
+impl ChunkPos {
+    pub fn world_bounds(&self, chunk_size: u32) -> WorldBounds {
+        let min_x = self.x * chunk_size as i64;
+        let min_y = self.y * chunk_size as i64;
+
+        WorldBounds {
+            min_x: min_x as f64,
+            min_y: min_y as f64,
+            max_x: (min_x + chunk_size as i64) as f64,
+            max_y: (min_y + chunk_size as i64) as f64,
         }
-        self.tiles
-            .get(y as usize * self.size as usize + x as usize)?
-            .clone()
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct Tile {
+    /// Normalized elevation after terrain features, in [0, 1].
+    pub height: f64,
+    /// Daily average Celsius temperature for the configured season.
+    pub temperature: f64,
+    /// None when no biome definition covers this height and temperature.
+    pub biome: Option<Biome>,
+}
+
 pub struct WorldGenerator {
-    config: WorldGeneratorConfig,
     biomes: BiomeMap,
     world_geography: WorldGeography,
     planet: PlanetParams,
     elevation: ElevationSampler,
     temperature: TemperatureSampler,
+    craters: FeatureLayer<CraterGenerator>,
+    basins: FeatureLayer<BasinGenerator>,
+    volcanoes: FeatureLayer<VolcanoGenerator>,
 }
 
 impl WorldGenerator {
-    pub fn perlin(config: WorldGeneratorConfig) -> Self {
-        Self::with_source(config, ElevationNoise::new(config.seed))
-    }
-
-    /// Use custom elevation noise while retaining seeded regional temperature noise.
-    pub fn with_source(config: WorldGeneratorConfig, source: impl NoiseSource) -> Self {
-        let temperature_noise = TemperatureRegionsNoise::new(config.seed ^ 0x5445_4d50);
-        Self::new(
-            config,
-            BiomeMap::parse(),
-            PlanetParams::default(),
-            ElevationSampler::new(source),
-            TemperatureSampler::new(temperature_noise),
-        )
-    }
-
-    /// Geography is derived from the same configuration used to generate chunks.
-    /// All stages are owned; sampling borrows geography/planet only for each call.
     pub fn new(
         config: WorldGeneratorConfig,
         biomes: BiomeMap,
         planet: PlanetParams,
         elevation: ElevationSampler,
         temperature: TemperatureSampler,
+        craters: CraterGenerator,
+        basins: BasinGenerator,
+        volcanoes: VolcanoGenerator,
     ) -> Self {
-        let world_geography = WorldGeography::new(config.chunk_size, config.world_size_chunks);
+        assert!(craters.cell_size > 0, "crater cell size must be positive");
+        assert!(craters.min_radius.is_finite() && craters.min_radius > 0.0);
+        assert!(craters.max_radius.is_finite() && craters.max_radius >= craters.min_radius);
+        assert!(craters.density.is_finite() && (0.0..=4.0).contains(&craters.density));
+        volcanoes.validate();
         Self {
-            config,
             biomes,
-            world_geography,
+            world_geography: WorldGeography::new(config.chunk_size, config.world_size_chunks),
             planet,
             elevation,
             temperature,
-        }
-    }
-
-    /// Raw signed elevation, also used as kilometers by the temperature stage.
-    pub fn height_at(&self, x: i64, y: i64) -> f64 {
-        self.elevation.sample(TilePos { x, y })
-    }
-
-    pub fn sample(&self, pos: TilePos) -> TileData {
-        self.sample_with_time(pos, None)
-    }
-
-    /// Instantaneous Celsius temperature at a normalized global time in [0, 1).
-    pub fn sample_instant(&self, pos: TilePos, normalized_time: f64) -> TileData {
-        self.sample_with_time(pos, Some(normalized_time))
-    }
-
-    fn sample_with_time(&self, pos: TilePos, time: Option<f64>) -> TileData {
-        let height = (self.elevation.sample(pos) + 1.0) * 0.5;
-        TileData {
-            height,
-            temperature: if let Some(time) = time {
-                self.temperature.sample_instant(
-                    time,
-                    pos,
-                    height,
-                    &self.world_geography,
-                    &self.planet,
-                )
-            } else {
-                self.temperature
-                    .sample_average(pos, height, &self.world_geography, &self.planet)
+            craters: FeatureLayer {
+                seed: config.seed ^ 0x4352_4154,
+                generator: craters,
+            },
+            basins: FeatureLayer {
+                seed: config.seed ^ 0x4352_4152,
+                generator: basins,
+            },
+            volcanoes: FeatureLayer {
+                seed: config.seed ^ 0x564F_4C43,
+                generator: volcanoes,
             },
         }
     }
 
-    pub fn tile_at(&self, pos: TilePos) -> Option<Tile> {
-        self.sample_tile(pos).1
-    }
+    /// Sample elevation, basins, volcanoes, craters, average temperature, and biome.
+    /// Coordinates are global tiles. Sampling is independent of chunk boundaries.
+    pub fn tile_at(&self, pos: TilePos) -> Tile {
+        let x = pos.x as f64;
+        let y = pos.y as f64;
+        let mut height = (self.elevation.sample(pos) + 1.0) * 0.5;
+        let mut biome = None;
+        let bounds = self
+            .world_geography
+            .global_to_chunk(pos)
+            .world_bounds(self.world_geography.chunk_size);
 
-    /// Sample climate/height and its display color with a single stage evaluation.
-    pub fn sample_tile(&self, pos: TilePos) -> (TileData, Option<Tile>) {
-        self.classify_sample(self.sample(pos))
-    }
-
-    pub fn sample_tile_instant(&self, pos: TilePos, time: f64) -> (TileData, Option<Tile>) {
-        self.classify_sample(self.sample_instant(pos, time))
-    }
-
-    fn classify_sample(&self, sample: TileData) -> (TileData, Option<Tile>) {
-        let tile = self
-            .biomes
-            .determine_biome(sample.temperature, sample.height)
-            .map(|biome| Tile(biome.color.clone()));
-        (sample, tile)
-    }
-
-    pub fn generate_chunk(&self, chunk_x: i32, chunk_y: i32) -> TerrainChunk {
-        let size = self.config.chunk_size;
-        let origin_x = i64::from(chunk_x) * i64::from(size);
-        let origin_y = i64::from(chunk_y) * i64::from(size);
-        let mut tiles = Vec::with_capacity(size as usize * size as usize);
-        for local_y in 0..size {
-            for local_x in 0..size {
-                let tile = self.tile_at(TilePos {
-                    x: origin_x + i64::from(local_x),
-                    y: origin_y + i64::from(local_y),
-                });
-                tiles.push(tile);
+        if self.basins.generator.probability > 0.0 {
+            for basin in self.basins.features_in(bounds) {
+                height = basin.apply_height(x, y, height);
             }
         }
-        TerrainChunk {
-            x: chunk_x,
-            y: chunk_y,
-            size,
-            tiles,
+        if self.craters.generator.density > 0.0 {
+            for crater in self.craters.features_in(bounds) {
+                height = crater.apply_height(x, y, height);
+            }
         }
+        if self.volcanoes.generator.probability > 0.0 {
+            for volcano in self.volcanoes.features_in(bounds) {
+                height = volcano.apply_height(x, y, height);
+            }
+        }
+        let height = height.clamp(0.0, 1.0);
+        let temperature =
+            self.temperature
+                .sample_average(pos, height, &self.world_geography, &self.planet);
+        biome = self.biomes.determine_biome(temperature, height).cloned();
+        Tile {
+            height,
+            temperature,
+            biome,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{NoiseSource, Range, TemperatureCoefficients};
+
+    struct FlatNoise;
+    impl NoiseSource for FlatNoise {
+        fn sample(&self, _: f64, _: f64) -> f64 {
+            0.0
+        }
+    }
+
+    fn volcanic_world(chunk_size: u32, probability: f64) -> WorldGenerator {
+        let mut basins = BasinGenerator::new(FlatNoise);
+        basins.probability = 0.0;
+        let biome = |name: &str, min, max| Biome {
+            name: name.into(),
+            color: "#123456".into(),
+            height: Range { min, max },
+            temperature: Range {
+                min: -100.0,
+                max: 100.0,
+            },
+        };
+        WorldGenerator::new(
+            WorldGeneratorConfig {
+                seed: 42,
+                chunk_size,
+                world_size_chunks: 64 / chunk_size,
+                ..Default::default()
+            },
+            BiomeMap::new(vec![
+                biome("low", 0.0, 0.55),
+                biome("volcanic_highlands", 0.55, 1.0),
+            ])
+            .unwrap(),
+            PlanetParams::default(),
+            ElevationSampler::new(FlatNoise),
+            TemperatureSampler::with_config(
+                TemperatureCoefficients {
+                    base: 0.0,
+                    solar: 0.0,
+                    region: 0.0,
+                    altitude: 10.0,
+                },
+                FlatNoise,
+            ),
+            CraterGenerator {
+                density: 0.0,
+                ..Default::default()
+            },
+            basins,
+            VolcanoGenerator {
+                cell_size: 64,
+                probability,
+                min_radius: 48.0,
+                max_radius: 64.0,
+                ..Default::default()
+            },
+        )
+    }
+
+    #[test]
+    fn volcanoes_cross_chunks_and_feed_temperature_and_biomes() {
+        let small_chunks = volcanic_world(16, 1.0);
+        let large_chunks = volcanic_world(32, 1.0);
+        let disabled = volcanic_world(16, 0.0);
+        let mut raised = 0;
+        for y in (0..64).step_by(3) {
+            for x in [0, 15, 16, 31, 32, 47, 48, 63] {
+                let pos = TilePos { x, y };
+                let tile = small_chunks.tile_at(pos);
+                assert_eq!(
+                    tile,
+                    large_chunks.tile_at(pos),
+                    "chunk boundaries must not affect {pos:?}"
+                );
+                assert_eq!(
+                    tile,
+                    small_chunks.tile_at(pos),
+                    "sampling must be repeatable"
+                );
+                assert!((0.0..=1.0).contains(&tile.height));
+                assert!((tile.temperature + tile.height * 10.0).abs() < 1e-12);
+                let baseline = disabled.tile_at(pos);
+                assert_eq!(baseline.height, 0.5);
+                if tile.height > 0.55 {
+                    raised += 1;
+                    assert_eq!(tile.biome.as_ref().unwrap().name, "volcanic_highlands");
+                    assert!(tile.temperature < baseline.temperature);
+                }
+            }
+        }
+        assert!(
+            raised > 0,
+            "enabled volcanoes must raise terrain and change biomes"
+        );
     }
 }

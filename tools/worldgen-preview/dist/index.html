@@ -15,19 +15,39 @@
       <div class="eyebrow">PROCEDURAL TERRAIN / 001</div>
       <h1>Explore the world<br><em>before it exists.</em></h1>
       <p class="intro">A live, chunk-based view of your Rust generator. Save a generator change to rebuild the map. Drag to pan, scroll to zoom.</p>
+      <section class="biome-panel" aria-label="Biome definitions">
+        <label class="field biome-file-field" for="biome-file"><span>Biome file</span><select id="biome-file" disabled><option>Loading files…</option></select></label>
+        <details class="biome-ranges" open>
+          <summary>Height × temperature</summary>
+          <svg id="biome-chart" viewBox="0 0 286 234" role="img" aria-label="Biome ranges by temperature and height"></svg>
+          <p id="biome-chart-readout" class="settings-hint" aria-live="polite">Loading biome definitions…</p>
+        </details>
+      </section>
       <div id="generator-settings" aria-label="Generation parameters">Loading generator settings…</div>
       <div class="action-row"><button id="randomize" type="button" disabled>↝ &nbsp; Random seed</button><button id="reset-settings" type="button" disabled>Reset settings</button></div>
       <div class="action-row"><button id="reset" type="button">Reset view</button></div>
       <p class="validation" id="validation" role="alert"></p>
-      <div class="section-title legend-title"><span>Terrain key</span></div>
-      <div class="legend"><span><i class="swatch unclassified"></i> No matching biome</span></div>
-      <p class="intro">Colors follow the generated biomes. Hover a tile to inspect its temperature and height.</p>
+      <section id="terrain-key">
+        <div class="section-title legend-title"><span>Terrain key</span></div>
+        <div class="legend" id="biome-legend"><span><i class="swatch unclassified"></i> No matching biome</span></div>
+        <p class="intro">Colors follow the generated biomes. Hover a tile to inspect its temperature and height.</p>
+      </section>
       <div class="side-foot">Tiles merge only below <b>1 pixel per tile</b>. Higher levels sample one representative tile per larger cell. The view stays within the world boundaries.</div>
     </aside>
     <section class="viewport" aria-label="Interactive terrain map">
       <canvas id="map" aria-label="Generated terrain map"></canvas>
-      <div class="viewport-top"><div class="live"><span></span> LIVE GENERATION</div><div class="top-note">CHUNK GRID / GLOBAL COORDINATES</div></div>
+      <div class="viewport-top">
+        <div class="live"><span></span> LIVE GENERATION</div>
+        <label class="map-mode" for="map-mode">Map mode
+          <select id="map-mode"><option value="biomes">Biomes</option><option value="temperature">Temperature</option><option value="height">Height</option></select>
+        </label>
+      </div>
       <div class="coords" id="coords">X 0 &nbsp; Y 0</div>
+      <div class="metric-legend" id="metric-legend" hidden>
+        <strong id="metric-legend-title"></strong>
+        <div class="metric-gradient" id="metric-gradient"></div>
+        <div class="metric-ticks"><span id="metric-low"></span><span id="metric-middle"></span><span id="metric-high"></span></div>
+      </div>
       <div class="zoom-tools"><button id="zoom-in" aria-label="Zoom in" title="Zoom in">+</button><span id="zoom-level">1×</span><button id="zoom-out" aria-label="Zoom out" title="Zoom out">−</button><button id="fit-world" aria-label="Fit world" title="Fit world">□</button></div>
       <div id="tile-tooltip" class="tile-tooltip" role="tooltip" hidden>
         <strong id="tooltip-tile"></strong>

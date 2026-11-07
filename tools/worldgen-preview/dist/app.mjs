@@ -1,6 +1,7 @@
 import { zoomMetrics, fitWorldZoom, clampCamera } from './zoom.mjs';
-import { SAMPLE_BYTES, readSample } from './protocol.mjs';
-import { defaultSettings, settingsError, readSettings, settingsQuery } from './settings.mjs';
+import { SAMPLE_BYTES, readSample, MAP_MODES, readMapMode } from './protocol.mjs';
+import { settingsError, readSettings, settingsQuery } from './settings.mjs';
+import { biomeForSample, renderBiomes } from './biomes.mjs';
 
 const canvas = document.querySelector('#map');
 const viewport = document.querySelector('.viewport');
@@ -26,6 +27,13 @@ let world = null;
 let metaRequest = 0;
 const params = new URLSearchParams(location.search);
 const apiBase = (params.get('api') || '').replace(/\/$/, '');
+const modeSelect = document.querySelector('#map-mode');
+let mapMode = readMapMode(params.get('mode'));
+const biomeSelect = document.querySelector('#biome-file');
+let biomeFiles = [];
+let biomeFile = '';
+let biomes = [];
+let biomeReady = false;
 const initialSize = Number(params.get('chunk') ?? 32);
 let config = { size: Number.isInteger(initialSize) && initialSize >= 4 && initialSize <= 128 ? initialSize : 32 };
 let zoom = 0;
@@ -45,10 +53,10 @@ let decoderCursor = 0;
 let decoderId = 0;
 for (const worker of decoders) worker.onmessage = ({ data }) => {
   const job = decoderJobs.get(data.id);
-  if (!job) { data.image?.close(); return; }
+  if (!job) { for (const image of Object.values(data.images || {})) image.close(); return; }
   decoderJobs.delete(data.id);
   if (data.error) job.reject(new Error(data.error));
-  else job.resolve({ bytes: new Uint8Array(data.buffer), image: data.image });
+  else job.resolve({ bytes: new Uint8Array(data.buffer), images: data.images });
 };
 
 function decode(buffer, size) {
@@ -65,7 +73,8 @@ function installControls(nextControls) {
   const firstLoad = controls.length === 0;
   const previous = config;
   controls = nextControls;
-  config = firstLoad ? readSettings(params, controls) : { ...defaultSettings(controls), ...previous };
+  config = firstLoad ? readSettings(params, controls) : Object.fromEntries(controls.map(control =>
+    [control.key, Object.hasOwn(previous, control.key) ? previous[control.key] : control.default]));
   inputs = {};
   settingsPanel.replaceChildren();
   for (const group of new Set(controls.map(control => control.group))) {
@@ -80,20 +89,11 @@ function installControls(nextControls) {
       label.className = 'field';
       const text = document.createElement('span');
       text.textContent = control.label;
-      let input;
-      if (control.key === 'instant') {
-        input = document.createElement('select');
-        for (const [value, name] of [[0, 'Daily average'], [1, 'At time of day']]) {
-          const option = document.createElement('option');
-          option.value = value; option.textContent = name; input.append(option);
-        }
-      } else {
-        input = document.createElement('input');
-        input.type = 'number';
-        input.min = control.min; input.max = control.max; input.step = control.step;
-        input.required = control.default !== null;
-        if (control.default === null) input.placeholder = 'World seed';
-      }
+      const input = document.createElement('input');
+      input.type = 'number';
+      input.min = control.min; input.max = control.max; input.step = control.step;
+      input.required = control.default !== null;
+      if (control.default === null) input.placeholder = 'World seed';
       input.id = control.key;
       input.addEventListener('change', applyInputs);
       inputs[control.key] = input;
@@ -103,8 +103,11 @@ function installControls(nextControls) {
       World: 'Terrain coordinate scale multiplies elevation noise frequency. Regional noise uses global tile coordinates.',
       'Elevation noise': 'Leave seed override blank to follow the world seed.',
       'Temperature region noise': 'Leave seed override blank to derive it from the world seed.',
-      'Temperature coefficients': 'Daily variation affects the time-of-day display. All coefficients use Celsius.',
-      'Planet and time': 'Orbit: 0 / 0.5 equinox, 0.25 northern summer, 0.75 northern winter. Time: 0 midnight, 0.5 noon at the prime meridian.',
+      'Temperature coefficients': 'Temperature is always the daily average for the selected season.',
+      Planet: 'Orbit: 0 / 0.5 equinox, 0.25 northern summer, 0.75 northern winter.',
+      Craters: 'Density is the expected number per cell; 0 disables craters. Maximum radius × 1.5 must fit within a cell.',
+      'Impact basins': 'Large, rare impacts applied before craters. Probability 0 disables basins; 1 tests every cell. Use Fit world (□) to see their extent. Smoothing octaves are capped by elevation octaves.',
+      Volcanoes: 'Raised cones with summit calderas, applied after basins and before craters. Probability 0 disables volcanoes; 1 places one per cell. Heights and depths use the normalized height scale. Caldera radius 0 makes a solid cone. Use Fit world (□) to find sparse volcanoes.',
     };
     const hint = document.createElement('p');
     hint.className = 'settings-hint'; hint.textContent = hints[group] || '';
@@ -117,11 +120,12 @@ function installControls(nextControls) {
 
 function fillInputs() {
   for (const [key, input] of Object.entries(inputs)) input.value = config[key] ?? '';
-  if (inputs.time) inputs.time.disabled = config.instant === 0;
 }
 
 function updateUrl() {
-  const query = settingsQuery(config, controls, true);
+  const query = controls.length ? settingsQuery(config, controls, true) : new URLSearchParams(location.search);
+  query.set('mode', mapMode);
+  if (biomeFile) query.set('biome', biomeFile);
   if (apiBase) query.set('api', apiBase);
   history.replaceState(null, '', `${location.pathname}?${query}`);
 }
@@ -140,7 +144,6 @@ function applyInputs() {
   labels.validation.textContent = '';
   const chunkSizeChanged = candidate.size !== config.size;
   config = candidate;
-  inputs.time.disabled = config.instant === 0;
   clearCache(staleCache);
   if (chunkSizeChanged) { clearCache(cache); world = null; }
   staleCache = cache;
@@ -191,12 +194,16 @@ function cellAt(screenX, screenY, m = metrics()) {
 function key(cx, cy, lod) { return `${lod}:${cx}:${cy}`; }
 
 function clearCache(map) {
-  for (const chunk of map.values()) chunk.image.close();
+  for (const chunk of map.values()) closeChunk(chunk);
   map.clear();
 }
 
+function closeChunk(chunk) {
+  for (const image of Object.values(chunk.images)) image.close();
+}
+
 function fetchVisible(minX, minY, maxX, maxY, lod) {
-  if (Date.now() < retryAt || lod > 60 || ![minX, minY, maxX, maxY].every(Number.isSafeInteger)) return;
+  if (!biomeReady || Date.now() < retryAt || lod > 60 || ![minX, minY, maxX, maxY].every(Number.isSafeInteger)) return;
   const wanted = [];
   const visible = new Set();
   const centerX = (minX + maxX) / 2;
@@ -214,6 +221,7 @@ function fetchVisible(minX, minY, maxX, maxY, lod) {
     const requestRevision = revision;
     const size = config.size;
     const query = settingsQuery(config, controls);
+    query.set('biome', biomeFile);
     for (const [key, value] of Object.entries({ min_x: cx, min_y: cy, max_x: cx, max_y: cy, lod })) query.set(key, value);
     (async () => {
       try {
@@ -223,11 +231,11 @@ function fetchVisible(minX, minY, maxX, maxY, lod) {
         if (buffer.byteLength !== size * size * SAMPLE_BYTES) throw new Error('Incomplete chunk data');
         if (requestRevision !== revision || controller.signal.aborted) return;
         const chunk = await decode(buffer, size);
-        if (requestRevision !== revision || controller.signal.aborted) { chunk.image.close(); return; }
+        if (requestRevision !== revision || controller.signal.aborted) { closeChunk(chunk); return; }
         cache.set(id, chunk);
-        while (cache.size > Math.min(2000, Math.floor(64 * 1024 ** 2 / (size * size * (SAMPLE_BYTES + 4))))) {
+        while (cache.size > Math.min(2000, Math.floor(64 * 1024 ** 2 / (size * size * (SAMPLE_BYTES + 4 * Object.keys(MAP_MODES).length))))) {
           const oldest = cache.keys().next().value;
-          cache.get(oldest).image.close(); cache.delete(oldest);
+          closeChunk(cache.get(oldest)); cache.delete(oldest);
         }
         labels.validation.textContent = inputError;
       } catch (error) {
@@ -246,14 +254,14 @@ function fetchVisible(minX, minY, maxX, maxY, lod) {
 
 function drawFallback(cx, cy, lod, edgeX, edgeY, span) {
   const current = cache.get(key(cx, cy, lod)) || staleCache.get(key(cx, cy, lod));
-  if (current) { ctx.drawImage(current.image, edgeX, edgeY, span, span); return; }
+  if (current) { ctx.drawImage(current.images[mapMode], edgeX, edgeY, span, span); return; }
   // A neighboring LOD keeps the map visible while exact chunks stream in.
   for (const source of [cache, staleCache]) {
     const coarser = source.get(key(Math.floor(cx / 2), Math.floor(cy / 2), lod + 1));
     if (coarser) {
       ctx.save();
       ctx.beginPath(); ctx.rect(edgeX, edgeY, span, span); ctx.clip();
-      ctx.drawImage(coarser.image, edgeX - (cx & 1) * span, edgeY - (cy & 1) * span, span * 2, span * 2);
+      ctx.drawImage(coarser.images[mapMode], edgeX - (cx & 1) * span, edgeY - (cy & 1) * span, span * 2, span * 2);
       ctx.restore();
       return;
     }
@@ -262,7 +270,7 @@ function drawFallback(cx, cy, lod, edgeX, edgeY, span) {
       for (let dy = 0; dy < 2; dy++) for (let dx = 0; dx < 2; dx++) {
         const finer = source.get(key(cx * 2 + dx, cy * 2 + dy, lod - 1));
         if (finer) {
-          ctx.drawImage(finer.image, edgeX + dx * span / 2, edgeY + dy * span / 2, span / 2, span / 2);
+          ctx.drawImage(finer.images[mapMode], edgeX + dx * span / 2, edgeY + dy * span / 2, span / 2, span / 2);
           found = true;
         }
       }
@@ -368,14 +376,16 @@ function updateReadout() {
   const offset = m.lod === 0 ? 0 : stride / 2;
   const tileX = Math.min(world.width - 1, cell.x * stride + offset);
   const tileY = Math.min(world.height - 1, cell.y * stride + offset);
-  const title = sample ? (sample.status === 1 ? sample.color : 'No matching biome') : 'Loading tile…';
+  const biome = biomeForSample(biomes, sample);
+  const title = sample ? (mapMode === 'biomes' ? (sample.status === 1 ? (biome?.name || sample.color) : 'No matching biome') : MAP_MODES[mapMode].label) : 'Loading tile…';
   const temperature = sample && Number.isFinite(sample.temperature) ? `${sample.temperature.toFixed(1)} °C` : '—';
   const height = sample && Number.isFinite(sample.height) ? sample.height.toFixed(4) : '—';
-  labels.readout.textContent = `${title} · ${temperature} · height ${height}`;
+  labels.readout.textContent = mapMode === 'biomes' ? `${title} · ${temperature} · height ${height}`
+    : mapMode === 'temperature' ? `Temperature ${temperature}` : `Height ${height}`;
   tooltipFields.tile.textContent = `${m.lod === 0 ? 'Tile' : 'Sample'} ${tileX}, ${tileY} · ${title}`;
   tooltipFields.temperature.textContent = temperature;
   tooltipFields.height.textContent = height;
-  tooltipFields.note.textContent = `Height 0–1 · ${config.instant ? `temperature at UTC ${(config.time * 24).toFixed(1)}h` : 'daily average temperature'}${m.lod ? ` · LOD ${m.lod}` : ''}`;
+  tooltipFields.note.textContent = `Height 0–1 · daily average temperature${m.lod ? ` · LOD ${m.lod}` : ''}`;
   tooltip.hidden = false;
   const tooltipWidth = tooltip.offsetWidth;
   const tooltipHeight = tooltip.offsetHeight;
@@ -386,6 +396,40 @@ function updateReadout() {
 }
 
 function invalidate() { if (!frame) frame = requestAnimationFrame(draw); }
+
+function updateMapMode() {
+  const mode = MAP_MODES[mapMode];
+  modeSelect.value = mapMode;
+  canvas.setAttribute('aria-label', `${mode.label} map`);
+  document.querySelector('#terrain-key').hidden = mapMode !== 'biomes';
+  document.querySelector('#metric-legend').hidden = mapMode === 'biomes';
+  if (mode.palette) {
+    document.querySelector('#metric-legend-title').textContent = mapMode === 'temperature' ? 'Daily average temperature' : 'Normalized terrain height';
+    document.querySelector('#metric-gradient').style.background = `linear-gradient(to right, ${mode.palette.map(color => `rgb(${color.join(',')})`).join(', ')})`;
+    for (const tick of ['low', 'middle', 'high']) document.querySelector(`#metric-${tick}`).textContent = mode[tick];
+  }
+  invalidate();
+}
+
+modeSelect.addEventListener('change', () => {
+  mapMode = readMapMode(modeSelect.value);
+  updateMapMode();
+  updateUrl();
+});
+
+biomeSelect.addEventListener('change', () => {
+  biomeFile = biomeSelect.value;
+  biomeReady = false;
+  revision++;
+  clearCache(cache);
+  clearCache(staleCache);
+  for (const controller of active.values()) controller.abort();
+  active.clear();
+  document.querySelector('#biome-chart-readout').textContent = 'Loading biome definitions…';
+  updateUrl();
+  pollBuild();
+  invalidate();
+});
 
 document.querySelector('#randomize').addEventListener('click', () => {
   inputs.seed.value = crypto.getRandomValues(new Uint32Array(1))[0];
@@ -408,18 +452,19 @@ document.querySelector('#fit-world').addEventListener('click', () => {
 document.querySelector('#zoom-in').addEventListener('click', () => zoomAt(-1, viewport.clientWidth / 2, viewport.clientHeight / 2));
 document.querySelector('#zoom-out').addEventListener('click', () => zoomAt(1, viewport.clientWidth / 2, viewport.clientHeight / 2));
 viewport.addEventListener('wheel', event => {
+  if (event.target.closest('.map-mode')) return;
   event.preventDefault();
   const rect = viewport.getBoundingClientRect();
   zoomAt(Math.sign(event.deltaY) * .25, event.clientX - rect.left, event.clientY - rect.top);
 }, { passive: false });
 viewport.addEventListener('pointerdown', event => {
-  if (event.target.closest('button')) return;
+  if (event.target.closest('button, select, label')) return;
   viewport.setPointerCapture(event.pointerId);
   dragging = { x: event.clientX, y: event.clientY };
   viewport.classList.add('dragging');
 });
 viewport.addEventListener('pointermove', event => {
-  if (event.target.closest('button, .zoom-tools')) { pointer = null; invalidate(); return; }
+  if (event.target.closest('button, .zoom-tools, .map-mode, .metric-legend')) { pointer = null; invalidate(); return; }
   const rect = viewport.getBoundingClientRect();
   pointer = { x: event.clientX - rect.left, y: event.clientY - rect.top };
   if (dragging) {
@@ -437,13 +482,36 @@ new ResizeObserver(invalidate).observe(viewport);
 async function pollBuild() {
   const request = ++metaRequest;
   try {
-    const response = await fetch(`${apiBase}/api/meta?size=${config.size}`, { cache: 'no-store' });
-    if (!response.ok) throw new Error('Preview server unavailable');
-    const { build, protocol, world: nextWorld, controls: nextControls } = await response.json();
+    const query = new URLSearchParams({ size: config.size });
+    if (biomeFile) query.set('biome', biomeFile);
+    const response = await fetch(`${apiBase}/api/meta?${query}`, { cache: 'no-store' });
+    if (!response.ok) throw new Error(response.status === 400 ? await response.text() : 'Generator is rebuilding or unavailable. Waiting for the local server…');
+    const { build, protocol, world: nextWorld, controls: nextControls, biome_files: nextFiles, biome_file: nextFile, biomes: nextBiomes } = await response.json();
     if (request !== metaRequest) return;
     if (protocol !== 2 || !nextWorld || !Number.isSafeInteger(nextWorld.width) || !Number.isSafeInteger(nextWorld.height)
       || nextWorld.width <= 0 || nextWorld.height <= 0 || !Array.isArray(nextControls) || !nextControls.length) throw new Error('Unsupported preview metadata');
     if (JSON.stringify(controls) !== JSON.stringify(nextControls)) installControls(nextControls);
+    if (!Array.isArray(nextFiles) || !nextFiles.includes(nextFile) || !Array.isArray(nextBiomes)) throw new Error('Unsupported biome metadata');
+    if (JSON.stringify(biomeFiles) !== JSON.stringify(nextFiles)) {
+      biomeFiles = nextFiles;
+      biomeSelect.replaceChildren(...biomeFiles.map(file => {
+        const option = document.createElement('option');
+        option.value = file; option.textContent = file; return option;
+      }));
+      biomeSelect.disabled = false;
+    }
+    if (!biomeFile) {
+      biomeFile = biomeFiles.includes(params.get('biome')) ? params.get('biome') : nextFile;
+      biomeSelect.value = biomeFile;
+      if (biomeFile !== nextFile) { pollBuild(); return; }
+    }
+    biomeSelect.value = biomeFile;
+    if (!biomeReady || JSON.stringify(biomes) !== JSON.stringify(nextBiomes)) {
+      biomes = nextBiomes;
+      renderBiomes(document.querySelector('#biome-chart'), document.querySelector('#biome-legend'), document.querySelector('#biome-chart-readout'), biomes);
+    }
+    biomeReady = true;
+    updateUrl();
     if (buildId !== null && build !== buildId) {
       revision++;
       clearCache(staleCache);
@@ -461,10 +529,11 @@ async function pollBuild() {
     buildId = build;
     labels.validation.textContent = inputError;
     invalidate();
-  } catch {
-    if (request === metaRequest) labels.validation.textContent = 'Generator is rebuilding or unavailable. Waiting for the local server…';
+  } catch (error) {
+    if (request === metaRequest) labels.validation.textContent = error.message;
   }
 }
 setInterval(pollBuild, 1200);
+updateMapMode();
 pollBuild();
 invalidate();

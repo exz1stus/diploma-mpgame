@@ -1,5 +1,7 @@
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
+use crate::{ChunkPos, TilePos};
+
 /// A rectangular world with its geographic origin at the northwest boundary.
 /// X increases eastward and Y increases southward.
 pub struct WorldGeography {
@@ -16,18 +18,6 @@ pub struct GeoPosition {
     /// Positive eastward, in [-PI, PI] for positions inside the world.
     /// Both endpoints represent the same meridian.
     pub longitude: f64,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct TilePos {
-    pub x: i64,
-    pub y: i64,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct ChunkPos {
-    pub x: i64,
-    pub y: i64,
 }
 
 impl WorldGeography {

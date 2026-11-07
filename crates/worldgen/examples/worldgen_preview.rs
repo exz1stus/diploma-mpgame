@@ -8,11 +8,12 @@ use std::{
 };
 
 use worldgen::{
-    BiomeMap, ElevationNoise, ElevationSampler, NoiseConfig, NoiseSource, PlanetParams,
-    TemperatureCoefficients, TemperatureRegionsNoise, TemperatureSampler, TilePos, WorldGenerator,
-    WorldGeneratorConfig,
+    BasinGenerator, BiomeMap, CraterGenerator, ElevationNoise, ElevationSampler, NoiseConfig,
+    NoiseSource, PlanetParams, TemperatureCoefficients, TemperatureRegionsNoise,
+    TemperatureSampler, TilePos, VolcanoGenerator, WorldGenerator, WorldGeneratorConfig,
 };
 
+#[derive(serde::Serialize)]
 struct Control {
     key: &'static str,
     label: &'static str,
@@ -29,6 +30,9 @@ fn controls() -> Vec<Control> {
     let planet = PlanetParams::default();
     let elevation = ElevationNoise::default_config();
     let region = TemperatureRegionsNoise::default_config();
+    let craters = CraterGenerator::default();
+    let basins = BasinGenerator::new(ElevationNoise::new(world.seed));
+    let volcanoes = VolcanoGenerator::default();
     let mut controls = Vec::new();
     let mut add = |key, label, group, default, min, max, step| {
         controls.push(Control {
@@ -195,18 +199,9 @@ fn controls() -> Vec<Control> {
         "any",
     );
     add(
-        "temperature_daily",
-        "Daily variation (C)",
-        "Temperature coefficients",
-        Some(temperature.daily),
-        -1000.0,
-        1000.0,
-        "any",
-    );
-    add(
         "orbit",
         "Orbital phase (0-1)",
-        "Planet and time",
+        "Planet",
         Some(planet.orbit),
         0.0,
         1.0,
@@ -215,34 +210,211 @@ fn controls() -> Vec<Control> {
     add(
         "axial_tilt",
         "Axial tilt (degrees)",
-        "Planet and time",
+        "Planet",
         Some(planet.axial_tilt_deg),
         0.0,
         90.0,
         "any",
     );
     add(
-        "instant",
-        "Temperature display",
-        "Planet and time",
-        Some(0.0),
-        0.0,
-        1.0,
+        "crater_cell_size",
+        "Cell size (tiles)",
+        "Craters",
+        Some(craters.cell_size as f64),
+        32.0,
+        4096.0,
         "1",
     );
     add(
-        "time",
-        "Time of day (UTC, 0-1)",
-        "Planet and time",
-        Some(0.5),
+        "crater_min_radius",
+        "Minimum radius (tiles)",
+        "Craters",
+        Some(craters.min_radius),
+        1.0,
+        2048.0,
+        "any",
+    );
+    add(
+        "crater_max_radius",
+        "Maximum radius (tiles)",
+        "Craters",
+        Some(craters.max_radius),
+        1.0,
+        2048.0,
+        "any",
+    );
+    add(
+        "crater_density",
+        "Craters per cell",
+        "Craters",
+        Some(craters.density),
+        0.0,
+        4.0,
+        "any",
+    );
+    add(
+        "basin_cell_size",
+        "Cell size (tiles)",
+        "Impact basins",
+        Some(basins.cell_size as f64),
+        128.0,
+        65536.0,
+        "1",
+    );
+    add(
+        "basin_probability",
+        "Probability per cell",
+        "Impact basins",
+        Some(basins.probability),
         0.0,
         1.0,
         "any",
     );
+    add(
+        "basin_min_radius",
+        "Minimum radius (tiles)",
+        "Impact basins",
+        Some(basins.min_radius),
+        1.0,
+        16384.0,
+        "any",
+    );
+    add(
+        "basin_max_radius",
+        "Maximum radius (tiles)",
+        "Impact basins",
+        Some(basins.max_radius),
+        1.0,
+        16384.0,
+        "any",
+    );
+    add(
+        "basin_min_depth",
+        "Minimum depth",
+        "Impact basins",
+        Some(basins.min_depth),
+        0.0,
+        1.0,
+        "any",
+    );
+    add(
+        "basin_max_depth",
+        "Maximum depth",
+        "Impact basins",
+        Some(basins.max_depth),
+        0.0,
+        1.0,
+        "any",
+    );
+    add(
+        "basin_min_rim_height",
+        "Minimum rim height",
+        "Impact basins",
+        Some(basins.min_rim_height),
+        0.0,
+        1.0,
+        "any",
+    );
+    add(
+        "basin_max_rim_height",
+        "Maximum rim height",
+        "Impact basins",
+        Some(basins.max_rim_height),
+        0.0,
+        1.0,
+        "any",
+    );
+    add(
+        "basin_smoothing",
+        "Interior smoothing",
+        "Impact basins",
+        Some(basins.smoothing),
+        0.0,
+        1.0,
+        "any",
+    );
+    add(
+        "basin_coarse_octaves",
+        "Smoothing octaves",
+        "Impact basins",
+        Some(2.0),
+        1.0,
+        12.0,
+        "1",
+    );
+    for (key, label, default, min, max, step) in [
+        (
+            "volcano_cell_size",
+            "Cell size (tiles)",
+            volcanoes.cell_size as f64,
+            32.0,
+            65536.0,
+            "1",
+        ),
+        (
+            "volcano_probability",
+            "Probability per cell",
+            volcanoes.probability,
+            0.0,
+            1.0,
+            "any",
+        ),
+        (
+            "volcano_min_radius",
+            "Minimum radius (tiles)",
+            volcanoes.min_radius,
+            1.0,
+            16384.0,
+            "any",
+        ),
+        (
+            "volcano_max_radius",
+            "Maximum radius (tiles)",
+            volcanoes.max_radius,
+            1.0,
+            16384.0,
+            "any",
+        ),
+        (
+            "volcano_min_height",
+            "Minimum cone height",
+            volcanoes.min_height,
+            0.0,
+            1.0,
+            "any",
+        ),
+        (
+            "volcano_max_height",
+            "Maximum cone height",
+            volcanoes.max_height,
+            0.0,
+            1.0,
+            "any",
+        ),
+        (
+            "volcano_caldera_ratio",
+            "Caldera radius / cone radius",
+            volcanoes.caldera_ratio,
+            0.0,
+            0.9,
+            "any",
+        ),
+        (
+            "volcano_caldera_depth",
+            "Caldera depth",
+            volcanoes.caldera_depth,
+            0.0,
+            1.0,
+            "any",
+        ),
+    ] {
+        add(key, label, "Volcanoes", Some(default), min, max, step);
+    }
     controls
 }
 
 struct PreviewSettings {
+    biomes: BiomeMap,
     config: WorldGeneratorConfig,
     frequency: f64,
     elevation_seed: u64,
@@ -251,7 +423,9 @@ struct PreviewSettings {
     region: NoiseConfig,
     temperature: TemperatureCoefficients,
     planet: PlanetParams,
-    time: Option<f64>,
+    craters: CraterGenerator,
+    basins: BasinGenerator,
+    volcanoes: VolcanoGenerator,
 }
 
 impl PreviewSettings {
@@ -295,13 +469,68 @@ impl PreviewSettings {
             lacunarity: values[format!("{prefix}_lacunarity").as_str()],
             persistence: values[format!("{prefix}_persistence").as_str()],
         };
+        let craters = CraterGenerator {
+            cell_size: values["crater_cell_size"] as i64,
+            min_radius: values["crater_min_radius"],
+            max_radius: values["crater_max_radius"],
+            density: values["crater_density"],
+        };
+        if craters.min_radius > craters.max_radius
+            || craters.max_radius * 1.5 > craters.cell_size as f64
+        {
+            return Err(
+                "Crater radii must satisfy minimum <= maximum and maximum * 1.5 <= cell size"
+                    .into(),
+            );
+        }
+        let elevation = noise("elevation");
+        let elevation_seed = values
+            .get("elevation_seed")
+            .map_or(config.seed, |seed| *seed as u64);
+        let mut coarse_elevation = elevation;
+        coarse_elevation.octaves = (values["basin_coarse_octaves"] as usize).min(elevation.octaves);
+        let mut basins = BasinGenerator::new(PreviewNoise {
+            source: ElevationNoise::with_config(elevation_seed, coarse_elevation),
+            frequency: values["frequency"],
+        });
+        basins.cell_size = values["basin_cell_size"] as i64;
+        basins.probability = values["basin_probability"];
+        basins.min_radius = values["basin_min_radius"];
+        basins.max_radius = values["basin_max_radius"];
+        basins.min_depth = values["basin_min_depth"];
+        basins.max_depth = values["basin_max_depth"];
+        basins.min_rim_height = values["basin_min_rim_height"];
+        basins.max_rim_height = values["basin_max_rim_height"];
+        basins.smoothing = values["basin_smoothing"];
+        if basins.min_radius > basins.max_radius
+            || basins.max_radius * 1.5 > basins.cell_size as f64
+            || basins.min_depth > basins.max_depth
+            || basins.min_rim_height > basins.max_rim_height
+        {
+            return Err("Basin minimums must not exceed maximums, and maximum radius * 1.5 must fit within the cell size".into());
+        }
+        let volcanoes = VolcanoGenerator {
+            cell_size: values["volcano_cell_size"] as i64,
+            probability: values["volcano_probability"],
+            min_radius: values["volcano_min_radius"],
+            max_radius: values["volcano_max_radius"],
+            min_height: values["volcano_min_height"],
+            max_height: values["volcano_max_height"],
+            caldera_ratio: values["volcano_caldera_ratio"],
+            caldera_depth: values["volcano_caldera_depth"],
+        };
+        if volcanoes.min_radius > volcanoes.max_radius
+            || volcanoes.max_radius > volcanoes.cell_size as f64
+            || volcanoes.min_height > volcanoes.max_height
+        {
+            return Err("Volcano minimums must not exceed maximums, and maximum radius must fit within the cell size".into());
+        }
         Ok(Self {
+            biomes: selected_biomes(params)?.1,
             config,
             frequency: values["frequency"],
-            elevation_seed: values
-                .get("elevation_seed")
-                .map_or(config.seed, |seed| *seed as u64),
-            elevation: noise("elevation"),
+            elevation_seed,
+            elevation,
             region_seed: values
                 .get("region_seed")
                 .map_or(config.seed ^ 0x5445_4d50, |seed| *seed as u64),
@@ -311,13 +540,14 @@ impl PreviewSettings {
                 solar: values["temperature_solar"],
                 altitude: values["temperature_altitude"],
                 region: values["temperature_region"],
-                daily: values["temperature_daily"],
             },
             planet: PlanetParams {
                 orbit: values["orbit"],
                 axial_tilt_deg: values["axial_tilt"],
             },
-            time: (values["instant"] == 1.0).then_some(values["time"]),
+            craters,
+            basins,
+            volcanoes,
         })
     }
 }
@@ -338,7 +568,7 @@ fn preview_generator(settings: &PreviewSettings) -> WorldGenerator {
     let source = ElevationNoise::with_config(settings.elevation_seed, settings.elevation);
     WorldGenerator::new(
         settings.config,
-        BiomeMap::parse(),
+        settings.biomes.clone(),
         settings.planet,
         ElevationSampler::new(PreviewNoise {
             source,
@@ -348,6 +578,9 @@ fn preview_generator(settings: &PreviewSettings) -> WorldGenerator {
             settings.temperature,
             TemperatureRegionsNoise::with_config(settings.region_seed, settings.region),
         ),
+        settings.craters,
+        settings.basins.clone(),
+        settings.volcanoes,
     )
 }
 
@@ -466,15 +699,76 @@ fn world_side(config: WorldGeneratorConfig) -> Result<u32, String> {
 }
 
 fn metadata(query: &str, build: u128) -> Result<String, String> {
-    let config = request_config(&params(query))?;
+    let params = params(query);
+    let config = request_config(&params)?;
     let side = world_side(config)?;
-    let controls = controls().iter().map(|c| format!(
-        "{{\"key\":{:?},\"label\":{:?},\"group\":{:?},\"default\":{},\"min\":{},\"max\":{},\"step\":{:?}}}",
-        c.key, c.label, c.group, c.default.map_or("null".to_owned(), |v| v.to_string()), c.min, c.max, c.step,
-    )).collect::<Vec<_>>().join(",");
-    Ok(format!(
-        "{{\"build\":\"{build}\",\"protocol\":2,\"world\":{{\"width\":{side},\"height\":{side}}},\"controls\":[{controls}]}}"
-    ))
+    let (biome_file, biomes) = selected_biomes(&params)?;
+    Ok(serde_json::json!({
+        "build": build.to_string(), "protocol": 2,
+        "world": { "width": side, "height": side }, "controls": controls(),
+        "biome_files": biome_files()?, "biome_file": biome_file, "biomes": biomes.biomes(),
+    })
+    .to_string())
+}
+
+fn biome_directory() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/biomes")
+}
+
+fn biome_files() -> Result<Vec<String>, String> {
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(biome_directory()).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        if entry
+            .file_type()
+            .map_err(|error| error.to_string())?
+            .is_file()
+            && entry.path().extension().is_some_and(|ext| ext == "ron")
+        {
+            files.push(
+                entry
+                    .file_name()
+                    .into_string()
+                    .map_err(|_| "Invalid biome filename")?,
+            );
+        }
+    }
+    files.sort();
+    Ok(files)
+}
+
+fn decode_query_value(value: &str) -> Result<String, String> {
+    let mut decoded = Vec::new();
+    let mut bytes = value.bytes();
+    while let Some(byte) = bytes.next() {
+        decoded.push(match byte {
+            b'+' => b' ',
+            b'%' => {
+                let hi = bytes.next().and_then(|b| (b as char).to_digit(16));
+                let lo = bytes.next().and_then(|b| (b as char).to_digit(16));
+                match (hi, lo) {
+                    (Some(hi), Some(lo)) => (hi * 16 + lo) as u8,
+                    _ => return Err("Invalid biome filename encoding".into()),
+                }
+            }
+            _ => byte,
+        });
+    }
+    String::from_utf8(decoded).map_err(|_| "Invalid biome filename encoding".into())
+}
+
+fn selected_biomes(params: &HashMap<&str, &str>) -> Result<(String, BiomeMap), String> {
+    let filename = decode_query_value(params.get("biome").unwrap_or(&"biomes.ron"))?;
+    if !biome_files()?.contains(&filename) {
+        return Err("Choose a RON file from src/biomes".into());
+    }
+    let source = std::fs::read_to_string(biome_directory().join(&filename))
+        .map_err(|error| format!("Cannot read {filename}: {error}"))?;
+    let biomes = BiomeMap::from_ron(&source).map_err(|error| format!("{filename}: {error}"))?;
+    for biome in biomes.biomes() {
+        color_rgb(&biome.color)?;
+    }
+    Ok((filename, biomes))
 }
 
 fn color_rgb(color: &str) -> Result<[u8; 3], String> {
@@ -500,7 +794,7 @@ fn color_rgb(color: &str) -> Result<[u8; 3], String> {
 }
 
 // Wire record: status u8 (0=unclassified, 1=color, 255=outside), RGB u8[3],
-// normalized height f32 LE, Celsius temperature f32 LE (average or instant).
+// normalized height f32 LE, daily-average Celsius temperature f32 LE.
 fn region_bytes(query: &str) -> Result<Vec<u8>, String> {
     let params = params(query);
     let min_x: i32 = parse(&params, "min_x")?;
@@ -546,19 +840,15 @@ fn region_bytes(query: &str) -> Result<Vec<u8>, String> {
                         x: (base_x + offset).min(side - 1) as i64,
                         y: (base_y + offset).min(side - 1) as i64,
                     };
-                    let (sample, tile) = if let Some(time) = settings.time {
-                        generator.sample_tile_instant(pos, time)
-                    } else {
-                        generator.sample_tile(pos)
-                    };
-                    if let Some(tile) = tile {
+                    let tile = generator.tile_at(pos);
+                    if let Some(biome) = &tile.biome {
                         output.push(1);
-                        output.extend_from_slice(&color_rgb(&tile.0)?);
+                        output.extend_from_slice(&color_rgb(&biome.color)?);
                     } else {
                         output.extend_from_slice(&[0, 0, 0, 0]);
                     }
-                    output.extend_from_slice(&(sample.height as f32).to_le_bytes());
-                    output.extend_from_slice(&(sample.temperature as f32).to_le_bytes());
+                    output.extend_from_slice(&(tile.height as f32).to_le_bytes());
+                    output.extend_from_slice(&(tile.temperature as f32).to_le_bytes());
                 }
             }
         }
@@ -570,7 +860,7 @@ fn region_bytes(query: &str) -> Result<Vec<u8>, String> {
 mod tests {
     use super::*;
 
-    const EQUATOR_QUERY: &str = "min_x=503&max_x=503&min_y=500&max_y=500&lod=0&size=4&seed=42";
+    const EQUATOR_QUERY: &str = "min_x=253&max_x=253&min_y=250&max_y=250&lod=0&size=4&seed=42";
 
     fn first_metrics(query: &str) -> (f32, f32) {
         let bytes = region_bytes(query).unwrap();
@@ -578,6 +868,125 @@ mod tests {
             f32::from_le_bytes(bytes[4..8].try_into().unwrap()),
             f32::from_le_bytes(bytes[8..12].try_into().unwrap()),
         )
+    }
+
+    const BASIN_QUERY: &str = "min_x=0&max_x=0&min_y=0&max_y=0&lod=9&size=16&seed=42&crater_density=0&basin_cell_size=4096&basin_probability=1&basin_min_radius=800&basin_max_radius=1500&basin_min_depth=0.06&basin_max_depth=0.18&basin_min_rim_height=0.005&basin_max_rim_height=0.02&basin_smoothing=0.8";
+
+    #[test]
+    fn volcano_controls_change_terrain_and_zero_probability_disables_the_layer() {
+        let query = "min_x=0&max_x=0&min_y=0&max_y=0&lod=5&size=32&seed=42&crater_density=0&basin_probability=0&volcano_cell_size=1024&volcano_probability=1&volcano_min_radius=256&volcano_max_radius=512&volcano_min_height=0.1&volcano_max_height=0.25&volcano_caldera_ratio=0.3&volcano_caldera_depth=0.08";
+        let original = region_bytes(query).unwrap();
+        assert_eq!(original, region_bytes(query).unwrap());
+        for setting in [
+            "volcano_cell_size=2048",
+            "volcano_probability=0",
+            "volcano_min_radius=128",
+            "volcano_max_radius=768",
+            "volcano_min_height=0.2",
+            "volcano_max_height=0.4",
+            "volcano_caldera_ratio=0",
+            "volcano_caldera_depth=0.2",
+        ] {
+            let changed = region_bytes(&format!("{query}&{setting}")).unwrap();
+            assert!(
+                original
+                    .chunks_exact(SAMPLE_BYTES)
+                    .zip(changed.chunks_exact(SAMPLE_BYTES))
+                    .any(|(a, b)| a[4..8] != b[4..8]),
+                "{setting} must affect height"
+            );
+        }
+        let disabled = region_bytes(&format!("{query}&volcano_probability=0")).unwrap();
+        let zero_height = region_bytes(&format!(
+            "{query}&volcano_min_height=0&volcano_max_height=0&volcano_caldera_depth=0"
+        ))
+        .unwrap();
+        assert_eq!(disabled, zero_height);
+    }
+
+    #[test]
+    fn every_basin_control_changes_preview_terrain() {
+        let original = region_bytes(BASIN_QUERY).unwrap();
+        for setting in [
+            "basin_cell_size=8192",
+            "basin_probability=0",
+            "basin_min_radius=400",
+            "basin_max_radius=2400",
+            "basin_min_depth=0.1",
+            "basin_max_depth=0.3",
+            "basin_min_rim_height=0.01",
+            "basin_max_rim_height=0.05",
+            "basin_smoothing=0",
+            "basin_coarse_octaves=1",
+        ] {
+            let changed = region_bytes(&format!("{BASIN_QUERY}&{setting}")).unwrap();
+            assert!(
+                original
+                    .chunks_exact(SAMPLE_BYTES)
+                    .zip(changed.chunks_exact(SAMPLE_BYTES))
+                    .any(|(a, b)| a[4..8] != b[4..8]),
+                "{setting} must affect height"
+            );
+        }
+    }
+
+    #[test]
+    fn basin_smoothing_uses_the_same_elevation_seed_and_coordinate_scale() {
+        let query = format!(
+            "{BASIN_QUERY}&elevation_seed=123&frequency=0.125&basin_min_depth=0&basin_max_depth=0&basin_min_rim_height=0&basin_max_rim_height=0&basin_smoothing=1"
+        );
+        let disabled = region_bytes(&format!("{query}&basin_probability=0")).unwrap();
+        let matching_source = region_bytes(&format!("{query}&basin_coarse_octaves=12")).unwrap();
+        // Asking for more coarse octaves than elevation has is capped to match.
+        assert_eq!(disabled, matching_source);
+        let coarse = region_bytes(&format!("{query}&basin_coarse_octaves=1")).unwrap();
+        assert_ne!(disabled, coarse);
+    }
+
+    #[test]
+    fn basin_height_changes_feed_average_temperature() {
+        let query = format!(
+            "{BASIN_QUERY}&temperature_base=20&temperature_solar=0&temperature_region=0&temperature_altitude=10"
+        );
+        let bytes = region_bytes(&query).unwrap();
+        for record in bytes.chunks_exact(SAMPLE_BYTES) {
+            let height = f32::from_le_bytes(record[4..8].try_into().unwrap());
+            let temperature = f32::from_le_bytes(record[8..12].try_into().unwrap());
+            assert!((temperature - (20.0 - 10.0 * height)).abs() < 0.00001);
+        }
+    }
+
+    #[test]
+    fn preview_uses_average_temperature_and_exposes_crater_controls() {
+        let meta: serde_json::Value = serde_json::from_str(&metadata("", 123).unwrap()).unwrap();
+        let keys: Vec<_> = meta["controls"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|control| control["key"].as_str().unwrap())
+            .collect();
+        assert!(!keys.contains(&"time"));
+        assert!(!keys.contains(&"instant"));
+        assert!(!keys.contains(&"temperature_daily"));
+        assert!(keys.contains(&"crater_density"));
+        assert!(keys.contains(&"crater_cell_size"));
+        assert!(keys.contains(&"basin_probability"));
+        assert!(keys.contains(&"basin_coarse_octaves"));
+        assert!(keys.contains(&"volcano_probability"));
+        assert!(keys.contains(&"volcano_caldera_depth"));
+        let baseline = region_bytes(EQUATOR_QUERY).unwrap();
+        assert_eq!(
+            baseline,
+            region_bytes(&format!(
+                "{EQUATOR_QUERY}&instant=1&time=0.25&temperature_daily=100"
+            ))
+            .unwrap()
+        );
+        let coarse = "min_x=0&max_x=0&min_y=0&max_y=0&lod=7&size=16&seed=42";
+        assert_ne!(
+            region_bytes(&format!("{coarse}&crater_density=0")).unwrap(),
+            region_bytes(&format!("{coarse}&crater_density=4")).unwrap()
+        );
     }
 
     #[test]
@@ -627,32 +1036,13 @@ mod tests {
     }
 
     #[test]
-    fn time_of_day_and_daily_coefficient_only_affect_instant_mode() {
-        let fixed =
-            format!("{EQUATOR_QUERY}&temperature_region=0&temperature_altitude=0&axial_tilt=0");
-        let average = first_metrics(&fixed);
-        assert_eq!(
-            average,
-            first_metrics(&format!("{fixed}&time=0.625&temperature_daily=100"))
-        );
-        let afternoon = first_metrics(&format!("{fixed}&instant=1&time=0.625"));
-        let night = first_metrics(&format!("{fixed}&instant=1&time=0.125"));
-        assert!((afternoon.1 - 25.5).abs() < 0.1);
-        assert!((night.1 + 4.5).abs() < 0.1);
-        let stronger = first_metrics(&format!(
-            "{fixed}&instant=1&time=0.625&temperature_daily=60"
-        ));
-        assert!(stronger.1 > afternoon.1);
-        let no_cycle = format!("{fixed}&instant=1&temperature_daily=0");
-        assert_eq!(average, first_metrics(&no_cycle));
-    }
-
-    #[test]
     fn seed_overrides_are_independent_and_blank_defaults_follow_world_seed() {
         let a = PreviewSettings::from_params(&params("seed=42")).unwrap();
         assert_eq!(a.elevation_seed, 42);
         assert_eq!(a.region_seed, 42 ^ 0x5445_4d50);
-        let fixed = format!("{EQUATOR_QUERY}&elevation_seed=17&region_seed=29");
+        let fixed = format!(
+            "{EQUATOR_QUERY}&elevation_seed=17&region_seed=29&crater_density=0&basin_probability=0&volcano_probability=0"
+        );
         assert_eq!(
             region_bytes(&fixed).unwrap(),
             region_bytes(&format!("{fixed}&seed=99")).unwrap()
@@ -667,7 +1057,7 @@ mod tests {
     fn invalid_controls_are_rejected_before_sampling() {
         for setting in [
             "temperature_base=NaN",
-            "temperature_daily=inf",
+            "temperature_solar=inf",
             "elevation_octaves=0",
             "elevation_octaves=1.5",
             "region_octaves=33",
@@ -679,8 +1069,26 @@ mod tests {
             "seed=-1",
             "axial_tilt=91",
             "orbit=-0.1",
-            "time=1.1",
-            "instant=2",
+            "crater_density=5",
+            "crater_cell_size=0",
+            "crater_min_radius=200&crater_max_radius=100",
+            "crater_max_radius=512&crater_cell_size=32",
+            "basin_probability=NaN",
+            "basin_probability=1.1",
+            "basin_min_radius=3000&basin_max_radius=2000",
+            "basin_max_radius=2400&basin_cell_size=128",
+            "basin_min_depth=0.2&basin_max_depth=0.1",
+            "basin_min_rim_height=0.1&basin_max_rim_height=0.01",
+            "basin_smoothing=-1",
+            "basin_coarse_octaves=1.5",
+            "volcano_probability=NaN",
+            "volcano_probability=1.1",
+            "volcano_cell_size=0",
+            "volcano_cell_size=32&volcano_max_radius=64",
+            "volcano_min_radius=512&volcano_max_radius=256",
+            "volcano_min_height=0.5&volcano_max_height=0.2",
+            "volcano_caldera_ratio=1",
+            "volcano_caldera_depth=-0.1",
         ] {
             assert!(
                 region_bytes(&format!("{EQUATOR_QUERY}&{setting}")).is_err(),
@@ -690,18 +1098,18 @@ mod tests {
     }
 
     fn assert_record(bytes: &[u8], generator: &WorldGenerator, pos: TilePos) {
-        let (sample, tile) = generator.sample_tile(pos);
+        let tile = generator.tile_at(pos);
         assert_eq!(
             f32::from_le_bytes(bytes[4..8].try_into().unwrap()),
-            sample.height as f32
+            tile.height as f32
         );
         assert_eq!(
             f32::from_le_bytes(bytes[8..12].try_into().unwrap()),
-            sample.temperature as f32
+            tile.temperature as f32
         );
-        if let Some(tile) = tile {
+        if let Some(biome) = &tile.biome {
             assert_eq!(bytes[0], 1);
-            assert_eq!(bytes[1..4], color_rgb(&tile.0).unwrap());
+            assert_eq!(bytes[1..4], color_rgb(&biome.color).unwrap());
         } else {
             assert_eq!(bytes[0], 0);
         }
@@ -751,8 +1159,10 @@ mod tests {
             ..Default::default()
         })
         .unwrap();
-        let meta = metadata("size=4", 123).unwrap();
-        assert!(meta.contains(&format!("\"width\":{side},\"height\":{side}")));
+        let meta: serde_json::Value =
+            serde_json::from_str(&metadata("size=4", 123).unwrap()).unwrap();
+        assert_eq!(meta["world"]["width"], side);
+        assert_eq!(meta["world"]["height"], side);
         assert!(
             region_bytes("min_x=-1&min_y=0&max_x=0&max_y=0&lod=0&size=4&frequency=0.025").is_err()
         );
@@ -794,5 +1204,81 @@ mod tests {
         assert_eq!(color_rgb("#abc").unwrap(), [170, 187, 204]);
         assert!(color_rgb("#zzzzzz").is_err());
         assert!(color_rgb("#ééé").is_err());
+    }
+
+    #[test]
+    fn selected_file_supplies_metadata_and_generator_palette() {
+        let default_meta: serde_json::Value =
+            serde_json::from_str(&metadata("", 123).unwrap()).unwrap();
+        assert_eq!(default_meta["biome_file"], "biomes.ron");
+        let original = region_bytes(EQUATOR_QUERY).unwrap();
+        let query = format!("{EQUATOR_QUERY}&biome=biomes%2Eron");
+        let selected = region_bytes(&query).unwrap();
+        assert_eq!(original, selected);
+        let generator = preview_generator(&PreviewSettings::from_params(&params(&query)).unwrap());
+        for (index, (old, new)) in original
+            .chunks_exact(SAMPLE_BYTES)
+            .zip(selected.chunks_exact(SAMPLE_BYTES))
+            .enumerate()
+        {
+            assert_eq!(
+                &old[4..],
+                &new[4..],
+                "file selection must preserve terrain metrics"
+            );
+            assert_record(
+                new,
+                &generator,
+                TilePos {
+                    x: 253 * 4 + (index % 4) as i64,
+                    y: 250 * 4 + (index / 4) as i64,
+                },
+            );
+        }
+        let meta: serde_json::Value =
+            serde_json::from_str(&metadata("biome=biomes%2Eron", 123).unwrap()).unwrap();
+        assert_eq!(meta["biome_file"], "biomes.ron");
+        assert!(
+            meta["biome_files"]
+                .as_array()
+                .unwrap()
+                .contains(&serde_json::json!("biomes.ron"))
+        );
+        assert_eq!(
+            meta["biomes"],
+            serde_json::to_value(generator_biomes()).unwrap()
+        );
+    }
+
+    fn generator_biomes() -> Vec<worldgen::Biome> {
+        BiomeMap::from_ron(include_str!("../src/biomes/biomes.ron"))
+            .unwrap()
+            .biomes()
+            .to_vec()
+    }
+
+    #[test]
+    fn biome_selection_rejects_unknown_files_and_paths() {
+        for file in [
+            "missing.ron",
+            "../biomes.ron",
+            "%2E%2E%2Fbiomes.ron",
+            "biome.rs",
+            "%FF",
+            "%2",
+        ] {
+            let query = format!("biome={file}");
+            assert!(metadata(&query, 123).is_err(), "{file}");
+            assert!(
+                region_bytes(&format!("{EQUATOR_QUERY}&{query}")).is_err(),
+                "{file}"
+            );
+        }
+        assert_eq!(
+            selected_biomes(&params("biome=biomes%2Eron"))
+                .unwrap()
+                .0,
+            "biomes.ron"
+        );
     }
 }

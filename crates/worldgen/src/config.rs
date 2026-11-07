@@ -11,7 +11,7 @@ impl Default for WorldGeneratorConfig {
         Self {
             generator_version: 1,
             seed: 0,
-            world_size_chunks: 1000,
+            world_size_chunks: 500,
             chunk_size: 32,
         }
     }

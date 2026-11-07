@@ -31,65 +31,35 @@ pub struct TemperatureCoefficients {
     pub region: f64,
     pub solar: f64,
     pub altitude: f64,
-    pub daily: f64,
 }
 
 impl Default for TemperatureCoefficients {
     fn default() -> Self {
         Self {
             base: -30.0,   // °C
-            solar: 110.0,  // average climate heating °C per exposure unit
+            solar: 150.0,  // average climate heating °C per exposure unit
             altitude: 6.5, // °C per km
             region: 10.0,  // °C
-            daily: 30.0,   // amplitude of temperature changes during the day °C per exposure unit
         }
     }
 }
 
 impl TemperatureSampler {
-    /// Regional noise is signed, as with Perlin/fBm: approximately [-1, 1].
     pub fn new(noise: impl NoiseSource) -> Self {
         Self::with_config(TemperatureCoefficients::default(), noise)
     }
 
     pub fn with_config(config: TemperatureCoefficients, noise: impl NoiseSource) -> Self {
         assert!(
-            [
-                config.base,
-                config.region,
-                config.solar,
-                config.altitude,
-                config.daily
-            ]
-            .iter()
-            .all(|value| value.is_finite()),
+            [config.base, config.region, config.solar, config.altitude]
+                .iter()
+                .all(|value| value.is_finite()),
             "temperature coefficients must be finite",
         );
         Self {
             config,
             region_noise: Box::new(noise),
         }
-    }
-
-    /// Instantaneous temperature in Celsius. Height is measured in kilometers.
-    pub fn sample_instant(
-        &self,
-        normalized_time: f64,
-        pos: TilePos,
-        height: f64,
-        world_geography: &WorldGeography,
-        planet: &PlanetParams,
-    ) -> f64 {
-        let geo_pos = world_geography.geo(pos);
-        let average_temp = self.sample_average(pos, height, world_geography, planet);
-        let daily_sun = self.daily_average_sun_exposure(geo_pos, planet);
-
-        // Temperature peaks approximately 3 hours after solar noon
-        let thermal_lag = 3.0 / 24.0;
-        let delayed_time = (normalized_time - thermal_lag).rem_euclid(1.0);
-        let instant_sun = self.sun_exposure(delayed_time, geo_pos, planet);
-
-        average_temp + self.config.daily * (instant_sun - daily_sun)
     }
 
     /// Daily average temperature in Celsius for the supplied season.

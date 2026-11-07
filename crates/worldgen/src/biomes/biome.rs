@@ -37,8 +37,7 @@ pub struct BiomeMap {
 
 impl BiomeMap {
     pub fn parse() -> Self {
-        Self::from_ron(include_str!("biomes_test.ron"))
-            .expect("bundled biome definitions must be valid")
+        Self::from_ron(include_str!("biomes.ron")).expect("bundled biome definitions must be valid")
     }
 
     pub fn new(biomes: Vec<Biome>) -> Result<Self, BiomeMapError> {
