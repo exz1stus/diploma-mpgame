@@ -1,3 +1,4 @@
+use crate::game::commands::PredictedVisuals;
 use crate::networking::prediction::{Prediction, PredictionSettings};
 use crate::networking::{
     interpolation::{InterpolationSample, sample_at_tick},
@@ -124,6 +125,7 @@ pub fn render_player_visuals(
         Without<PlayerVisual>,
     >,
     mut visuals: Query<(&ChildOf, &mut Transform), With<PlayerVisual>>,
+    predicted_visuals: Res<PredictedVisuals>,
 ) {
     if !client_state.initiated {
         return;
@@ -154,6 +156,12 @@ pub fn render_player_visuals(
 
         debug.display_tick = display_tick;
         debug.sample = None;
+
+        visual_transform.scale = if predicted_visuals.is_hidden(identity.id) {
+            Vec3::ZERO
+        } else {
+            Vec3::ONE
+        };
 
         let root_position = root_transform.translation.truncate();
 

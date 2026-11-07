@@ -5,6 +5,8 @@ use bevy_ecs::{change_detection::Mut, message::Message, resource::Resource, syst
 use bevy_renet::renet::ClientId;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
+use crate::snapshots::NetworkEntityId;
+
 pub type CommandId = u16;
 pub const MAX_COMMAND_BYTES: usize = 1024;
 
@@ -184,5 +186,14 @@ macro_rules! assign_command_ids {
     };
 }
 
-// Append new command types to preserve existing wire IDs.
 assign_command_ids!(Shoot);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CommandOutcome {
+    Shoot {hit: Option<NetworkEntityId>},
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommandResult {
+    pub id: CommandId,
+    pub outcome: CommandOutcome,
+}

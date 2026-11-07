@@ -32,6 +32,7 @@ pub fn handle_initial_state(
         commands.entity(replica.entity).despawn();
     }
     remote_world.positions.clear();
+    remote_world.remote_states.clear();
     remote_world.despawned.clear();
     remote_world
         .pending_updates
@@ -100,7 +101,6 @@ pub fn handle_entity_update(
         return;
     }
 
-    // Bound memory if an update's reliable spawn never arrives.
     if remote_world.pending_updates.len() == 256 {
         remote_world.pending_updates.pop_front();
     }
@@ -117,6 +117,7 @@ pub fn handle_entity_despawn(
     }
 
     remote_world.positions.remove(&id);
+    remote_world.remote_states.remove(&id);
     remote_world
         .pending_updates
         .retain(|(_, snapshot)| snapshot.id != id);

@@ -31,8 +31,8 @@ pub struct ReplicatedEntity {
 pub struct RemoteWorld {
     pub entities: HashMap<NetworkEntityId, ReplicatedEntity>,
     pub positions: HashMap<NetworkEntityId, VecDeque<PositionSample>>,
+    pub remote_states: HashMap<NetworkEntityId, VecDeque<NetworkPhysicsState>>,
     pub pending_updates: VecDeque<(u64, EntitySnapshot)>,
     pub despawned: HashSet<NetworkEntityId>,
-
     pub authoritative_snapshots: VecDeque<(NetworkEntityId, NetworkPhysicsState)>,
 }

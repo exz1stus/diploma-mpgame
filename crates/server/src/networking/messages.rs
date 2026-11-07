@@ -81,6 +81,26 @@ pub(crate) struct MessageBuffer {
     pub(crate) outgoing: VecDeque<BufferedServerMessage>,
 }
 
+impl MessageBuffer {
+    pub(crate) fn reply_command(
+        &mut self,
+        client_id: ClientId,
+        sequence: u64,
+        tick: u64,
+        payload: ServerMessages,
+    ) {
+        self.outgoing.push_back(BufferedServerMessage {
+            target: MessageTarget::Client(client_id),
+            channel: DefaultChannel::ReliableOrdered.into(),
+            message: ServerMessage {
+                sequence: Some(sequence),
+                tick,
+                payload,
+            },
+        });
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct BufferedClientMessage {
     pub(crate) client_id: ClientId,

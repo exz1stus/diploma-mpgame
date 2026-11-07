@@ -65,6 +65,7 @@ impl MessageEvent {
                 ServerMessages::EntityDespawn(_) => "Entity despawn",
                 ServerMessages::ComponentRemove { .. } => "Component remove",
                 ServerMessages::NetworkCommandError(_) => "Network command error",
+                ServerMessages::NetworkCommandResult(_) => "Network command result",
             },
         }
     }
@@ -114,6 +115,9 @@ impl MessageEvent {
                 }
                 ServerMessages::NetworkCommandError(error) => {
                     format!("error: {error:?}")
+                }
+                ServerMessages::NetworkCommandResult(result) => {
+                    format!("command id: {}\noutcome: {:?}", result.id, result.outcome)
                 }
             },
         }

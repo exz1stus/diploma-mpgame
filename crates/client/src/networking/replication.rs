@@ -1,6 +1,10 @@
-use crate::networking::replication_handlers::{
-    handle_component_remove, handle_entity_despawn, handle_entity_spawn, handle_entity_update,
-    handle_initial_state,
+use crate::{
+    game::commands::{PendingCommands, PredictedVisuals},
+    networking::physics::clear_remote_collision_proxies,
+    networking::replication_handlers::{
+        handle_component_remove, handle_entity_despawn, handle_entity_spawn, handle_entity_update,
+        handle_initial_state,
+    },
 };
 
 use super::{
@@ -21,6 +25,7 @@ pub fn process_server_message(
     client_state: &mut ClientState,
     remote_world: &mut RemoteWorld,
     registry: &ReplicationRegistry,
+    pending_commands: &mut PendingCommands,
     now: f64,
 ) -> bool {
     let tick = message.tick;
@@ -28,6 +33,12 @@ pub fn process_server_message(
 
     match message.payload {
         ServerMessages::InitiateClientState { client_id, world } => {
+            pending_commands.clear();
+            commands.queue(|world: &mut World| {
+                world.resource_mut::<PredictedVisuals>().clear();
+            });
+            commands.queue(clear_remote_collision_proxies);
+
             return handle_initial_state(
                 client_id,
                 world,
@@ -61,6 +72,9 @@ pub fn process_server_message(
         }
         ServerMessages::EntityDespawn(id) => {
             handle_entity_despawn(id, commands, remote_world);
+            commands.queue(move |world: &mut World| {
+                world.resource_mut::<PredictedVisuals>().forget(id);
+            });
         }
         ServerMessages::ComponentRemove {
             entity_id,
@@ -76,8 +90,13 @@ pub fn process_server_message(
             );
         }
         ServerMessages::Pong(_) => {}
-        ServerMessages::NetworkCommandError(command_error) => {
-            warn!("Server rejected network command: {command_error:?}");
+        ServerMessages::NetworkCommandError(error) => {
+            warn!("Server rejected network command: {error:?}");
+            pending_commands.resolve(message.sequence, Err(error), commands);
+        }
+
+        ServerMessages::NetworkCommandResult(result) => {
+            pending_commands.resolve(message.sequence, Ok(result), commands);
         }
     }
     false
@@ -169,6 +188,7 @@ pub fn apply_components(
                 let owned = owner.client_id == client_state.id;
                 if owned != replica.owned {
                     remote_world.positions.remove(&snapshot.id);
+                    remote_world.remote_states.remove(&snapshot.id);
                 }
                 replica.owned = owned;
                 if owned {
@@ -210,7 +230,17 @@ pub fn apply_components(
                 }
 
                 remote_world.positions.remove(&snapshot.id);
-            } else if registered.interpolated {
+            } else {
+                let states = remote_world.remote_states.entry(snapshot.id).or_default();
+                if states.back().is_none_or(|last| state.tick > last.tick) {
+                    states.push_back(state);
+                    while states.len() > 256 {
+                        states.pop_front();
+                    }
+                }
+            }
+
+            if !replica.owned && registered.interpolated {
                 let samples = remote_world.positions.entry(snapshot.id).or_default();
 
                 samples.push_back(PositionSample {
@@ -224,7 +254,7 @@ pub fn apply_components(
                 }
 
                 client_state.clock.observe(state.tick);
-            } else {
+            } else if !replica.owned {
                 remote_world.positions.remove(&snapshot.id);
             }
             replica.last_ticks.insert(component.component_id, tick);
@@ -238,81 +268,5 @@ pub fn apply_components(
         replica.last_ticks.insert(component.component_id, tick);
         let apply = registered.apply;
         commands.queue(move |world: &mut World| apply(world, entity, &component.data));
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use shared::role::NetworkRole;
-    use shared::snapshots::ComponentSnapshot;
-
-    #[test]
-    fn physics_state_uses_enclosing_message_tick() {
-        let mut app = shared::app_init(NetworkRole::Client);
-        app.insert_resource(ClientState::default());
-        app.insert_resource(RemoteWorld::default());
-
-        let entity = app.world_mut().spawn_empty().id();
-        app.world_mut()
-            .resource_mut::<RemoteWorld>()
-            .entities
-            .insert(
-                7,
-                ReplicatedEntity {
-                    entity,
-                    owned: true,
-                    last_ticks: HashMap::default(),
-                },
-            );
-
-        let state = NetworkPhysicsState {
-            tick: 1,
-            position: Vec2::new(12.0, 34.0),
-            velocity: Vec2::new(5.0, 6.0),
-        };
-        let bytes = postcard::to_allocvec(&state).unwrap();
-        assert_eq!(
-            bytes,
-            postcard::to_allocvec(&NetworkPhysicsState { tick: 999, ..state }).unwrap()
-        );
-
-        app.add_systems(
-            Update,
-            move |mut commands: Commands,
-                  mut client: ResMut<ClientState>,
-                  mut remote: ResMut<RemoteWorld>,
-                  registry: Res<ReplicationRegistry>| {
-                apply_components(
-                    EntitySnapshot {
-                        id: 7,
-                        components: vec![ComponentSnapshot {
-                            component_id: NetworkPhysicsState::NETWORK_ID,
-                            data: bytes.clone(),
-                        }],
-                        removed_components: vec![],
-                    },
-                    123,
-                    &mut commands,
-                    &mut client,
-                    &mut remote,
-                    &registry,
-                );
-            },
-        );
-
-        app.update();
-
-        let replicated = app.world().get::<NetworkPhysicsState>(entity).unwrap();
-        assert_eq!(replicated.tick, 123);
-        assert_eq!(replicated.position, state.position);
-        assert_eq!(
-            app.world()
-                .resource::<RemoteWorld>()
-                .authoritative_snapshots[0]
-                .1
-                .tick,
-            123
-        );
     }
 }

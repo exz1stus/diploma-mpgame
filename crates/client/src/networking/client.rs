@@ -1,4 +1,4 @@
-use crate::game::commands::send_shoot_command;
+use crate::game::commands::{PendingCommands, PredictedVisuals, send_shoot_command};
 pub use crate::networking::network::NetworkSimulation;
 use crate::networking::physics::{
     self, initialize_physics_body, log_prediction_status, run_prediction,
@@ -66,6 +66,9 @@ impl GameClient {
         app.init_resource::<ClientSimulationClock>();
         app.init_resource::<TimeSyncEstimates>();
         app.init_resource::<ReconciliationStatus>();
+
+        app.init_resource::<PendingCommands>();
+        app.init_resource::<PredictedVisuals>();
         app.insert_resource(Time::<Fixed>::from_hz(60.0));
         physics::configure(&mut app);
 

@@ -18,7 +18,7 @@ pub mod commands;
 pub(crate) mod entity;
 mod handlers;
 pub(crate) mod input;
-mod messages;
+pub(crate) mod messages;
 mod ownership;
 mod physics;
 mod replication;

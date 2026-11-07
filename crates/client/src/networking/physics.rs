@@ -5,11 +5,12 @@ use avian2d::{
         PhysicsSystems, Position as PhysicsPosition, RigidBody, Substeps,
     },
 };
-use bevy::{ecs::schedule::ScheduleLabel, prelude::*};
+use bevy::{ecs::schedule::ScheduleLabel, platform::collections::HashMap, prelude::*};
 use shared::{
     client_messages::ClientMessages,
     components::NetworkPhysicsState,
     movement::{MovementInput, movement_acceleration},
+    snapshots::NetworkEntityId,
 };
 use std::time::Duration;
 
@@ -18,7 +19,7 @@ use super::{
     prediction::Prediction,
     prediction_history::PredictionHistory,
     simulation_clock::{ClientSimulationClock, MAX_CATCHUP_TICKS},
-    state::{ClientState, Owned},
+    state::{ClientState, Owned, RemoteWorld},
 };
 
 const MAX_STEPS_PER_FRAME: usize = 8;
@@ -34,6 +35,11 @@ pub struct CurrentMovementInput {
 }
 
 #[derive(Resource, Default)]
+pub struct RemoteCollisionProxies {
+    pub entities: HashMap<NetworkEntityId, Entity>,
+}
+
+#[derive(Resource, Default)]
 struct PredictionStepTime(Time);
 
 pub fn configure(app: &mut App) {
@@ -42,6 +48,7 @@ pub fn configure(app: &mut App) {
 
     app.insert_resource(Gravity(Vec2::ZERO));
     app.init_resource::<PredictionStepTime>();
+    app.init_resource::<RemoteCollisionProxies>();
 
     app.add_systems(
         ClientPhysicsTick,
@@ -190,6 +197,9 @@ pub fn simulate_prediction_tick(
     input: MovementInput,
     timestep: Duration,
 ) -> NetworkPhysicsState {
+    sync_remote_collision_proxies(world);
+    position_remote_collision_proxies(world, input.tick.saturating_sub(1), timestep);
+
     world
         .entity_mut(player)
         .get_mut::<CurrentMovementInput>()
@@ -224,6 +234,121 @@ pub fn simulate_prediction_tick(
             .expect("Predicted body must have velocity")
             .0,
     }
+}
+
+/// Drop all proxies when a fresh world snapshot replaces the old world
+pub fn clear_remote_collision_proxies(world: &mut World) {
+    let entities = std::mem::take(&mut world.resource_mut::<RemoteCollisionProxies>().entities);
+    for (_, entity) in entities {
+        world.despawn(entity);
+    }
+}
+
+fn sync_remote_collision_proxies(world: &mut World) {
+    let remote_players: Vec<_> = {
+        let remote = world.resource::<RemoteWorld>();
+        remote
+            .entities
+            .iter()
+            .filter(|(_, replica)| !replica.owned)
+            .filter_map(|(&id, _)| {
+                remote
+                    .remote_states
+                    .get(&id)
+                    .and_then(|states| states.back())
+                    .copied()
+                    .map(|state| (id, state))
+            })
+            .collect()
+    };
+
+    world.resource_scope(|world, mut proxies: Mut<RemoteCollisionProxies>| {
+        let stale: Vec<_> = proxies
+            .entities
+            .iter()
+            .filter(|(id, _)| !remote_players.iter().any(|(active, _)| active == *id))
+            .map(|(&id, &entity)| (id, entity))
+            .collect();
+
+        for (id, entity) in stale {
+            proxies.entities.remove(&id);
+            world.despawn(entity);
+        }
+
+        for (id, state) in remote_players {
+            if proxies.entities.contains_key(&id) {
+                continue;
+            }
+            let entity = world
+                .spawn((
+                    RigidBody::Kinematic,
+                    Collider::circle(16.0),
+                    PhysicsPosition(state.position),
+                    LinearVelocity(state.velocity),
+                    AngularVelocity::ZERO,
+                    LockedAxes::ROTATION_LOCKED,
+                    Transform::from_xyz(state.position.x, state.position.y, 0.0),
+                ))
+                .id();
+            proxies.entities.insert(id, entity);
+        }
+    });
+}
+
+fn position_remote_collision_proxies(world: &mut World, tick: u64, timestep: Duration) {
+    let poses: Vec<_> = {
+        let remote = world.resource::<RemoteWorld>();
+        let proxies = world.resource::<RemoteCollisionProxies>();
+        proxies
+            .entities
+            .iter()
+            .filter_map(|(&id, &entity)| {
+                let samples = remote.remote_states.get(&id)?;
+                sample_remote_state(samples, tick, timestep).map(|state| (entity, state))
+            })
+            .collect()
+    };
+
+    for (entity, state) in poses {
+        let Ok(mut body) = world.get_entity_mut(entity) else {
+            continue;
+        };
+        body.get_mut::<PhysicsPosition>().unwrap().0 = state.position;
+        body.get_mut::<LinearVelocity>().unwrap().0 = state.velocity;
+        let mut transform = body.get_mut::<Transform>().unwrap();
+        transform.translation.x = state.position.x;
+        transform.translation.y = state.position.y;
+    }
+}
+
+fn sample_remote_state(
+    samples: &std::collections::VecDeque<NetworkPhysicsState>,
+    tick: u64,
+    timestep: Duration,
+) -> Option<NetworkPhysicsState> {
+    let first = *samples.front()?;
+    if tick <= first.tick {
+        return Some(NetworkPhysicsState { tick, ..first });
+    }
+
+    for (older, newer) in samples.iter().zip(samples.iter().skip(1)) {
+        if tick <= newer.tick {
+            let fraction = (tick - older.tick) as f32 / (newer.tick - older.tick) as f32;
+            return Some(NetworkPhysicsState {
+                tick,
+                position: older.position.lerp(newer.position, fraction),
+                velocity: older.velocity.lerp(newer.velocity, fraction),
+            });
+        }
+    }
+
+    let latest = *samples.back().unwrap();
+    let elapsed = tick.saturating_sub(latest.tick) as f32 * timestep.as_secs_f32();
+    Some(NetworkPhysicsState {
+        tick,
+        position: latest.position + latest.velocity * elapsed,
+        velocity: latest.velocity,
+    })
 }
 
 pub fn replay_prediction_ticks(
