@@ -15,14 +15,14 @@ impl BiomeStage {
 
 impl GenerationStage for BiomeStage {
     fn apply(&self, _pos: TilePos, tile: &mut TileDraft) {
-        tile.surface_biome = self
-            .default_map
-            .determine_biome(tile.temperature, tile.height);
         tile.biome = tile
             .biome_map
             .as_ref()
             .and_then(|map| map.determine_biome(tile.temperature, tile.height))
-            .or(tile.surface_biome);
+            .or_else(|| {
+                self.default_map
+                    .determine_biome(tile.temperature, tile.height)
+            });
     }
 }
 

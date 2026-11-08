@@ -23,7 +23,7 @@ let queued = false;
 let timer = null;
 
 const mime = { '.html': 'text/html', '.css': 'text/css', '.mjs': 'text/javascript' };
-const staticFiles = new Set(['/', '/index.html', '/style.css', '/app.mjs', '/zoom.mjs', '/decode-worker.mjs', '/protocol.mjs', '/settings.mjs', '/biomes.mjs']);
+const staticFiles = new Set(['/', '/index.html', '/style.css', '/app.mjs', '/zoom.mjs', '/decode-worker.mjs', '/protocol.mjs', '/settings.mjs', '/biomes.mjs', '/objects.mjs']);
 
 const frontend = createServer((req, res) => {
   const path = new URL(req.url, 'http://localhost').pathname;
@@ -71,6 +71,8 @@ const watchers = [
   watch(source, (_, name) => { if (name?.endsWith('.rs')) schedule(); }),
   watch(resolve(source, 'features'), (_, name) => { if (name?.endsWith('.rs') || name?.endsWith('.ron')) schedule(); }),
   watch(resolve(source, 'biomes'), (_, name) => { if (name?.endsWith('.rs') || name?.endsWith('.ron')) schedule(); }),
+  watch(resolve(source, 'tiles'), (_, name) => { if (name?.endsWith('.rs') || name?.endsWith('.ron')) schedule(); }),
+  watch(resolve(source, 'objects'), (_, name) => { if (name?.endsWith('.rs') || name?.endsWith('.ron')) schedule(); }),
   watch(resolve(source, 'biomes/maps'), (_, name) => { if (name?.endsWith('.ron')) schedule(); }),
   watch(example, (_, name) => { if (name === 'worldgen_preview.rs') schedule(); }),
   watch(manifest, schedule),

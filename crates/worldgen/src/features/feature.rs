@@ -62,19 +62,16 @@ impl<G: FeatureGenerator> FeatureLayer<G> {
     }
 
     fn cell_features(&self, cx: i64, cy: i64) -> Arc<[G::Feature]> {
+        let cache = self.features_cache.lock().expect("feature cache poisoned");
+        if let Some(features) = cache.get(&(cx, cy)) {
+            return Arc::clone(features);
+        }
+        drop(cache);
+        let seed = hash_cell(self.seed, cx, cy);
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        let generated: Arc<[G::Feature]> = self.generator.generate_cell(cx, cy, &mut rng).into();
         let mut cache = self.features_cache.lock().expect("feature cache poisoned");
-
-        let features = cache.entry((cx, cy)).or_insert_with(|| {
-            let seed = hash_cell(self.seed, cx, cy);
-            let mut rng = ChaCha8Rng::seed_from_u64(seed);
-
-            let generated: Arc<[G::Feature]> =
-                self.generator.generate_cell(cx, cy, &mut rng).into();
-
-            generated
-        });
-
-        Arc::clone(features)
+        Arc::clone(cache.entry((cx, cy)).or_insert(generated))
     }
 
     pub fn features_in(&self, bounds: WorldBounds) -> Vec<G::Feature> {

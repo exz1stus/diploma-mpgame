@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#0a1119">
-  <meta name="description" content="Explore generated biome colors, temperature, and terrain height.">
+  <meta name="description" content="Explore generated terrain, temperature, height, and placed objects.">
   <title>Worldgen Lab · Biome explorer</title>
   <link rel="stylesheet" href="./style.css">
 </head>
@@ -23,6 +23,11 @@
           <svg id="biome-chart" viewBox="0 0 286 234" role="img" aria-label="Biome ranges by temperature and height"></svg>
           <p id="biome-chart-readout" class="settings-hint" aria-live="polite">Loading biome definitions…</p>
         </details>
+      </section>
+      <section class="object-panel" aria-label="Placed objects">
+        <label class="object-toggle"><input type="checkbox" id="show-objects" checked>Objects</label>
+        <div class="object-legend" id="object-legend"></div>
+        <p class="settings-hint" id="object-status" aria-live="polite">Loading object definitions…</p>
       </section>
       <div id="generator-settings" aria-label="Generation parameters">Loading generator settings…</div>
       <div class="action-row"><button id="randomize" type="button" disabled>↝ &nbsp; Random seed</button><button id="reset-settings" type="button" disabled>Reset settings</button></div>
@@ -53,6 +58,7 @@
       <div id="tile-tooltip" class="tile-tooltip" role="tooltip" hidden>
         <strong id="tooltip-tile"></strong>
         <dl><dt>Temperature</dt><dd id="tooltip-temperature">—</dd><dt>Height</dt><dd id="tooltip-height">—</dd></dl>
+        <div id="tooltip-object" class="tooltip-object" hidden></div>
         <small id="tooltip-note"></small>
       </div>
       <div class="viewport-bottom"><div class="readout" id="readout">Move over the map to inspect a tile</div><div class="status" id="status">LOD 0 · 1 tile / cell</div></div>

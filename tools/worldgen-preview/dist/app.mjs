@@ -1,7 +1,8 @@
 import { zoomMetrics, fitWorldZoom, clampCamera } from './zoom.mjs';
 import { SAMPLE_BYTES, readSample, MAP_MODES, readMapMode } from './protocol.mjs';
 import { settingsError, readSettings, settingsQuery } from './settings.mjs';
-import { biomeForSample, surfaceForSample, renderBiomes } from './biomes.mjs';
+import { biomeForSample, tileForSample, renderBiomes } from './biomes.mjs';
+import { collectObjects, drawObjects, objectAt, objectKey, objectStyle, objectsVisibleAt, readObjectChunk, renderObjectLegend } from './objects.mjs';
 
 const canvas = document.querySelector('#map');
 const viewport = document.querySelector('.viewport');
@@ -22,23 +23,35 @@ const tooltipFields = {
   temperature: document.querySelector('#tooltip-temperature'),
   height: document.querySelector('#tooltip-height'),
   note: document.querySelector('#tooltip-note'),
+  object: document.querySelector('#tooltip-object'),
 };
 let world = null;
 let metaRequest = 0;
 const params = new URLSearchParams(location.search);
 const apiBase = (params.get('api') || '').replace(/\/$/, '');
+const objectsToggle = document.querySelector('#show-objects');
+const objectStatus = document.querySelector('#object-status');
+objectsToggle.checked = params.get('objects') !== '0';
+let objectTypes = [];
+let visibleObjects = [];
+const objectCache = new Map();
+const activeObjects = new Map();
+let objectRetryAt = 0;
+let objectError = '';
 const modeSelect = document.querySelector('#map-mode');
 let mapMode = readMapMode(params.get('mode'));
 const biomeSelect = document.querySelector('#biome-file');
 let biomeFiles = [];
 let biomeFile = '';
 let biomes = [];
+let tilePalette = [];
+let tileRules = [];
 let biomeMaps = {};
 const biomeMapView = document.querySelector('#biome-map-view');
 
 function renderBiomeMap() {
   renderBiomes(document.querySelector('#biome-chart'), document.querySelector('#biome-legend'),
-    document.querySelector('#biome-chart-readout'), biomeMaps[biomeMapView.value] || [], biomes);
+    document.querySelector('#biome-chart-readout'), biomeMaps[biomeMapView.value] || [], tilePalette, tileRules);
 }
 
 biomeMapView.addEventListener('change', renderBiomeMap);
@@ -116,7 +129,7 @@ function installControls(nextControls) {
       Planet: 'Orbit: 0 / 0.5 equinox, 0.25 northern summer, 0.75 northern winter.',
       Craters: 'Territory is marked without replacing terrain colors. Temperature offsets heat or cool affected tiles before biome selection. Density is the expected number per cell; 0 disables craters. Maximum radius × 1.5 must fit within a cell.',
       'Impact basins': 'Territory is marked without replacing terrain colors. Temperature offsets heat or cool basin interiors before biome selection. Large, rare impacts applied before craters. Probability 0 disables basins; 1 tests every cell. Use Fit world (□) to see their extent. Smoothing octaves are capped by elevation octaves.',
-      Volcanoes: 'Temperature offsets heat or cool affected tiles before biome selection. Raised cones with summit calderas, applied after basins and craters. Volcano territory is always marked. Its biome palette appears above the configured height threshold; other tiles use the terrain appearance. Probability 0 disables volcanoes; 1 places one per cell. Heights and depths use the normalized height scale. Caldera radius 0 makes a solid cone. Use Fit world (□) to find sparse volcanoes.',
+      Volcanoes: 'Temperature offsets heat or cool affected tiles before biome selection. Raised cones with summit calderas, applied after basins and craters. Volcano territory is always marked. Final height, temperature and biome select a global tile through the separate tile map. Probability 0 disables volcanoes; 1 places one per cell. Heights and depths use the normalized height scale. Caldera radius 0 makes a solid cone. Use Fit world (□) to find sparse volcanoes.',
     };
     const hint = document.createElement('p');
     hint.className = 'settings-hint'; hint.textContent = hints[group] || '';
@@ -134,6 +147,7 @@ function fillInputs() {
 function updateUrl() {
   const query = controls.length ? settingsQuery(config, controls, true) : new URLSearchParams(location.search);
   query.set('mode', mapMode);
+  if (!objectsToggle.checked) query.set('objects', '0');
   if (biomeFile) query.set('biome', biomeFile);
   if (apiBase) query.set('api', apiBase);
   history.replaceState(null, '', `${location.pathname}?${query}`);
@@ -158,6 +172,7 @@ function applyInputs() {
   staleCache = cache;
   cache = new Map();
   revision++;
+  resetObjects();
   for (const controller of active.values()) controller.abort();
   active.clear();
   updateUrl();
@@ -209,6 +224,67 @@ function clearCache(map) {
 
 function closeChunk(chunk) {
   for (const image of Object.values(chunk.images)) image.close();
+}
+
+function resetObjects() {
+  for (const controller of activeObjects.values()) controller.abort();
+  activeObjects.clear();
+  objectCache.clear();
+  visibleObjects = [];
+  objectRetryAt = 0;
+  objectError = '';
+}
+
+function fetchObjectsVisible(minX, minY, maxX, maxY) {
+  const visible = new Set();
+  const wanted = [];
+  const centerX = (minX + maxX) / 2;
+  const centerY = (minY + maxY) / 2;
+  for (let cy = minY; cy <= maxY; cy++) for (let cx = minX; cx <= maxX; cx++) {
+    const id = key(cx, cy, 0);
+    visible.add(id);
+    if (!objectCache.has(id) && !activeObjects.has(id)) wanted.push({ cx, cy, id, distance: (cx - centerX) ** 2 + (cy - centerY) ** 2 });
+  }
+  for (const [id, controller] of activeObjects) if (!visible.has(id)) { controller.abort(); activeObjects.delete(id); }
+  if (!biomeReady || Date.now() < objectRetryAt) return;
+  wanted.sort((a, b) => a.distance - b.distance);
+  for (const { cx, cy, id } of wanted.slice(0, Math.max(0, 4 - activeObjects.size))) {
+    const controller = new AbortController();
+    activeObjects.set(id, controller);
+    const requestRevision = revision;
+    const size = config.size;
+    const query = settingsQuery(config, controls);
+    query.set('biome', biomeFile); query.set('x', cx); query.set('y', cy);
+    (async () => {
+      try {
+        const response = await fetch(`${apiBase}/api/chunk?${query}`, { signal: controller.signal });
+        if (response.status === 400) {
+          const error = await response.text();
+          if (requestRevision === revision && !controller.signal.aborted) objectCache.set(id, { objects: [], error });
+          return;
+        }
+        if (!response.ok) throw new Error(`Object generator returned ${response.status}`);
+        const result = await response.json();
+        if (requestRevision !== revision || controller.signal.aborted) return;
+        objectCache.set(id, readObjectChunk(result, cx, cy, size, objectTypes, world));
+        while (objectCache.size > 512) {
+          // Retain visible chunks, even if the camera returned to old cache entries.
+          const oldest = [...objectCache.keys()].find(key => !visible.has(key));
+          if (oldest === undefined) break;
+          objectCache.delete(oldest);
+        }
+        objectError = '';
+      } catch (error) {
+        if (requestRevision !== revision || controller.signal.aborted) return;
+        objectRetryAt = Date.now() + 1000;
+        objectError = 'Objects unavailable. Retrying…';
+        setTimeout(invalidate, 1000);
+      } finally {
+        if (activeObjects.get(id) === controller) activeObjects.delete(id);
+        invalidate();
+      }
+    })();
+  }
 }
 
 function fetchVisible(minX, minY, maxX, maxY, lod) {
@@ -356,6 +432,28 @@ function draw() {
       ctx.beginPath(); ctx.moveTo(0, py); ctx.lineTo(width, py); ctx.stroke();
     }
   }
+  visibleObjects = [];
+  if (objectsToggle.checked && objectTypes.length && objectsVisibleAt(m)) {
+    fetchObjectsVisible(minChunkX, minChunkY, maxChunkX, maxChunkY);
+    const chunks = [];
+    for (let cy = minChunkY; cy <= maxChunkY; cy++) for (let cx = minChunkX; cx <= maxChunkX; cx++) {
+      const chunk = objectCache.get(key(cx, cy, 0));
+      if (chunk) chunks.push(chunk);
+    }
+    visibleObjects = collectObjects(chunks, { minX: left, minY: top, maxX: right, maxY: bottom });
+    const hover = pointer && !dragging ? cellAt(pointer.x, pointer.y, m) : null;
+    drawObjects(ctx, visibleObjects, objectTypes, worldX, worldY, m.baseTilePx,
+      hover ? objectAt(visibleObjects, hover.x, hover.y) : null);
+    const unavailable = chunks.filter(chunk => chunk.error).length;
+    objectStatus.textContent = objectError || (unavailable
+      ? `${visibleObjects.length} objects · ${unavailable} chunks have no matching terrain or tiles.`
+      : `${visibleObjects.length} objects in view${activeObjects.size ? ' · loading…' : ' · hover to inspect'}`);
+  } else {
+    for (const controller of activeObjects.values()) controller.abort();
+    activeObjects.clear();
+    objectStatus.textContent = !objectsToggle.checked ? 'Objects hidden.' : !objectTypes.length
+      ? 'No object definitions supplied.' : 'Zoom in to see placed objects.';
+  }
   ctx.restore();
   labels.zoom.textContent = zoom >= 0 ? `2^−${zoom.toFixed(1)}×` : `${2 ** -zoom < 1e6 ? (2 ** -zoom).toFixed(1) : `2^${(-zoom).toFixed(0)}`}×`;
   labels.status.textContent = m.lod === 0 ? `LOD 0 · exact tiles · ${m.baseTilePx.toFixed(2)} px / tile` : `LOD ${m.lod} · 2^${m.lod} tiles / cell`;
@@ -365,6 +463,7 @@ function draw() {
 
 function updateReadout() {
   tooltip.hidden = true;
+  tooltipFields.object.hidden = true;
   if (!world) return;
   const m = metrics();
   const stride = 2 ** m.lod;
@@ -386,16 +485,23 @@ function updateReadout() {
   const tileX = Math.min(world.width - 1, cell.x * stride + offset);
   const tileY = Math.min(world.height - 1, cell.y * stride + offset);
   const biome = biomeForSample(biomes, sample);
-  const surface = surfaceForSample(biomes, sample);
+  const surface = tileForSample(tilePalette, sample);
   const title = sample ? (mapMode === 'biomes' ? (biome ? biome.name : 'No matching biome') : MAP_MODES[mapMode].label) : 'Loading tile…';
   const temperature = sample && Number.isFinite(sample.temperature) ? `${sample.temperature.toFixed(1)} °C` : '—';
   const height = sample && Number.isFinite(sample.height) ? sample.height.toFixed(4) : '—';
+  const object = objectAt(visibleObjects, tileX, tileY);
   labels.readout.textContent = mapMode === 'biomes' ? `${title} · ${temperature} · height ${height}`
     : mapMode === 'temperature' ? `Temperature ${temperature}` : `Height ${height}`;
   tooltipFields.tile.textContent = `${m.lod === 0 ? 'Tile' : 'Sample'} ${tileX}, ${tileY} · ${title}`;
   tooltipFields.temperature.textContent = temperature;
   tooltipFields.height.textContent = height;
-  tooltipFields.note.textContent = `${sample?.status === 1 ? `Surface: ${surface?.name || sample.color} · palette entry ${sample.paletteIndex + 1} · ${sample.color} · ` : ''}Height 0–1 · daily average temperature${m.lod ? ` · LOD ${m.lod}` : ''}`;
+  tooltipFields.note.textContent = `${sample?.status === 1 ? `Tile ${sample.tileId}: ${surface?.name || sample.color} · ${sample.color} · ` : ''}Height 0–1 · daily average temperature${m.lod ? ` · LOD ${m.lod}` : ''}`;
+  if (object) {
+    const label = objectStyle(objectTypes[object.kind]).label;
+    tooltipFields.object.textContent = `${label} · footprint ${object.footprint.width} × ${object.footprint.height}\nAnchor ${object.id.anchor.x}, ${object.id.anchor.y} · instance ${objectKey(object)}`;
+    tooltipFields.object.hidden = false;
+    labels.readout.textContent = `${label} · ${object.footprint.width} × ${object.footprint.height} · ${temperature} · height ${height}`;
+  }
   tooltip.hidden = false;
   const tooltipWidth = tooltip.offsetWidth;
   const tooltipHeight = tooltip.offsetHeight;
@@ -427,10 +533,16 @@ modeSelect.addEventListener('change', () => {
   updateUrl();
 });
 
+objectsToggle.addEventListener('change', () => {
+  updateUrl();
+  invalidate();
+});
+
 biomeSelect.addEventListener('change', () => {
   biomeFile = biomeSelect.value;
   biomeReady = false;
   revision++;
+  resetObjects();
   clearCache(cache);
   clearCache(staleCache);
   for (const controller of active.values()) controller.abort();
@@ -497,13 +609,14 @@ async function pollBuild() {
     const response = await fetch(`${apiBase}/api/meta?${query}`, { cache: 'no-store' });
     if (!response.ok) throw new Error(response.status === 400 ? await response.text() : 'Generator is rebuilding or unavailable. Waiting for the local server…');
     const { build, protocol, world: nextWorld, controls: nextControls, biome_files: nextFiles, biome_file: nextFile,
-      biomes: nextBiomes, biome_rules: nextRules, feature_biome_maps: nextFeatureMaps } = await response.json();
+      biomes: nextBiomes, biome_rules: nextRules, feature_biome_maps: nextFeatureMaps, tile_palette: nextPalette, tile_rules: nextTileRules,
+      object_types: nextObjectTypes = [] } = await response.json();
     if (request !== metaRequest) return;
-    if (protocol !== 5 || !nextWorld || !Number.isSafeInteger(nextWorld.width) || !Number.isSafeInteger(nextWorld.height)
+    if (protocol !== 6 || !nextWorld || !Number.isSafeInteger(nextWorld.width) || !Number.isSafeInteger(nextWorld.height)
       || nextWorld.width <= 0 || nextWorld.height <= 0 || !Array.isArray(nextControls) || !nextControls.length) throw new Error('Unsupported preview metadata');
     if (JSON.stringify(controls) !== JSON.stringify(nextControls)) installControls(nextControls);
     if (!Array.isArray(nextFiles) || !nextFiles.includes(nextFile) || !Array.isArray(nextBiomes)
-      || !Array.isArray(nextRules) || !nextFeatureMaps) throw new Error('Unsupported biome metadata');
+      || !Array.isArray(nextRules) || !nextFeatureMaps || !Array.isArray(nextPalette) || !Array.isArray(nextTileRules)) throw new Error('Unsupported biome metadata');
     if (JSON.stringify(biomeFiles) !== JSON.stringify(nextFiles)) {
       biomeFiles = nextFiles;
       biomeSelect.replaceChildren(...biomeFiles.map(file => {
@@ -519,9 +632,20 @@ async function pollBuild() {
     }
     biomeSelect.value = biomeFile;
     const nextMaps = { Default: nextRules, ...nextFeatureMaps };
+    if (!Array.isArray(nextObjectTypes) || nextObjectTypes.some(type => typeof type.name !== 'string'
+      || !Number.isSafeInteger(type.footprint?.width) || !Number.isSafeInteger(type.footprint?.height)
+      || type.footprint.width <= 0 || type.footprint.height <= 0)) throw new Error('Unsupported object metadata');
+    if (JSON.stringify(objectTypes) !== JSON.stringify(nextObjectTypes)) {
+      objectTypes = nextObjectTypes;
+      resetObjects();
+      renderObjectLegend(document.querySelector('#object-legend'), objectTypes);
+    }
     if (!biomeReady || JSON.stringify(biomes) !== JSON.stringify(nextBiomes)
-      || JSON.stringify(biomeMaps) !== JSON.stringify(nextMaps)) {
+      || JSON.stringify(biomeMaps) !== JSON.stringify(nextMaps)
+      || JSON.stringify(tilePalette) !== JSON.stringify(nextPalette) || JSON.stringify(tileRules) !== JSON.stringify(nextTileRules)) {
       biomes = nextBiomes;
+      tilePalette = nextPalette;
+      tileRules = nextTileRules;
       biomeMaps = nextMaps;
       const selectedMap = biomeMapView.value;
       biomeMapView.replaceChildren(...Object.keys(biomeMaps).map(name => {
@@ -535,6 +659,7 @@ async function pollBuild() {
     updateUrl();
     if (buildId !== null && build !== buildId) {
       revision++;
+      resetObjects();
       clearCache(staleCache);
       staleCache = cache;
       cache = new Map();

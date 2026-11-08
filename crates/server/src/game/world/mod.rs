@@ -1,10 +1,14 @@
 use bevy::app::{App, Plugin};
 use bevy_ecs::resource::Resource;
+use std::sync::Arc;
 use worldgen::WorldGeneratorConfig;
+
+pub(crate) mod jobs;
+use jobs::ChunkGenerationJobs;
 
 /// Engine integration belongs here; the generator itself has no Bevy dependency.
 #[derive(Resource)]
-pub(crate) struct WorldGenerator(pub worldgen::WorldGenerator);
+pub(crate) struct WorldGenerator(pub Arc<worldgen::WorldGenerator>);
 
 impl std::ops::Deref for WorldGenerator {
     type Target = worldgen::WorldGenerator;
@@ -23,7 +27,7 @@ impl Plugin for WorldGeneration {
         coarse_elevation.octaves = 2;
         let biomes = worldgen::BiomeRepository::parse();
         let biome_map = worldgen::BiomeMap::parse(&biomes);
-        app.insert_resource(WorldGenerator(worldgen::build_world_generator(
+        let generator = Arc::new(worldgen::build_world_generator(
             config,
             biomes,
             biome_map,
@@ -39,6 +43,15 @@ impl Plugin for WorldGeneration {
                 coarse_elevation,
             )),
             worldgen::VolcanoGenerator::default(),
-        )));
+        ));
+        let workers = std::thread::available_parallelism()
+            .map_or(2, |count| count.get())
+            .clamp(1, 8);
+        app.insert_resource(ChunkGenerationJobs::new(
+            Arc::clone(&generator),
+            workers,
+            64,
+        ));
+        app.insert_resource(WorldGenerator(generator));
     }
 }

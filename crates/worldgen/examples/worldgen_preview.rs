@@ -9,9 +9,9 @@ use std::{
 
 use worldgen::{
     BasinGenerator, BiomeMap, BiomeRepository, CraterGenerator, ElevationNoise, NoiseConfig,
-    NoiseSource, PlanetParams, TemperatureCoefficients, TemperatureModel, TemperatureRegionsNoise,
-    TilePos, VolcanoGenerator, WorldGenerator, WorldGeneratorConfig, WorldGeography,
-    build_world_generator,
+    NoiseSource, ObjectRepository, PlanetParams, TemperatureCoefficients, TemperatureModel,
+    TemperatureRegionsNoise, TileData, TileMapper, TilePos, VolcanoGenerator, WorldGenerator,
+    WorldGeneratorConfig, WorldGeography, build_world_generator,
 };
 
 #[derive(serde::Serialize)]
@@ -637,7 +637,7 @@ fn main() -> std::io::Result<()> {
     let workers = std::thread::available_parallelism()
         .map_or(4, |count| count.get())
         .clamp(2, 16);
-    let (sender, receiver) = mpsc::channel::<TcpStream>();
+    let (sender, receiver) = mpsc::sync_channel::<TcpStream>(workers * 2);
     let receiver = Arc::new(Mutex::new(receiver));
     for _ in 0..workers {
         let receiver = Arc::clone(&receiver);
@@ -686,6 +686,10 @@ fn handle(stream: &mut TcpStream, build: u128) -> std::io::Result<()> {
             Ok(body) => respond(stream, 200, "application/octet-stream", &body),
             Err(error) => respond(stream, 400, "text/plain", error.as_bytes()),
         },
+        "/api/chunk" => match chunk_json(query) {
+            Ok(body) => respond(stream, 200, "application/json", body.as_bytes()),
+            Err(error) => respond(stream, 400, "text/plain", error.as_bytes()),
+        },
         _ => respond(stream, 404, "text/plain", b"Not found"),
     }
 }
@@ -700,7 +704,20 @@ fn respond(stream: &mut TcpStream, status: u16, mime: &str, body: &[u8]) -> std:
     stream.write_all(body)
 }
 
-const SAMPLE_BYTES: usize = 18;
+const SAMPLE_BYTES: usize = 16;
+
+fn chunk_json(query: &str) -> Result<String, String> {
+    let params = params(query);
+    let position = worldgen::ChunkPos {
+        x: parse(&params, "x")?,
+        y: parse(&params, "y")?,
+    };
+    let settings = PreviewSettings::from_params(&params)?;
+    let chunk = preview_generator(&settings)
+        .chunk_at(position)
+        .map_err(|error| error.to_string())?;
+    serde_json::to_string(&chunk).map_err(|error| error.to_string())
+}
 
 fn params(query: &str) -> HashMap<&str, &str> {
     query
@@ -746,12 +763,13 @@ fn metadata(query: &str, build: u128) -> Result<String, String> {
     let side = world_side(config)?;
     let biomes = BiomeRepository::parse();
     let (biome_file, biome_map) = selected_biomes(&params, &biomes)?;
+    let mapper = TileMapper::parse(&biomes);
     let map_rules = |map: &BiomeMap| -> Vec<serde_json::Value> {
         map.rules()
             .iter()
             .map(|rule| {
                 let biome = biomes.get(rule.biome).expect("resolved biome exists");
-                serde_json::json!({ "name": biome.name, "palette": biome.palette, "palette_height_threshold": biome.palette_height_threshold,
+                serde_json::json!({ "name": biome.name, "biome": rule.biome,
                 "height": rule.height, "temperature": rule.temperature })
             })
             .collect()
@@ -771,10 +789,12 @@ fn metadata(query: &str, build: u128) -> Result<String, String> {
         feature_maps.insert(name.into(), serde_json::json!(map_rules(&map)));
     }
     Ok(serde_json::json!({
-        "build": build.to_string(), "protocol": 5,
+        "build": build.to_string(), "protocol": 6,
         "world": { "width": side, "height": side }, "controls": controls(),
         "biome_files": biome_files()?, "biome_file": biome_file, "biomes": biomes.biomes(),
         "biome_rules": map_rules(&biome_map), "feature_biome_maps": feature_maps,
+        "tile_palette": mapper.palette().tiles(), "tile_rules": mapper.rules(),
+        "object_types": ObjectRepository::parse().objects(),
     })
     .to_string())
 }
@@ -843,11 +863,6 @@ fn selected_biomes(
         .map_err(|error| format!("Cannot read {filename}: {error}"))?;
     let biomes =
         BiomeMap::from_ron(&source, repository).map_err(|error| format!("{filename}: {error}"))?;
-    for biome in repository.biomes() {
-        for entry in &biome.palette {
-            color_rgb(&entry.color)?;
-        }
-    }
     Ok((filename, biomes))
 }
 
@@ -873,11 +888,9 @@ fn color_rgb(color: &str) -> Result<[u8; 3], String> {
     Ok(rgb)
 }
 
-// Wire record: status u8 (0=unclassified, 1=color, 2=territory without appearance,
-// 255=outside), RGB u8[3],
-// normalized height f32 LE, daily-average Celsius temperature f32 LE,
-// biome ID u16 LE, surface biome ID u16 LE, palette index u16 LE.
-// Biome ID is valid for status 1 or 2; appearance IDs are valid for status 1.
+// Wire record: status u8 (0=unclassified, 1=color, 2=territory without a tile,
+// 255=outside), RGB u8[3], normalized height f32 LE, Celsius temperature f32 LE,
+// biome ID u16 LE, global tile ID u16 LE. Tile ID is valid for status 1.
 fn region_bytes(query: &str) -> Result<Vec<u8>, String> {
     let params = params(query);
     let min_x: i32 = parse(&params, "min_x")?;
@@ -905,6 +918,10 @@ fn region_bytes(query: &str) -> Result<Vec<u8>, String> {
         return Err("Region lies outside the world".into());
     }
     let generator = preview_generator(&settings);
+    let mapper = generator.tile_mapper();
+    for tile in mapper.palette().tiles() {
+        color_rgb(&tile.color)?;
+    }
     let offset = if lod == 0 { 0 } else { stride / 2 };
     let mut output = Vec::with_capacity(tile_count as usize * SAMPLE_BYTES);
     for cy in min_y..=max_y {
@@ -917,7 +934,7 @@ fn region_bytes(query: &str) -> Result<Vec<u8>, String> {
                         output.extend_from_slice(&[255, 0, 0, 0]);
                         output.extend_from_slice(&f32::NAN.to_le_bytes());
                         output.extend_from_slice(&f32::NAN.to_le_bytes());
-                        output.extend_from_slice(&[0; 6]);
+                        output.extend_from_slice(&[0; 4]);
                         continue;
                     }
                     let pos = TilePos {
@@ -925,12 +942,17 @@ fn region_bytes(query: &str) -> Result<Vec<u8>, String> {
                         y: (base_y + offset).min(side - 1) as i64,
                     };
                     let tile = generator.draft_at(pos);
-                    if let Some(biome) =
-                        tile.surface_biome.and_then(|id| generator.biomes().get(id))
-                    {
+                    let mapped = tile.biome.and_then(|biome| {
+                        mapper.map(&TileData {
+                            height: tile.height,
+                            temperature: tile.temperature,
+                            biome,
+                        })
+                    });
+                    if let Some(mapped) = mapped {
                         output.push(1);
                         output.extend_from_slice(&color_rgb(
-                            &biome.palette[usize::from(tile.palette_index)].color,
+                            &mapper.palette().get(mapped).unwrap().color,
                         )?);
                     } else {
                         output.extend_from_slice(&[
@@ -943,9 +965,7 @@ fn region_bytes(query: &str) -> Result<Vec<u8>, String> {
                     output.extend_from_slice(&(tile.height as f32).to_le_bytes());
                     output.extend_from_slice(&(tile.temperature as f32).to_le_bytes());
                     output.extend_from_slice(&tile.biome.map_or(0, |id| id.0).to_le_bytes());
-                    output
-                        .extend_from_slice(&tile.surface_biome.map_or(0, |id| id.0).to_le_bytes());
-                    output.extend_from_slice(&tile.palette_index.to_le_bytes());
+                    output.extend_from_slice(&mapped.map_or(0, |tile| tile.id).to_le_bytes());
                 }
             }
         }
@@ -958,6 +978,46 @@ mod tests {
     use super::*;
 
     const EQUATOR_QUERY: &str = "min_x=253&max_x=253&min_y=250&max_y=250&lod=0&size=4&seed=42";
+
+    #[test]
+    fn single_chunk_api_returns_tiles_and_complete_object_instances() {
+        let query = "x=250&y=250&size=32&seed=42&temperature_base=0&temperature_solar=0&temperature_region=0&temperature_altitude=0&crater_density=0&basin_probability=0&volcano_probability=0";
+        let chunk: worldgen::ChunkData = serde_json::from_str(&chunk_json(query).unwrap()).unwrap();
+        assert_eq!(chunk.position, worldgen::ChunkPos { x: 250, y: 250 });
+        assert_eq!(chunk.tiles.len(), 32 * 32);
+        assert!(!chunk.objects.is_empty());
+        let settings = PreviewSettings::from_params(&params(query)).unwrap();
+        let generator = preview_generator(&settings);
+        assert_eq!(chunk, generator.chunk_at(chunk.position).unwrap());
+        assert_eq!(chunk_json(query).unwrap(), chunk_json(query).unwrap());
+        let region = region_bytes(&format!(
+            "{query}&min_x=250&max_x=250&min_y=250&max_y=250&lod=0"
+        ))
+        .unwrap();
+        for (tile, record) in chunk.tiles.iter().zip(region.chunks_exact(SAMPLE_BYTES)) {
+            assert_eq!(record[0], 1);
+            assert_eq!(
+                tile.id,
+                u16::from_le_bytes(record[14..16].try_into().unwrap())
+            );
+        }
+    }
+
+    #[test]
+    fn single_chunk_api_rejects_invalid_requests_and_reports_missing_biomes() {
+        for query in [
+            "",
+            "x=0",
+            "x=-1&y=0",
+            "x=500&y=0",
+            "x=0&y=0&size=0",
+            "x=9223372036854775807&y=0",
+        ] {
+            assert!(chunk_json(query).is_err(), "{query}");
+        }
+        let error = chunk_json("x=0&y=0&size=4&temperature_base=1000&temperature_solar=0&temperature_region=0&temperature_altitude=0&crater_density=0&basin_probability=0&volcano_probability=0").unwrap_err();
+        assert!(error.contains("no biome"), "{error}");
+    }
 
     fn first_metrics(query: &str) -> (f32, f32) {
         let bytes = region_bytes(query).unwrap();
@@ -980,6 +1040,7 @@ mod tests {
             );
             let settings = PreviewSettings::from_params(&params(&query)).unwrap();
             let bytes = region_bytes(&query).unwrap();
+            let mapper = TileMapper::parse(&settings.biomes);
             let mut marked = 0;
             for record in bytes.chunks_exact(SAMPLE_BYTES) {
                 assert_eq!(record[0], 1);
@@ -987,20 +1048,27 @@ mod tests {
                 let temperature = f32::from_le_bytes(record[8..12].try_into().unwrap()) as f64;
                 let biome =
                     worldgen::BiomeId(u16::from_le_bytes(record[12..14].try_into().unwrap()));
-                let surface =
-                    worldgen::BiomeId(u16::from_le_bytes(record[14..16].try_into().unwrap()));
-                if settings.biomes.get(biome).unwrap().palette.is_empty() {
+                if biome.index() >= 32 {
                     marked += 1;
                 }
-                assert_eq!(
-                    Some(surface),
-                    settings.biome_map.determine_biome(temperature, height)
-                );
-                let index = u16::from_le_bytes(record[16..18].try_into().unwrap());
-                let appearance = settings.biomes.get(surface).unwrap();
+                let tile = worldgen::Tile {
+                    id: u16::from_le_bytes(record[14..16].try_into().unwrap()),
+                };
+                let default_biome = settings
+                    .biome_map
+                    .determine_biome(temperature, height)
+                    .unwrap();
+                let expected = mapper
+                    .map(&TileData {
+                        height,
+                        temperature,
+                        biome: default_biome,
+                    })
+                    .unwrap();
+                assert_eq!(tile, expected);
                 assert_eq!(
                     record[1..4],
-                    color_rgb(&appearance.palette[usize::from(index)].color).unwrap()
+                    color_rgb(&mapper.palette().get(tile).unwrap().color).unwrap()
                 );
             }
             assert!(
@@ -1085,8 +1153,11 @@ mod tests {
             .chunks_exact(SAMPLE_BYTES)
             .zip(zero_height.chunks_exact(SAMPLE_BYTES))
         {
-            assert_eq!(&a[..12], &b[..12]);
-            assert_eq!(&a[14..], &b[14..]);
+            assert_eq!(
+                &a[4..12],
+                &b[4..12],
+                "flat features preserve terrain metrics"
+            );
         }
         assert!(
             disabled
@@ -1306,23 +1377,27 @@ mod tests {
             f32::from_le_bytes(bytes[8..12].try_into().unwrap()),
             tile.temperature as f32
         );
-        if let Some(biome) = tile.surface_biome.and_then(|id| generator.biomes().get(id)) {
+        let mapper = TileMapper::parse(generator.biomes());
+        let mapped = tile.biome.and_then(|biome| {
+            mapper.map(&TileData {
+                height: tile.height,
+                temperature: tile.temperature,
+                biome,
+            })
+        });
+        if let Some(mapped) = mapped {
             assert_eq!(bytes[0], 1);
             assert_eq!(
                 bytes[1..4],
-                color_rgb(&biome.palette[usize::from(tile.palette_index)].color).unwrap()
+                color_rgb(&mapper.palette().get(mapped).unwrap().color).unwrap()
             );
             assert_eq!(
-                u16::from_le_bytes(bytes[16..18].try_into().unwrap()),
-                tile.palette_index
+                u16::from_le_bytes(bytes[14..16].try_into().unwrap()),
+                mapped.id
             );
             assert_eq!(
                 u16::from_le_bytes(bytes[12..14].try_into().unwrap()),
                 tile.biome.unwrap().0
-            );
-            assert_eq!(
-                u16::from_le_bytes(bytes[14..16].try_into().unwrap()),
-                tile.surface_biome.unwrap().0
             );
         } else {
             assert_eq!(bytes[0], if tile.biome.is_some() { 2 } else { 0 });
@@ -1421,11 +1496,11 @@ mod tests {
     }
 
     #[test]
-    fn selected_file_supplies_metadata_and_generator_palette() {
+    fn selected_file_supplies_biomes_separately_from_tile_mapping() {
         let default_meta: serde_json::Value =
             serde_json::from_str(&metadata("", 123).unwrap()).unwrap();
         assert_eq!(default_meta["biome_file"], "default.ron");
-        assert_eq!(default_meta["protocol"], 5);
+        assert_eq!(default_meta["protocol"], 6);
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&metadata("biome=biomes.ron", 123).unwrap())
                 .unwrap()["biome_file"],
@@ -1468,12 +1543,23 @@ mod tests {
             meta["biomes"],
             serde_json::to_value(generator_biomes()).unwrap()
         );
-        assert!(
-            meta["biomes"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .all(|biome| biome.get("height").is_none() && biome.get("temperature").is_none())
+        assert!(meta["biomes"].as_array().unwrap().iter().all(
+            |biome| biome.get("height").is_none()
+                && biome.get("temperature").is_none()
+                && biome.get("palette").is_none()
+        ));
+        let mapper = TileMapper::parse(generator.biomes());
+        assert_eq!(
+            meta["tile_palette"],
+            serde_json::to_value(mapper.palette().tiles()).unwrap()
+        );
+        assert_eq!(
+            meta["object_types"],
+            serde_json::to_value(generator.object_placer().objects().objects()).unwrap()
+        );
+        assert_eq!(
+            meta["tile_rules"],
+            serde_json::to_value(mapper.rules()).unwrap()
         );
         assert_eq!(meta["biome_rules"].as_array().unwrap().len(), 32);
         for name in ["Basins", "Craters", "Volcanoes"] {
@@ -1484,10 +1570,8 @@ mod tests {
                     .biomes()
                     .id(rule["name"].as_str().unwrap())
                     .unwrap();
-                assert_eq!(
-                    rule["palette"],
-                    serde_json::to_value(&generator.biomes().get(biome).unwrap().palette).unwrap()
-                );
+                assert_eq!(rule["biome"], serde_json::to_value(biome).unwrap());
+                assert!(rule.get("palette").is_none());
             }
         }
     }

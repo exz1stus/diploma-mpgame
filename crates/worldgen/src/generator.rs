@@ -1,20 +1,40 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
-use crate::{BiomeRepository, GenerationStage, Tile, TileDraft, TilePos};
+use crate::{
+    BiomeRepository, ChunkData, ChunkPos, GenerationError, GenerationStage, ObjectPlacer, Tile,
+    TileData, TileDraft, TileMapper, TilePos, TileRect, WorldGeneratorConfig,
+};
 
 pub struct WorldGenerator {
+    config: WorldGeneratorConfig,
+    bounds: TileRect,
     stages: Vec<Box<dyn GenerationStage>>,
     biomes: Arc<BiomeRepository>,
+    tile_mapper: TileMapper,
+    object_placer: ObjectPlacer,
 }
 
 impl WorldGenerator {
-    /// Execute stages in the supplied order. All biome maps must be resolved
-    /// against this repository; pipeline assembly determines stage dependencies.
-    pub fn new(stages: Vec<Box<dyn GenerationStage>>, biomes: Arc<BiomeRepository>) -> Self {
-        Self { stages, biomes }
+    pub fn new(
+        config: WorldGeneratorConfig,
+        stages: Vec<Box<dyn GenerationStage>>,
+        biomes: Arc<BiomeRepository>,
+        tile_mapper: TileMapper,
+        object_placer: ObjectPlacer,
+    ) -> Self {
+        let bounds = config
+            .tile_bounds()
+            .expect("world dimensions must be valid");
+        Self {
+            config,
+            bounds,
+            stages,
+            biomes,
+            tile_mapper,
+            object_placer,
+        }
     }
 
-    /// Run every stage without requiring biome coverage, for tools such as previews.
     pub fn draft_at(&self, pos: TilePos) -> TileDraft {
         let mut draft = TileDraft::default();
         for stage in &self.stages {
@@ -23,14 +43,95 @@ impl WorldGenerator {
         draft
     }
 
-    /// Sample a completed tile in global coordinates, independently of chunk bounds.
+    /// Sample completed terrain data in global coordinates, independently of chunk bounds.
+    /// Pass the result to a TileMapper to select a global tile ID.
     /// Panics if no stage assigned a biome for the generated height and temperature.
-    pub fn tile_at(&self, pos: TilePos) -> Tile {
-        self.draft_at(pos).finish()
+    pub fn tile_data_at(&self, pos: TilePos) -> TileData {
+        self.try_tile_data_at(pos)
+            .expect("no biome covers the generated tile")
+    }
+
+    /// Fallible terrain sampling, also usable for diagnostics outside world bounds.
+    pub fn try_tile_data_at(&self, pos: TilePos) -> Result<TileData, GenerationError> {
+        let draft = self.draft_at(pos);
+        Ok(TileData {
+            height: draft.height,
+            temperature: draft.temperature,
+            biome: draft.biome.ok_or(GenerationError::NoBiome(pos))?,
+        })
+    }
+
+    /// Sample and map a ground tile inside the finite world.
+    pub fn tile_at(&self, pos: TilePos) -> Result<Tile, GenerationError> {
+        if !self.bounds.contains(pos) {
+            return Err(GenerationError::TileOutsideWorld(pos));
+        }
+        self.tile_mapper
+            .map(&self.try_tile_data_at(pos)?)
+            .ok_or(GenerationError::NoTile(pos))
+    }
+
+    /// Generate one complete chunk, independently of other requests or worker order.
+    /// Objects crossing its bounds are included with their global instance IDs.
+    pub fn chunk_at(&self, chunk_pos: ChunkPos) -> Result<ChunkData, GenerationError> {
+        let count = i64::from(self.config.world_size_chunks);
+        if !(0..count).contains(&chunk_pos.x) || !(0..count).contains(&chunk_pos.y) {
+            return Err(GenerationError::ChunkOutsideWorld(chunk_pos));
+        }
+        let size = i64::from(self.config.chunk_size);
+        let min = TilePos {
+            x: chunk_pos.x * size,
+            y: chunk_pos.y * size,
+        };
+        let bounds = TileRect {
+            min,
+            max: TilePos {
+                x: min.x + size,
+                y: min.y + size,
+            },
+        };
+        let mut terrain: HashMap<TilePos, TileData> = HashMap::new();
+        let mut sample = |pos| match terrain.entry(pos) {
+            std::collections::hash_map::Entry::Occupied(entry) => Ok(entry.get().clone()),
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                let data = self.try_tile_data_at(pos)?;
+                Ok(entry.insert(data).clone())
+            }
+        };
+        let mut tiles = Vec::new();
+        for pos in bounds.positions() {
+            let data = sample(pos)?;
+            tiles.push(
+                self.tile_mapper
+                    .map(&data)
+                    .ok_or(GenerationError::NoTile(pos))?,
+            );
+        }
+        let objects = self
+            .object_placer
+            .place_in(bounds, self.config, &mut sample)?;
+        Ok(ChunkData {
+            position: chunk_pos,
+            size: self.config.chunk_size,
+            tiles,
+            objects,
+        })
     }
 
     pub fn biomes(&self) -> &BiomeRepository {
         &self.biomes
+    }
+
+    pub fn tile_mapper(&self) -> &TileMapper {
+        &self.tile_mapper
+    }
+
+    pub fn object_placer(&self) -> &ObjectPlacer {
+        &self.object_placer
+    }
+
+    pub fn config(&self) -> WorldGeneratorConfig {
+        self.config
     }
 }
 
@@ -39,9 +140,9 @@ mod tests {
     use super::*;
     use crate::{
         BasinGenerator, BiomeMap, BiomeMapDefinition, BiomeStage, ClampHeightStage,
-        CraterGenerator, ElevationStage, NoiseSource, PaletteStage, PlanetParams,
-        TemperatureCoefficients, TemperatureModel, TemperatureStage, VolcanoGenerator,
-        WorldGeneratorConfig, WorldGeography, build_world_generator,
+        CraterGenerator, ElevationStage, NoiseSource, PlanetParams, TemperatureCoefficients,
+        TemperatureModel, TemperatureStage, VolcanoGenerator, WorldGeneratorConfig, WorldGeography,
+        build_world_generator,
     };
 
     #[test]
@@ -50,7 +151,6 @@ mod tests {
         impl GenerationStage for ConeStage {
             fn apply(&self, pos: TilePos, tile: &mut TileDraft) {
                 if pos.x == 0 {
-                    tile.environment_height = tile.height;
                     tile.height += 2.0;
                     tile.temperature_offset += 12.0;
                     tile.biome_map = Some(Arc::clone(&self.0));
@@ -78,18 +178,21 @@ mod tests {
                 PlanetParams::default(),
             ))),
             Box::new(BiomeStage::new(Arc::new(BiomeMap::parse(&biomes)))),
-            Box::new(PaletteStage::new(Arc::clone(&biomes))),
         ];
-        let generator = WorldGenerator::new(stages, Arc::clone(&biomes));
-        let cone = generator.tile_at(TilePos { x: 0, y: 0 });
+        let generator = WorldGenerator::new(
+            WorldGeneratorConfig::default(),
+            stages,
+            Arc::clone(&biomes),
+            TileMapper::parse(&biomes),
+            ObjectPlacer::empty(),
+        );
+        let cone = generator.tile_data_at(TilePos { x: 0, y: 0 });
         assert_eq!(cone.height, 1.0);
         assert_eq!(cone.temperature, 2.0);
         assert_eq!(cone.biome, biomes.id("volcano").unwrap());
-        assert_eq!(
-            cone.palette_index, 3,
-            "palette must use clamped height and final temperature"
-        );
-        let plain = generator.tile_at(TilePos { x: 1, y: 0 });
+        let mapper = crate::TileMapper::parse(&biomes);
+        assert_eq!(mapper.map(&cone), mapper.palette().tile("volcano_3"));
+        let plain = generator.tile_data_at(TilePos { x: 1, y: 0 });
         assert_eq!(plain.height, 0.5);
         assert_eq!(plain.temperature, -5.0);
         assert_ne!(plain.biome, cone.biome);
@@ -159,20 +262,20 @@ mod tests {
         for y in (0..64).step_by(3) {
             for x in [0, 15, 16, 31, 32, 47, 48, 63] {
                 let pos = TilePos { x, y };
-                let tile = small_chunks.tile_at(pos);
+                let tile = small_chunks.tile_data_at(pos);
                 assert_eq!(
                     tile,
-                    large_chunks.tile_at(pos),
+                    large_chunks.tile_data_at(pos),
                     "chunk boundaries must not affect {pos:?}"
                 );
                 assert_eq!(
                     tile,
-                    small_chunks.tile_at(pos),
+                    small_chunks.tile_data_at(pos),
                     "sampling must be repeatable"
                 );
                 assert!((0.0..=1.0).contains(&tile.height));
                 assert!((tile.temperature + tile.height * 10.0).abs() < 1e-12);
-                let baseline = disabled.tile_at(pos);
+                let baseline = disabled.tile_data_at(pos);
                 assert_eq!(baseline.height, 0.5);
                 if tile.height > 0.55 {
                     raised += 1;
@@ -188,5 +291,24 @@ mod tests {
             raised > 0,
             "enabled volcanoes must raise terrain and change biomes"
         );
+    }
+
+    #[test]
+    fn cold_feature_caches_produce_identical_chunks_across_workers() {
+        let reference = volcanic_world(16, 1.0);
+        let shared = Arc::new(volcanic_world(16, 1.0));
+        let positions: Vec<_> = (0..4)
+            .flat_map(|y| (0..4).map(move |x| ChunkPos { x, y }))
+            .collect();
+        let jobs: Vec<_> = positions
+            .iter()
+            .map(|&pos| {
+                let shared = Arc::clone(&shared);
+                std::thread::spawn(move || shared.chunk_at(pos).unwrap())
+            })
+            .collect();
+        for (job, pos) in jobs.into_iter().zip(positions) {
+            assert_eq!(job.join().unwrap(), reference.chunk_at(pos).unwrap());
+        }
     }
 }

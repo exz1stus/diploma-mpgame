@@ -4,11 +4,11 @@ use std::sync::Arc;
 
 use crate::{
     BasinGenerator, BiomeMap, BiomeRepository, BiomeStage, ClampHeightStage, CraterGenerator,
-    ElevationStage, FeatureStage, GenerationStage, NoiseSource, PaletteStage, TemperatureModel,
-    TemperatureStage, VolcanoGenerator, WorldGenerator, WorldGeneratorConfig,
+    ElevationStage, FeatureStage, GenerationStage, NoiseSource, ObjectPlacer, TemperatureModel,
+    TemperatureStage, TileMapper, VolcanoGenerator, WorldGenerator, WorldGeneratorConfig,
 };
 
-/// Build the default stage order with the supplied elevation noise source.
+/// Assemble terrain stages, tile mapping, and deterministic object placement.
 pub fn build_world_generator(
     config: WorldGeneratorConfig,
     biomes: BiomeRepository,
@@ -55,6 +55,7 @@ pub fn build_world_generator(
     stages.push(Box::new(ClampHeightStage));
     stages.push(Box::new(TemperatureStage::new(temperature)));
     stages.push(Box::new(BiomeStage::new(Arc::new(biome_map))));
-    stages.push(Box::new(PaletteStage::new(Arc::clone(&biomes))));
-    WorldGenerator::new(stages, biomes)
+    let tile_mapper = TileMapper::parse(&biomes);
+    let object_placer = ObjectPlacer::parse(&biomes);
+    WorldGenerator::new(config, stages, biomes, tile_mapper, object_placer)
 }

@@ -32,15 +32,23 @@ impl<G: FeatureGenerator> FeatureStage<G> {
     }
 
     fn features_for_chunk(&self, chunk: ChunkPos) -> Arc<[G::Feature]> {
+        let cache = self
+            .chunk_features
+            .lock()
+            .expect("chunk feature cache poisoned");
+        if let Some(features) = cache.get(&chunk) {
+            return Arc::clone(features);
+        }
+        drop(cache);
+        let features: Arc<[G::Feature]> = self
+            .layer
+            .features_in(chunk.world_bounds(self.chunk_size))
+            .into();
         let mut cache = self
             .chunk_features
             .lock()
             .expect("chunk feature cache poisoned");
-        Arc::clone(cache.entry(chunk).or_insert_with(|| {
-            self.layer
-                .features_in(chunk.world_bounds(self.chunk_size))
-                .into()
-        }))
+        Arc::clone(cache.entry(chunk).or_insert(features))
     }
 }
 
@@ -52,9 +60,7 @@ impl<G: FeatureGenerator> GenerationStage for FeatureStage<G> {
             y: pos.y.div_euclid(size),
         };
         for feature in self.features_for_chunk(chunk).iter() {
-            let environment_height = tile.height;
             if feature.apply(pos, tile) {
-                tile.environment_height = environment_height;
                 tile.biome_map = Some(Arc::clone(&self.biome_map));
             }
         }
@@ -192,7 +198,6 @@ mod tests {
             "unaffected tiles retain the earlier map"
         );
         last.apply(pos, &mut tile);
-        assert_eq!(tile.environment_height, 4.0);
         assert_eq!(
             tile.height, 8.0,
             "territory is marked even when the visible height is already clipped"

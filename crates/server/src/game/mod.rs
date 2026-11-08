@@ -3,7 +3,7 @@ use bevy::app::{App, Plugin};
 mod commands;
 mod player;
 pub(crate) mod test_scenes;
-mod world;
+pub(crate) mod world;
 
 pub(crate) struct GamePlugin;
 

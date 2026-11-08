@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::{error::Error, fmt};
 
-use super::{BiomeId, BiomeRepository, Range};
+use super::{BiomeId, BiomeRepository};
+use crate::Range;
 
 /// A RON rule references a biome in the shared repository by name.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

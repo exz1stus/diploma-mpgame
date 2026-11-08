@@ -1,4 +1,4 @@
-export const SAMPLE_BYTES = 18;
+export const SAMPLE_BYTES = 16;
 
 export const MAP_MODES = {
   biomes: { label: 'Biomes' },
@@ -33,8 +33,7 @@ export function readSample(bytes, index) {
     height: view.getFloat32(offset + 4, true),
     temperature: view.getFloat32(offset + 8, true),
     biomeId: [1, 2].includes(view.getUint8(offset)) ? view.getUint16(offset + 12, true) : null,
-    surfaceBiomeId: view.getUint8(offset) === 1 ? view.getUint16(offset + 14, true) : null,
-    paletteIndex: view.getUint8(offset) === 1 ? view.getUint16(offset + 16, true) : null,
+    tileId: view.getUint8(offset) === 1 ? view.getUint16(offset + 14, true) : null,
   };
 }
 

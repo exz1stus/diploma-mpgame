@@ -58,9 +58,6 @@ impl WorldGeography {
         }
     }
 
-    /// Geographic coordinates at this tile's origin, rather than its center.
-    /// Valid geographic input spans x=0..=world_width and y=0..=world_height.
-    /// Coordinates outside these bounds extrapolate; they are not wrapped or clamped.
     pub fn geo(&self, tile_pos: TilePos) -> GeoPosition {
         GeoPosition {
             latitude: self.latitude(tile_pos.y),
