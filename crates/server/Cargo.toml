@@ -12,3 +12,4 @@ postcard.workspace = true
 serde.workspace = true
 shared = { path = "../shared" }
 avian2d.workspace = true
+worldgen = { path = "../worldgen" }
