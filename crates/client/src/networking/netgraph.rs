@@ -2,6 +2,7 @@ use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
 use egui_plot::{Legend, Line, Plot, PlotPoint, PlotPoints, PlotResponse, Points};
 
+use crate::game::menu::MenuState;
 use crate::game::rendering::InterpolationDebug;
 use crate::networking::client::{NetworkSimulation, Owned};
 use crate::networking::diagnostics::{
@@ -55,7 +56,11 @@ pub fn network_diagnostics_ui(
     )>,
     mut selected_packet: Local<Option<MessageEvent>>,
     mut zoom: Local<TimelineZoom>,
+    menu: Res<MenuState>,
 ) -> Result {
+    if !menu.in_game() || !menu.show_diagnostics {
+        return Ok(());
+    }
     let context = contexts.ctx_mut()?;
     egui::Window::new("Network diagnostics").show(context, |ui| {
         ui.label(format!("Ping/pong RTT: {} ms", stats.ping_ms));

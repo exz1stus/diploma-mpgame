@@ -21,6 +21,7 @@ use super::{
     simulation_clock::{ClientSimulationClock, MAX_CATCHUP_TICKS},
     state::{ClientState, Owned, RemoteWorld},
 };
+use crate::game::menu::MenuState;
 
 const MAX_STEPS_PER_FRAME: usize = 8;
 const INPUT_REDUNDANCY: usize = 32;
@@ -394,6 +395,9 @@ fn find_local_player(world: &mut World) -> Option<Entity> {
 }
 
 fn read_movement_input(world: &World) -> (i8, i8) {
+    if !world.resource::<MenuState>().in_game() {
+        return (0, 0);
+    }
     let keys = world.resource::<ButtonInput<KeyCode>>();
 
     let x = i8::from(keys.pressed(KeyCode::KeyD)) - i8::from(keys.pressed(KeyCode::KeyA));

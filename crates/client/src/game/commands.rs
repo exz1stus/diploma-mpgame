@@ -17,6 +17,7 @@ use shared::{
     snapshots::{NetworkEntityId, NetworkIdentity},
 };
 
+use crate::game::menu::MenuState;
 use crate::networking::{
     client::NetworkSimulation,
     network::queue_outgoing,
@@ -168,9 +169,10 @@ pub fn update_shoot_aim(
     windows: Query<&Window, With<PrimaryWindow>>,
     cameras: Query<(&Camera, &GlobalTransform), With<Camera2d>>,
     players: Query<&PhysicsPosition, With<Owned>>,
+    menu: Res<MenuState>,
 ) {
     aim.0 = None;
-    if !client_state.initiated || egui_input.wants_any_pointer_input() {
+    if !menu.in_game() || !client_state.initiated || egui_input.wants_any_pointer_input() {
         return;
     }
 
@@ -270,6 +272,9 @@ fn predict_shot_hit(world: &mut World, origin: Vec2, direction: Vec2) -> Option<
 }
 
 pub fn send_shoot_command(world: &mut World) {
+    if !world.resource::<MenuState>().in_game() {
+        return;
+    }
     if !world
         .resource::<ButtonInput<MouseButton>>()
         .just_pressed(MouseButton::Left)

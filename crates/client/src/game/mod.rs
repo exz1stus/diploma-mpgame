@@ -1,3 +1,4 @@
+pub(crate) mod menu;
 pub(crate) mod rendering;
 
 use bevy::prelude::{Camera2d, Commands};

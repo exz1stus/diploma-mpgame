@@ -2,7 +2,7 @@ mod config;
 mod game;
 mod networking;
 
-use bevy::{DefaultPlugins, prelude::Startup};
+use bevy::{DefaultPlugins, prelude::*, window::WindowPlugin};
 use bevy_egui::{EguiPlugin, EguiPrimaryContextPass};
 use bevy_renet::{RenetClientPlugin, netcode::NetcodeClientPlugin};
 use shared::app_init;
@@ -10,7 +10,10 @@ use shared::role::NetworkRole;
 
 use crate::{
     config::ClientConfig,
-    game::spawn_camera,
+    game::{
+        menu::{MenuState, menu_ui, toggle_menu},
+        spawn_camera,
+    },
     networking::{client::GameClient, netgraph::network_diagnostics_ui},
 };
 
@@ -21,14 +24,26 @@ fn main() {
     let mut app = app_init(NetworkRole::Client);
 
     app.add_plugins((
-        DefaultPlugins,
+        DefaultPlugins.set(WindowPlugin {
+            primary_window: Some(Window {
+                title: "World Prototype".into(),
+                resolution: (1280, 720).into(),
+                ..default()
+            }),
+            ..default()
+        }),
         EguiPlugin::default(),
         RenetClientPlugin,
         NetcodeClientPlugin,
     ));
 
     app.add_systems(Startup, spawn_camera);
-    app.add_systems(EguiPrimaryContextPass, network_diagnostics_ui);
+    app.init_resource::<MenuState>();
+    app.add_systems(Update, toggle_menu);
+    app.add_systems(
+        EguiPrimaryContextPass,
+        (menu_ui, network_diagnostics_ui).chain(),
+    );
 
     let config = ClientConfig::new();
     let mut client = GameClient::new(app, &config);

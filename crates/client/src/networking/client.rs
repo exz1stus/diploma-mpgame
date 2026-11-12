@@ -2,6 +2,7 @@ use crate::game::commands::{
     PendingCommands, PredictedVisuals, ShootAimState, draw_shoot_aim, send_shoot_command,
     update_shoot_aim,
 };
+use crate::game::menu::toggle_menu;
 pub use crate::networking::network::NetworkSimulation;
 use crate::networking::physics::{
     self, initialize_physics_body, log_prediction_status, run_prediction,
@@ -100,6 +101,7 @@ impl GameClient {
                 release_outgoing,
             )
                 .chain()
+                .after(toggle_menu)
                 .run_if(client_connected),
         );
 
