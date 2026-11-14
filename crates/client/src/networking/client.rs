@@ -16,7 +16,7 @@ pub(crate) use crate::networking::state::Owned;
 
 use crate::game::rendering::{add_circle_visuals, render_player_visuals, setup_circle_assets};
 use crate::networking::network::{
-    collect_incoming, release_incoming, release_outgoing, reset_disconnected_client, send_messages,
+    collect_incoming, release_incoming, release_outgoing,send_messages,
 };
 use crate::networking::prediction::{
     PredictionSettings, initialize_prediction, smooth_prediction_visual,
@@ -30,37 +30,19 @@ use crate::{
 use bevy::prelude::*;
 use bevy_renet::{
     RenetClient, RenetSend, client_connected,
-    netcode::{ClientAuthentication, NetcodeClientTransport},
     renet::ConnectionConfig,
 };
-use std::{
-    net::UdpSocket,
-    time::{SystemTime, UNIX_EPOCH},
-};
+
 
 pub struct GameClient {
     app: App,
 }
 
 impl GameClient {
-    pub fn new(mut app: App, config: &ClientConfig) -> Self {
-        let socket = UdpSocket::bind("0.0.0.0:0").unwrap();
-
-        let current_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-
-        let authentication = ClientAuthentication::Unsecure {
-            server_addr: config.server_addr,
-            protocol_id: config.protocol_id,
-            client_id: current_time.as_micros() as u64,
-            user_data: None,
-        };
-
-        let transport = NetcodeClientTransport::new(current_time, authentication, socket).unwrap();
-
-        let client = RenetClient::new(ConnectionConfig::default());
-
+    pub fn new(mut app: App, _config: &ClientConfig) -> Self {
+        let mut client = RenetClient::new(ConnectionConfig::default());
+        client.disconnect();
         app.insert_resource(client);
-        app.insert_resource(transport);
 
         app.init_resource::<NetworkDiagnostics>();
         app.init_resource::<ClientState>();
@@ -104,8 +86,6 @@ impl GameClient {
                 .after(toggle_menu)
                 .run_if(client_connected),
         );
-
-        app.add_systems(Update, reset_disconnected_client);
         app.add_systems(PostUpdate, sample_network.after(RenetSend));
 
         Self { app }

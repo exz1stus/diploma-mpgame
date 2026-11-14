@@ -5378,6 +5378,7 @@ dependencies = [
  "dotenvy",
  "postcard",
  "serde",
+ "worldgen",
 ]
 
 [[package]]

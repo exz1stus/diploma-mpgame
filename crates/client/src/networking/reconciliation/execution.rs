@@ -168,11 +168,7 @@ fn finish_rollback(
 
     let new_offset = old_visual_position - corrected_state.position;
 
-    prediction.visual_offset = if new_offset.length() <= MAX_SMOOTH_DISTANCE {
-        new_offset
-    } else {
-        Vec2::ZERO
-    };
+    prediction.visual_offset = Vec2::ZERO;
 }
 
 fn hard_resync(world: &mut World, player: Entity, authoritative: NetworkPhysicsState) {

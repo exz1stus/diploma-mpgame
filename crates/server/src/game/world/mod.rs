@@ -22,7 +22,15 @@ pub(crate) struct WorldGeneration;
 
 impl Plugin for WorldGeneration {
     fn build(&self, app: &mut App) {
-        let config = WorldGeneratorConfig::default();
+        let mut config = WorldGeneratorConfig::default();
+
+        if let Some(seed) = std::env::var_os("WORLD_SEED") {
+            config.seed = seed
+                .to_str()
+                .expect("WORLD_SEED must contain valid text")
+                .parse::<u64>()
+                .expect("WORLD_SEED must be an unsigned 64-bit integer");
+        }
         let mut coarse_elevation = worldgen::ElevationNoise::default_config();
         coarse_elevation.octaves = 2;
         let biomes = worldgen::BiomeRepository::parse();

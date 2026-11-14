@@ -11,3 +11,4 @@ bevy.workspace = true
 bevy_ecs.workspace = true
 bevy_renet.workspace = true
 dotenvy = "0.15.7"
+worldgen = { path = "../worldgen" }
