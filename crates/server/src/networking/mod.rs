@@ -48,7 +48,6 @@ impl Plugin for ServerPlugin {
         let transport = NetcodeServerTransport::new(server_config, socket).unwrap();
         let server = RenetServer::new(shared::world::connection_config());
 
-
         app.insert_resource(server);
         app.insert_resource(transport);
         app.insert_resource(self.config.clone());
