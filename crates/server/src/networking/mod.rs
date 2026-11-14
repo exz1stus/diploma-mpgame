@@ -8,7 +8,6 @@ use bevy_renet::{
     RenetServer,
     netcode::{NetcodeServerTransport, ServerAuthentication, ServerConfig},
 };
-use shared::replication::{BufferedComponentChanges, NetworkEntityMap};
 
 use crate::config::AppConfig;
 

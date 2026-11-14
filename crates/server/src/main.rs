@@ -44,7 +44,7 @@ fn main() {
                 if ms > 40.0 {
                     stats.2 += 1;
                 }
-                if stats.0 % 120 == 0 {
+                if stats.0.is_multiple_of(120) {
                     println!(
                         "BENCH frames={} max_ms={:.1} over40ms={}",
                         stats.0, stats.1, stats.2

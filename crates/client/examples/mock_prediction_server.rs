@@ -406,7 +406,7 @@ fn receive_messages(
                             }
                         }
                     }
-                    ClientMessages::NetworkCommand(command_envelope) => todo!(),
+                    ClientMessages::NetworkCommand(_) => todo!(),
                 }
             }
         }

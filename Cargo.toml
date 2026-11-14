@@ -2,6 +2,11 @@
 members = ["crates/client", "crates/server", "crates/shared", "crates/worldgen"]
 resolver = "3"
 
+# Bevy systems take many params and nested query filters by design.
+[workspace.lints.clippy]
+type_complexity = "allow"
+too_many_arguments = "allow"
+
 [workspace.dependencies]
 bevy = { version = "0.19", default-features = false, features = ["debug"] }
 bevy_ecs = "0.19"

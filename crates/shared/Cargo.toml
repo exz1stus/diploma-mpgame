@@ -13,3 +13,6 @@ bevy_renet.workspace = true
 dotenvy = "0.15.7"
 lz4_flex = "0.14.0"
 worldgen = { path = "../worldgen" }
+
+[lints]
+workspace = true

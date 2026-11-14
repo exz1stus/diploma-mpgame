@@ -124,14 +124,17 @@ impl ChunkStorage {
         self.void.contains(&pos)
     }
 
+    #[cfg(test)]
     pub fn recent_len(&self) -> usize {
         self.recent.len()
     }
 
+    #[cfg(test)]
     pub fn archived_len(&self) -> usize {
         self.archive.len()
     }
 
+    #[cfg(test)]
     pub fn archived_bytes(&self) -> usize {
         self.archive_bytes
     }

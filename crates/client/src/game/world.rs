@@ -2,12 +2,11 @@
 //! They carry data and world-space transforms only; rendering is separate.
 
 use bevy::prelude::*;
-use shared::world::{ChunkPos, Footprint, ObjectId, Tile, TilePos};
+use shared::world::{ChunkPos, Footprint, ObjectId, Tile};
 
 /// RGBA color per tile id, as sent by the server for its world preset.
 #[derive(Resource, Clone, Debug)]
 pub struct WorldPalette {
-    pub chunk_size: u32,
     pub tile_colors: Vec<[u8; 4]>,
 }
 
@@ -29,7 +28,6 @@ pub struct ChunkTiles {
 #[derive(Component, Clone, Debug)]
 pub struct WorldObject {
     pub kind: ObjectId,
-    pub anchor: TilePos,
     pub footprint: Footprint,
 }
 

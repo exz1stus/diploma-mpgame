@@ -89,12 +89,6 @@ pub(crate) struct WorldStreams {
     clients: HashMap<ClientId, ClientStream>,
 }
 
-impl WorldStreams {
-    pub fn sent_to(&self, client: ClientId) -> Option<&HashSet<ChunkPos>> {
-        self.clients.get(&client).map(|stream| &stream.sent)
-    }
-}
-
 fn encode_chunks(
     mut commands: Commands,
     chunks: Query<(Entity, &Chunk, &ChunkTiles, Option<&ChunkContents>), Without<EncodedChunk>>,

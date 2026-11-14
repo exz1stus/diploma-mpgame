@@ -1,6 +1,6 @@
 //! Camera that follows the local player through a damped spring.
 
-use bevy::prealude::*;
+use bevy::prelude::*;
 
 use crate::{game::rendering::LocalVisualPosition, networking::state::Owned};
 

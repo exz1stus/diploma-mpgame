@@ -12,3 +12,6 @@ postcard.workspace = true
 serde.workspace = true
 avian2d.workspace = true
 shared = { path = "../shared" }
+
+[lints]
+workspace = true

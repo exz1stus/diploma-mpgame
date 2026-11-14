@@ -32,6 +32,7 @@ pub struct StreamedChunks {
 }
 
 impl StreamedChunks {
+    #[cfg(test)]
     pub fn get(&self, pos: ChunkPos) -> Option<Entity> {
         self.chunks.get(&pos).copied()
     }
@@ -41,6 +42,7 @@ impl StreamedChunks {
     }
 
     /// Messages waiting for their frame budget.
+    #[cfg(test)]
     pub fn queued(&self) -> usize {
         self.inbox.len()
     }
@@ -86,7 +88,6 @@ impl StreamedChunks {
                 // Queued messages after Init belong to the new stream, so keep them.
                 self.despawn_all(commands);
                 commands.insert_resource(WorldPalette {
-                    chunk_size: info.chunk_size,
                     tile_colors: info.tile_colors,
                 });
                 Applied::Updated
@@ -161,7 +162,6 @@ fn spawn_chunk(commands: &mut Commands, snapshot: ChunkSnapshot) -> Entity {
         commands.spawn((
             WorldObject {
                 kind: object.kind,
-                anchor: object.anchor,
                 footprint: object.footprint,
             },
             InChunk(chunk),
@@ -253,7 +253,7 @@ mod tests {
         // 1x2 footprint anchored at tile (6, -2): center is (6.5, -1) tiles.
         assert_eq!(
             world.get::<Transform>(object).unwrap().translation,
-            Vec3::new(6.5 * TILE_SIZE, -1.0 * TILE_SIZE, 0.0)
+            Vec3::new(6.5 * TILE_SIZE, -TILE_SIZE, 0.0)
         );
         world.entity_mut(entity).despawn();
         assert!(

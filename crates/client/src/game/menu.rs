@@ -89,7 +89,7 @@ pub fn menu_ui(
 
             let compact = rect.width() < 700.0;
             let side = if compact { 24.0 } else { 64.0 };
-            let width = (rect.width() - side * 2.0).min(440.0).max(250.0);
+            let width = (rect.width() - side * 2.0).clamp(250.0, 440.0);
             let top = if rect.height() < 600.0 { 35.0 } else { 75.0 };
             let panel_rect = egui::Rect::from_min_size(
                 egui::pos2(rect.left() + side, rect.top() + top),

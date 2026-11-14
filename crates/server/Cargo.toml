@@ -14,3 +14,6 @@ shared = { path = "../shared" }
 avian2d.workspace = true
 worldgen = { path = "../worldgen" }
 lz4_flex = "0.14.0"
+
+[lints]
+workspace = true

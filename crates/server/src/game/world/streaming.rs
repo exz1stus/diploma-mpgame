@@ -81,10 +81,12 @@ impl ChunkStreamer {
         self.loaded.get(&pos).copied()
     }
 
+    #[cfg(test)]
     pub fn loaded_count(&self) -> usize {
         self.loaded.len()
     }
 
+    #[cfg(test)]
     pub fn generating_count(&self) -> usize {
         self.generating.len()
     }

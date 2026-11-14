@@ -217,13 +217,13 @@ pub fn simulate_prediction_tick(
         .expect("Predicted body must have current input")
         .movement = input;
 
-    let previous_time = world.resource::<Time>().clone();
+    let previous_time = *world.resource::<Time>();
 
     let step_time = {
         let mut step_clock = world.resource_mut::<PredictionStepTime>();
 
         step_clock.0.advance_by(timestep);
-        step_clock.0.clone()
+        step_clock.0
     };
 
     *world.resource_mut::<Time>() = step_time;
@@ -368,9 +368,9 @@ pub fn replay_prediction_ticks(
     inputs: &[MovementInput],
     timestep: Duration,
 ) -> Vec<NetworkPhysicsState> {
-    let saved_step_time = world.resource::<PredictionStepTime>().0.clone();
-    let saved_physics_time = world.resource::<Time<Physics>>().clone();
-    let saved_substep_time = world.resource::<Time<Substeps>>().clone();
+    let saved_step_time = world.resource::<PredictionStepTime>().0;
+    let saved_physics_time = *world.resource::<Time<Physics>>();
+    let saved_substep_time = *world.resource::<Time<Substeps>>();
 
     let states = inputs
         .iter()

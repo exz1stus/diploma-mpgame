@@ -2,16 +2,11 @@ use avian2d::{
     collision::collider::Collider,
     dynamics::rigid_body::{AngularVelocity, LinearVelocity, LockedAxes, RigidBody},
     physics_transform::Position,
-    prelude::{CollisionEventsEnabled, CollisionStart},
+    prelude::CollisionEventsEnabled,
 };
-use bevy::{
-    app::{App, Update},
-    math::Vec2,
-    transform::components::Transform,
-};
+use bevy::{app::App, math::Vec2, transform::components::Transform};
 use bevy_ecs::{
     bundle::Bundle,
-    message::MessageReader,
     observer::On,
     query::With,
     system::{Commands, Query},
@@ -27,6 +22,7 @@ pub fn plugin(app: &mut App) {
     app.add_observer(spawn_player_on_intiated);
 }
 
+#[cfg(test)]
 pub fn new_player_bundle() -> impl Bundle {
     new_player_bundle_at(Vec2::ZERO)
 }
