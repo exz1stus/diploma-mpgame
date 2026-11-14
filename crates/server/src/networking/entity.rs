@@ -27,7 +27,7 @@ struct NetworkIdAllocator {
     next_id: NetworkEntityId,
 }
 
-pub(crate) fn configure(app: &mut App) {
+pub(crate) fn plugin(app: &mut App) {
     app.init_resource::<NetworkIdAllocator>();
     app.add_observer(on_network_identity_added);
     app.add_observer(on_network_identity_removed);

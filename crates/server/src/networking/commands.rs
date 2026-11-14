@@ -7,7 +7,7 @@ use shared::{
 
 use crate::networking::messages::{BufferedClientMessage, MessageContext};
 
-pub fn configure(app: &mut App) {
+pub fn plugin(app: &mut App) {
     app.init_resource::<CommandsRegistry>();
 }
 

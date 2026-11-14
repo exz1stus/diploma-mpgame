@@ -28,7 +28,7 @@ use super::{
     server::TickSet,
 };
 
-pub(crate) fn configure(app: &mut App) {
+pub(crate) fn plugin(app: &mut App) {
     app.init_resource::<MessageBuffer>();
     app.add_systems(PreUpdate, receive_messages.in_set(TickSet::ReceiveMessages));
     app.add_systems(

@@ -22,9 +22,8 @@ use crate::networking::{
     client::ClientIntiated, entity::NetworkCommandsExt, input::CurrentMovementInput,
 };
 
-pub fn configure(app: &mut App) {
+pub fn plugin(app: &mut App) {
     app.add_observer(spawn_player_on_intiated);
-    app.add_systems(Update, log_player_collisions);
 }
 
 pub fn new_player_bundle() -> impl Bundle {
@@ -64,20 +63,6 @@ fn spawn_player_on_intiated(
         DisconnectPolicy::Despawn,
         new_player_bundle_at(spawn),
     );
-}
-
-fn log_player_collisions(
-    mut collisions: MessageReader<CollisionStart>,
-    players: Query<(), With<Player>>,
-) {
-    for collision in collisions.read() {
-        if players.contains(collision.collider1) && players.contains(collision.collider2) {
-            println!(
-                "Server player collision: {} <-> {}",
-                collision.collider1, collision.collider2
-            );
-        }
-    }
 }
 
 #[cfg(test)]

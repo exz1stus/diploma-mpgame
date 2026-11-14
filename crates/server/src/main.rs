@@ -13,7 +13,7 @@ use bevy_renet::{RenetServerPlugin, netcode::NetcodeServerPlugin};
 use shared::app_init;
 use shared::role::NetworkRole;
 
-use crate::{config::AppConfig, game::GamePlugin, networking::ServerPlugin};
+use crate::{config::AppConfig, networking::ServerPlugin};
 
 fn main() {
     let mut app = app_init(NetworkRole::Server);
@@ -25,7 +25,7 @@ fn main() {
         RenetServerPlugin,
         NetcodeServerPlugin,
         ServerPlugin::new(config),
-        GamePlugin,
+        game::plugin,
     ));
 
     app.run();

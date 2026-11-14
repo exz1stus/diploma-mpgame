@@ -27,7 +27,7 @@ use crate::networking::{input::CurrentMovementInput, server::TickCounter};
 
 use super::server::TickSet;
 
-pub(crate) fn configure(app: &mut App) {
+pub(crate) fn plugin(app: &mut App) {
     app.add_systems(
         FixedUpdate,
         apply_movement

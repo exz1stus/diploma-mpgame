@@ -13,7 +13,7 @@ pub fn build_world_generator(
     config: WorldGeneratorConfig,
     biomes: BiomeRepository,
     biome_map: BiomeMap,
-    noise: impl NoiseSource,
+    height_noise: impl NoiseSource,
     temperature: TemperatureModel,
     craters: CraterGenerator,
     basins: BasinGenerator,
@@ -27,7 +27,8 @@ pub fn build_world_generator(
     volcanoes.validate();
 
     let biomes = Arc::new(biomes);
-    let mut stages: Vec<Box<dyn GenerationStage>> = vec![Box::new(ElevationStage::new(noise))];
+    let mut stages: Vec<Box<dyn GenerationStage>> =
+        vec![Box::new(ElevationStage::new(height_noise))];
     if basins.probability > 0.0 {
         stages.push(Box::new(FeatureStage::new(
             config.seed ^ 0x4352_4152,

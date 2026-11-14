@@ -21,7 +21,7 @@ use shared::{
 use super::client::ClientLeft;
 use super::server::{TickCounter, TickSet};
 
-pub(crate) fn configure(app: &mut App) {
+pub(crate) fn plugin(app: &mut App) {
     app.init_resource::<InputBuffer>();
     app.add_systems(FixedUpdate, consume_input.in_set(TickSet::ProcessInputs));
     app.add_observer(clear_disconnected_input);
