@@ -1,0 +1,7 @@
+// Global object IDs follow sequence order. Append definitions to preserve them.
+[
+    (name: "rock", footprint: (width: 1, height: 1)),
+    (name: "large_rock", footprint: (width: 2, height: 2)),
+    (name: "iron_ore", footprint: (width: 2, height: 3)),
+    (name: "tree", footprint: (width: 1, height: 1)),
+]
