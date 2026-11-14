@@ -46,10 +46,13 @@ pub trait FeatureGenerator: Send + Sync {
     ) -> Vec<Self::Feature>;
 }
 
+/// Generated features keyed by spatial cell coordinates.
+type CellFeatureCache<F> = Mutex<HashMap<(i64, i64), Arc<[F]>>>;
+
 pub struct FeatureLayer<G: FeatureGenerator> {
     pub seed: u64,
     pub generator: G,
-    features_cache: Mutex<HashMap<(i64, i64), Arc<[G::Feature]>>>,
+    features_cache: CellFeatureCache<G::Feature>,
 }
 
 impl<G: FeatureGenerator> FeatureLayer<G> {

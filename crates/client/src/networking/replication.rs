@@ -121,6 +121,7 @@ pub fn spawn_remote_entity(
             NetworkIdentity { id },
             Transform::default(),
             GlobalTransform::default(),
+            Visibility::default(),
         ))
         .id();
     remote_world.despawned.remove(&id);
@@ -179,25 +180,22 @@ pub fn apply_components(
         .components
         .iter()
         .find(|component| component.component_id == Ownership::NETWORK_ID)
-    {
-        if replica
+        && replica
             .last_ticks
             .get(&Ownership::NETWORK_ID)
             .is_none_or(|last| tick >= *last)
-        {
-            if let Ok(owner) = postcard::from_bytes::<Ownership>(&component.data) {
-                let owned = owner.client_id == client_state.id;
-                if owned != replica.owned {
-                    remote_world.positions.remove(&snapshot.id);
-                    remote_world.remote_states.remove(&snapshot.id);
-                }
-                replica.owned = owned;
-                if owned {
-                    commands.entity(entity).insert(Owned);
-                } else {
-                    commands.entity(entity).remove::<Owned>();
-                }
-            }
+        && let Ok(owner) = postcard::from_bytes::<Ownership>(&component.data)
+    {
+        let owned = owner.client_id == client_state.id;
+        if owned != replica.owned {
+            remote_world.positions.remove(&snapshot.id);
+            remote_world.remote_states.remove(&snapshot.id);
+        }
+        replica.owned = owned;
+        if owned {
+            commands.entity(entity).insert(Owned);
+        } else {
+            commands.entity(entity).remove::<Owned>();
         }
     }
 

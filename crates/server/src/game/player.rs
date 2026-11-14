@@ -2,31 +2,27 @@ use avian2d::{
     collision::collider::Collider,
     dynamics::rigid_body::{AngularVelocity, LinearVelocity, LockedAxes, RigidBody},
     physics_transform::Position,
-    prelude::{CollisionEventsEnabled, CollisionStart},
+    prelude::CollisionEventsEnabled,
 };
-use bevy::{
-    app::{App, Update},
-    math::Vec2,
-    transform::components::Transform,
-};
+use bevy::{app::App, math::Vec2, transform::components::Transform};
 use bevy_ecs::{
     bundle::Bundle,
-    message::MessageReader,
     observer::On,
     query::With,
     system::{Commands, Query},
 };
 use shared::components::{DisconnectPolicy, Health, NetworkPhysicsState, Player};
 
-use crate::networking::{
-    client::ClientIntiated, entity::NetworkCommandsExt, input::CurrentMovementInput,
+use crate::{
+    game::world::WorldObserver,
+    networking::{client::ClientIntiated, entity::NetworkCommandsExt, input::CurrentMovementInput},
 };
 
-pub fn configure(app: &mut App) {
+pub fn plugin(app: &mut App) {
     app.add_observer(spawn_player_on_intiated);
-    app.add_systems(Update, log_player_collisions);
 }
 
+#[cfg(test)]
 pub fn new_player_bundle() -> impl Bundle {
     new_player_bundle_at(Vec2::ZERO)
 }
@@ -41,6 +37,7 @@ fn new_player_bundle_at(spawn: Vec2) -> impl Bundle {
             velocity: Vec2::ZERO,
         },
         CurrentMovementInput::default(),
+        WorldObserver::default(),
         RigidBody::Dynamic,
         Collider::circle(16.0),
         CollisionEventsEnabled,
@@ -64,20 +61,6 @@ fn spawn_player_on_intiated(
         DisconnectPolicy::Despawn,
         new_player_bundle_at(spawn),
     );
-}
-
-fn log_player_collisions(
-    mut collisions: MessageReader<CollisionStart>,
-    players: Query<(), With<Player>>,
-) {
-    for collision in collisions.read() {
-        if players.contains(collision.collider1) && players.contains(collision.collider2) {
-            println!(
-                "Server player collision: {} <-> {}",
-                collision.collider1, collision.collider2
-            );
-        }
-    }
 }
 
 #[cfg(test)]

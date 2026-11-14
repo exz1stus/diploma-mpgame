@@ -12,6 +12,7 @@ mod hash;
 mod noise;
 pub mod objects;
 mod pipeline;
+mod preset;
 mod range;
 mod stage;
 mod temperature;
@@ -37,7 +38,8 @@ pub use objects::{
     Footprint, ObjectDefinition, ObjectId, ObjectInstanceId, ObjectPlacer, ObjectRepository,
     ObjectRule, ObjectsError, PlacedObject,
 };
-pub use pipeline::build_world_generator;
+pub use pipeline::{assemble_world_generator, build_world_generator};
+pub use preset::{PresetError, PresetFile, WorldPreset};
 pub use range::Range;
 pub use stage::GenerationStage;
 pub use temperature::{PlanetParams, TemperatureCoefficients, TemperatureModel, TemperatureStage};

@@ -8,16 +8,48 @@ use crate::{
     TemperatureStage, TileMapper, VolcanoGenerator, WorldGenerator, WorldGeneratorConfig,
 };
 
+#[allow(clippy::too_many_arguments)]
 /// Assemble terrain stages, tile mapping, and deterministic object placement.
 pub fn build_world_generator(
     config: WorldGeneratorConfig,
     biomes: BiomeRepository,
     biome_map: BiomeMap,
-    noise: impl NoiseSource,
+    height_noise: impl NoiseSource,
     temperature: TemperatureModel,
     craters: CraterGenerator,
     basins: BasinGenerator,
     volcanoes: VolcanoGenerator,
+) -> WorldGenerator {
+    let tile_mapper = TileMapper::parse(&biomes);
+    let object_placer = ObjectPlacer::parse(&biomes);
+    assemble_world_generator(
+        config,
+        biomes,
+        biome_map,
+        height_noise,
+        temperature,
+        craters,
+        basins,
+        volcanoes,
+        tile_mapper,
+        object_placer,
+    )
+}
+
+/// Like [`build_world_generator`], with explicit tile mapping and object placement
+/// (as parsed from a [`crate::WorldPreset`]).
+#[allow(clippy::too_many_arguments)]
+pub fn assemble_world_generator(
+    config: WorldGeneratorConfig,
+    biomes: BiomeRepository,
+    biome_map: BiomeMap,
+    height_noise: impl NoiseSource,
+    temperature: TemperatureModel,
+    craters: CraterGenerator,
+    basins: BasinGenerator,
+    volcanoes: VolcanoGenerator,
+    tile_mapper: TileMapper,
+    object_placer: ObjectPlacer,
 ) -> WorldGenerator {
     assert!(craters.cell_size > 0, "crater cell size must be positive");
     assert!(craters.min_radius.is_finite() && craters.min_radius > 0.0);
@@ -27,7 +59,8 @@ pub fn build_world_generator(
     volcanoes.validate();
 
     let biomes = Arc::new(biomes);
-    let mut stages: Vec<Box<dyn GenerationStage>> = vec![Box::new(ElevationStage::new(noise))];
+    let mut stages: Vec<Box<dyn GenerationStage>> =
+        vec![Box::new(ElevationStage::new(height_noise))];
     if basins.probability > 0.0 {
         stages.push(Box::new(FeatureStage::new(
             config.seed ^ 0x4352_4152,
@@ -55,7 +88,5 @@ pub fn build_world_generator(
     stages.push(Box::new(ClampHeightStage));
     stages.push(Box::new(TemperatureStage::new(temperature)));
     stages.push(Box::new(BiomeStage::new(Arc::new(biome_map))));
-    let tile_mapper = TileMapper::parse(&biomes);
-    let object_placer = ObjectPlacer::parse(&biomes);
     WorldGenerator::new(config, stages, biomes, tile_mapper, object_placer)
 }

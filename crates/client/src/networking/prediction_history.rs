@@ -70,6 +70,11 @@ impl PredictionHistory {
 
         self.states.retain(|state_tick, _| *state_tick >= tick);
     }
+    /// Newest recorded input; the server keeps applying it to ticks it gets no input for.
+    pub fn latest_input(&self) -> Option<MovementInput> {
+        self.inputs.last_key_value().map(|(_, input)| *input)
+    }
+
     pub fn recent_inputs(&self, count: usize) -> Vec<MovementInput> {
         let mut inputs: Vec<_> = self.inputs.values().rev().take(count).copied().collect();
 

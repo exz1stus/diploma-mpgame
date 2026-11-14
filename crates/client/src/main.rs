@@ -33,11 +33,13 @@ fn main() {
         EguiPlugin::default(),
         RenetClientPlugin,
         NetcodeClientPlugin,
+        WorldStreamingPlugin,
     ));
 
     app.add_systems(Startup, spawn_camera);
     app.init_resource::<MenuState>();
-    app.add_systems(Update, (drive_session, toggle_menu).chain());
+
+    app.add_systems(Update, (drive_session,toggle_menu, debug_zoom).chain());
     app.add_systems(
         EguiPrimaryContextPass,
         (menu_ui, network_diagnostics_ui).chain(),

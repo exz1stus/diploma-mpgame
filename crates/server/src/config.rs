@@ -7,6 +7,8 @@ pub(crate) struct AppConfig {
     pub(crate) protocol_id: u64,
     pub(crate) server_addr: SocketAddr,
     pub(crate) tickrate: u32,
+    /// Folder name under `src/game/worldgen_presets`, or a path to a preset folder.
+    pub(crate) worldgen_preset: String,
 }
 
 impl AppConfig {
@@ -26,10 +28,14 @@ impl AppConfig {
             .parse()
             .expect("TICKRATE must be a valid u64");
 
+        let worldgen_preset =
+            std::env::var("WORLDGEN_PRESET").unwrap_or_else(|_| "default".to_string());
+
         Self {
             protocol_id,
             server_addr,
             tickrate,
+            worldgen_preset,
         }
     }
 }

@@ -108,11 +108,10 @@ pub fn network_diagnostics_ui(
             for (entity, identity, position, transform, _, owned) in rows {
                 ui.push_id(identity.id, |ui| {
                     show_circle_interpolation(ui, identity, position, transform, owned, &remote_world);
-                    if owned.is_none() {
-                        if let Ok(debug) = interpolation_debug.get(entity) {
+                    if owned.is_none()
+                        && let Ok(debug) = interpolation_debug.get(entity) {
                             show_interpolation_inspector(ui, debug);
                         }
-                    }
                 });
             }
         });
@@ -413,58 +412,6 @@ fn in_window(time_s: f64, now: f64, span_s: f64) -> bool {
     (now - span_s..=now).contains(&time_s)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use shared::client_messages::{ClientMessage, ClientMessages};
-    use shared::server_messages::{ServerMessage, ServerMessages};
-
-    #[test]
-    fn selects_the_nearest_visible_dot() {
-        let events = [
-            MessageEvent {
-                id: 1,
-                time_s: 9.0,
-                rtt_ms: None,
-                content: MessageContent::Sent(ClientMessage {
-                    sequence: 1,
-                    payload: ClientMessages::Ping {
-                        text: "ping".into(),
-                    },
-                }),
-            },
-            MessageEvent {
-                id: 2,
-                time_s: 9.1,
-                rtt_ms: None,
-                content: MessageContent::Received(ServerMessage {
-                    sequence: Some(1),
-                    tick: 1,
-                    payload: ServerMessages::Pong("pong".into()),
-                }),
-            },
-        ];
-        let position_of =
-            |point: PlotPoint| egui::pos2((point.x * 10.0) as f32, (point.y * 20.0) as f32);
-
-        let received = nearest_packet(events.iter(), 10.0, 2.0, egui::pos2(-9.0, 0.0), position_of);
-        assert_eq!(received.map(|event| event.id), Some(2));
-
-        let empty = nearest_packet(
-            events.iter(),
-            10.0,
-            2.0,
-            egui::pos2(100.0, 100.0),
-            position_of,
-        );
-        assert!(empty.is_none());
-
-        let zoomed_in =
-            nearest_packet(events.iter(), 10.0, 0.5, egui::pos2(-9.0, 0.0), position_of);
-        assert!(zoomed_in.is_none());
-    }
-}
-
 fn show_packet_list(
     ui: &mut egui::Ui,
     stats: &NetworkDiagnostics,
@@ -581,5 +528,57 @@ fn rtt_label(packet: &MessageEvent) -> String {
         Some(ms) => format!("{ms:.2} ms"),
         None if matches!(packet.content, MessageContent::Sent(_)) => "Pending".into(),
         None => "—".into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use shared::client_messages::{ClientMessage, ClientMessages};
+    use shared::server_messages::{ServerMessage, ServerMessages};
+
+    #[test]
+    fn selects_the_nearest_visible_dot() {
+        let events = [
+            MessageEvent {
+                id: 1,
+                time_s: 9.0,
+                rtt_ms: None,
+                content: MessageContent::Sent(ClientMessage {
+                    sequence: 1,
+                    payload: ClientMessages::Ping {
+                        text: "ping".into(),
+                    },
+                }),
+            },
+            MessageEvent {
+                id: 2,
+                time_s: 9.1,
+                rtt_ms: None,
+                content: MessageContent::Received(ServerMessage {
+                    sequence: Some(1),
+                    tick: 1,
+                    payload: ServerMessages::Pong("pong".into()),
+                }),
+            },
+        ];
+        let position_of =
+            |point: PlotPoint| egui::pos2((point.x * 10.0) as f32, (point.y * 20.0) as f32);
+
+        let received = nearest_packet(events.iter(), 10.0, 2.0, egui::pos2(-9.0, 0.0), position_of);
+        assert_eq!(received.map(|event| event.id), Some(2));
+
+        let empty = nearest_packet(
+            events.iter(),
+            10.0,
+            2.0,
+            egui::pos2(100.0, 100.0),
+            position_of,
+        );
+        assert!(empty.is_none());
+
+        let zoomed_in =
+            nearest_packet(events.iter(), 10.0, 0.5, egui::pos2(-9.0, 0.0), position_of);
+        assert!(zoomed_in.is_none());
     }
 }

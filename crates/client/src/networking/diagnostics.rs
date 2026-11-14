@@ -1,6 +1,5 @@
 use std::{
     collections::{BTreeMap, VecDeque},
-    fmt::Write,
     time::Instant,
 };
 
@@ -13,10 +12,7 @@ use bevy::{
 };
 use bevy_renet::RenetClient;
 use shared::client_messages::{ClientMessage, ClientMessages};
-use shared::components::{Health, NetworkPhysicsState};
-use shared::replication::ReplicatedComponent;
 use shared::server_messages::{ServerMessage, ServerMessages};
-use shared::snapshots::{ComponentSnapshot, EntitySnapshot, NetworkComponentId};
 
 pub const MAX_WINDOW_SECONDS: f64 = 60.0;
 
@@ -124,55 +120,6 @@ impl MessageEvent {
     }
 }
 
-fn write_entity(details: &mut String, entity: &EntitySnapshot) {
-    let _ = write!(details, "\nentity id: {}", entity.id);
-    if entity.components.is_empty() && entity.removed_components.is_empty() {
-        details.push_str("\n  no component changes");
-    }
-    for component in &entity.components {
-        write_component(details, component);
-    }
-    for &id in &entity.removed_components {
-        let _ = write!(details, "\n  removed {} (id {id})", component_name(id));
-    }
-}
-
-fn write_component(details: &mut String, component: &ComponentSnapshot) {
-    let id = component.component_id;
-    let _ = write!(details, "\n  {} (id {id}): ", component_name(id));
-    match id {
-        NetworkPhysicsState::NETWORK_ID => {
-            if let Ok(state) = postcard::from_bytes::<NetworkPhysicsState>(&component.data) {
-                let _ = write!(
-                    details,
-                    "position: {}, {}; velocity: {}, {}",
-                    state.position.x, state.position.y, state.velocity.x, state.velocity.y
-                );
-                return;
-            }
-        }
-        Health::NETWORK_ID => {
-            if let Ok(health) = postcard::from_bytes::<Health>(&component.data) {
-                let _ = write!(details, "{}", health.0);
-                return;
-            }
-        }
-        _ => {}
-    }
-    details.push_str("raw bytes: ");
-    for byte in &component.data {
-        let _ = write!(details, "{byte:02x}");
-    }
-}
-
-fn component_name(id: NetworkComponentId) -> &'static str {
-    match id {
-        NetworkPhysicsState::NETWORK_ID => "Physics state",
-        Health::NETWORK_ID => "Health",
-        _ => "Unknown component",
-    }
-}
-
 struct SentPacket {
     at: Instant,
     event_id: u64,
@@ -235,14 +182,13 @@ impl NetworkDiagnostics {
                     .map(|started| {
                         let rtt_ms = started.elapsed().as_secs_f64() * 1_000.0;
                         self.ping_ms = rtt_ms.round() as u64;
-                        if let Some(sent) = sent {
-                            if let Some(event) = self
+                        if let Some(sent) = sent
+                            && let Some(event) = self
                                 .message_events
                                 .iter_mut()
                                 .find(|event| event.id == sent.event_id)
-                            {
-                                event.rtt_ms = Some(rtt_ms);
-                            }
+                        {
+                            event.rtt_ms = Some(rtt_ms);
                         }
                         rtt_ms
                     })

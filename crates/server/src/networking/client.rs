@@ -49,6 +49,14 @@ pub(crate) struct ClientState {
 }
 
 impl ClientState {
+    #[cfg(test)]
+    pub(crate) fn ready() -> Self {
+        Self {
+            owned_entities: HashSet::new(),
+            phase: ClientSyncPhase::Ready,
+        }
+    }
+
     pub fn has_intiated(&self) -> bool {
         self.phase == ClientSyncPhase::Ready
     }
@@ -68,7 +76,7 @@ impl ReplicationClients {
     }
 }
 
-pub(crate) fn configure(app: &mut App) {
+pub(crate) fn plugin(app: &mut App) {
     app.init_resource::<ReplicationClients>();
     app.add_observer(on_client_event);
 }
@@ -171,7 +179,7 @@ mod tests {
     fn disconnect_despawns_owned_player() {
         let mut app = App::new();
         app.init_resource::<ReplicationClients>();
-        super::super::ownership::configure(&mut app);
+        app.add_plugins(super::super::ownership::plugin);
         app.world_mut()
             .resource_mut::<ReplicationClients>()
             .clients

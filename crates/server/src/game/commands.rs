@@ -26,7 +26,7 @@ use shared::{
 
 use crate::networking::{client::ReplicationClients, messages::MessageBuffer, server::TickCounter};
 
-pub fn configure(app: &mut App) {
+pub fn plugin(app: &mut App) {
     app.add_command::<Shoot>();
     app.add_systems(
         FixedPostUpdate,

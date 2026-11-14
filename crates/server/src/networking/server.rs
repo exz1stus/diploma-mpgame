@@ -7,6 +7,8 @@ use bevy::{
 use bevy_ecs::{resource::Resource, schedule::SystemSet, system::ResMut};
 use shared::replication::ReplicationSet;
 
+use crate::config::AppConfig;
+
 #[derive(SystemSet, Hash, Debug, PartialEq, Eq, Clone)]
 pub(crate) enum TickSet {
     ReceiveMessages,
@@ -18,9 +20,11 @@ pub(crate) enum TickSet {
     SendMessages,
 }
 
-pub(crate) fn configure(app: &mut App, tickrate: f64) {
+/// Requires [`AppConfig`] to be inserted before this plugin is added.
+pub(crate) fn plugin(app: &mut App) {
+    let tickrate = app.world().resource::<AppConfig>().tickrate;
     app.insert_resource(TickCounter(0));
-    app.insert_resource(Time::<Fixed>::from_hz(tickrate));
+    app.insert_resource(Time::<Fixed>::from_hz(tickrate as f64));
     configure_sets(app);
     app.add_systems(
         FixedPreUpdate,

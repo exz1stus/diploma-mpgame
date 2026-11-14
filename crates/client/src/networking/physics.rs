@@ -152,7 +152,7 @@ pub fn run_prediction(world: &mut World) {
         };
 
         let (x, y) = if tick <= estimated_server_tick {
-            (0, 0)
+            held_server_input(world, player)
         } else {
             (keyboard_x, keyboard_y)
         };
@@ -192,6 +192,16 @@ pub fn run_prediction(world: &mut World) {
     }
 }
 
+/// Input for a tick the server has already simulated (we fell behind and are catching up).
+/// Our input for it can no longer arrive in time, so the server holds the last input it
+/// received; predicting the same avoids a misprediction and a visible correction.
+fn held_server_input(world: &World, player: Entity) -> (i8, i8) {
+    world
+        .get::<PredictionHistory>(player)
+        .and_then(PredictionHistory::latest_input)
+        .map_or((0, 0), |input| (input.x, input.y))
+}
+
 pub fn simulate_prediction_tick(
     world: &mut World,
     player: Entity,
@@ -207,13 +217,13 @@ pub fn simulate_prediction_tick(
         .expect("Predicted body must have current input")
         .movement = input;
 
-    let previous_time = world.resource::<Time>().clone();
+    let previous_time = *world.resource::<Time>();
 
     let step_time = {
         let mut step_clock = world.resource_mut::<PredictionStepTime>();
 
         step_clock.0.advance_by(timestep);
-        step_clock.0.clone()
+        step_clock.0
     };
 
     *world.resource_mut::<Time>() = step_time;
@@ -358,9 +368,9 @@ pub fn replay_prediction_ticks(
     inputs: &[MovementInput],
     timestep: Duration,
 ) -> Vec<NetworkPhysicsState> {
-    let saved_step_time = world.resource::<PredictionStepTime>().0.clone();
-    let saved_physics_time = world.resource::<Time<Physics>>().clone();
-    let saved_substep_time = world.resource::<Time<Substeps>>().clone();
+    let saved_step_time = world.resource::<PredictionStepTime>().0;
+    let saved_physics_time = *world.resource::<Time<Physics>>();
+    let saved_substep_time = *world.resource::<Time<Substeps>>();
 
     let states = inputs
         .iter()

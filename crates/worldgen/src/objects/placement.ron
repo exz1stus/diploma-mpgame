@@ -1,11 +1,11 @@
 // Density is proposal probability per anchor, before footprint/overlap rejection.
 // Rule IDs stay fixed when reordering or appending rules.
 [
-    (id: 1, object: "rock", density: 0.012),
-    (id: 2, object: "large_rock", density: 0.003, max_height_difference: Some(0.04)),
-    (id: 3, object: "iron_ore", density: 0.004,
+    (id: 1, object: "rock", density: 0.004),
+    (id: 2, object: "large_rock", density: 0.001, max_height_difference: Some(0.04)),
+    (id: 3, object: "iron_ore", density: 0.0015,
         biomes: ["iron_rich_regolith", "weathered_basalt", "volcanic_highlands"],
         max_height_difference: Some(0.06)),
-    (id: 4, object: "tree", density: 0.015,
+    (id: 4, object: "tree", density: 0.005,
         biomes: ["ochre_dust_plains"], temperature: (min: 2.0, max: 20.0)),
 ]

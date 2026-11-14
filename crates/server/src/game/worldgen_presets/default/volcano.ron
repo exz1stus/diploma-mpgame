@@ -1,0 +1,21 @@
+// Generation settings and biome selection for volcanoes.
+// Biome names reference the single repository in ../biomes/biomes.ron.
+(
+    cell_size: 4096,
+    probability: 0.2,
+    min_radius: 192.0,
+    max_radius: 896.0,
+    min_height: 0.14,
+    max_height: 0.32,
+    caldera_ratio: 0.28,
+    caldera_depth: 0.18,
+    temperature_offset: 0.0,
+    // First match wins: preserve polar ice, then choose climate-appropriate territory biomes.
+    biome_map: [
+        (biome: "polar_volcano", height: (min: 0.0, max: 1.0), temperature: (min: -50.0, max: -20.0)),
+        (biome: "frozen_volcanic_highlands", height: (min: 0.9, max: 1.0), temperature: (min: -20.0, max: -5.0)),
+        (biome: "frozen_volcano", height: (min: 0.0, max: 0.9), temperature: (min: -20.0, max: -5.0)),
+        (biome: "volcanic_highlands", height: (min: 0.9, max: 1.0), temperature: (min: -5.0, max: 40.0)),
+        (biome: "volcano", height: (min: 0.0, max: 0.9), temperature: (min: -5.0, max: 40.0)),
+    ],
+)

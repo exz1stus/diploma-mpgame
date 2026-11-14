@@ -8,7 +8,7 @@ use shared::components::{DisconnectPolicy, Ownership};
 
 use crate::networking::client::{ClientLeft, ReplicationClients};
 
-pub(crate) fn configure(app: &mut App) {
+pub(crate) fn plugin(app: &mut App) {
     app.add_observer(on_ownership_added);
     app.add_observer(on_ownership_removed);
     app.add_observer(on_client_left);
