@@ -31,8 +31,8 @@ use bevy::{
 use bevy_renet::{
     RenetClient,
     netcode::{ClientAuthentication, NetcodeClientTransport},
-    renet::ConnectionConfig,
 };
+use shared::world::connection_config;
 const CONNECTION_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub enum SessionIntent {
@@ -181,7 +181,7 @@ impl Session {
         let transport = NetcodeClientTransport::new(now, authentication, socket)
             .map_err(|error| format!("Could not crate the connection: {error}"))?;
 
-        world.insert_resource(RenetClient::new(ConnectionConfig::default()));
+        world.insert_resource(RenetClient::new(connection_config()));
         world.insert_resource(transport);
 
         self.active = true;
@@ -245,7 +245,7 @@ impl Session {
             transport.disconnect();
         }
 
-        let mut client = RenetClient::new(ConnectionConfig::default());
+        let mut client = RenetClient::new(connection_config());
         client.disconnect();
         world.insert_resource(client);
 

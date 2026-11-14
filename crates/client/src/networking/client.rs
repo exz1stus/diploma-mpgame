@@ -20,7 +20,7 @@ use crate::game::rendering::{
     setup_circle_assets,
 };
 use crate::networking::network::{
-    collect_incoming, release_incoming, release_outgoing,send_messages,
+    collect_incoming, release_incoming, release_outgoing, reset_disconnected_client, send_messages,
 };
 use crate::networking::prediction::{
     PredictionSettings, initialize_prediction, smooth_prediction_visual,
@@ -32,12 +32,8 @@ use crate::{
     networking::diagnostics::{NetworkDiagnostics, sample_network},
 };
 use bevy::prelude::*;
-use bevy_renet::{
-    RenetClient, RenetSend, client_connected,
-    renet::ConnectionConfig,
-    netcode::{ClientAuthentication, NetcodeClientTransport},
-};
-
+use bevy_renet::{RenetClient, RenetSend, client_connected};
+use shared::world::connection_config;
 
 pub struct GameClient {
     app: App,
@@ -45,7 +41,7 @@ pub struct GameClient {
 
 impl GameClient {
     pub fn new(mut app: App, _config: &ClientConfig) -> Self {
-        let mut client = RenetClient::new(ConnectionConfig::default());
+        let mut client = RenetClient::new(connection_config());
         client.disconnect();
         app.insert_resource(client);
 

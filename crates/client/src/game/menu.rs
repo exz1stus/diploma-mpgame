@@ -117,12 +117,12 @@ pub fn menu_ui(
 
     let ctx = contexts.ctx_mut()?;
     let mut viewport_ui = egui::Ui::new(
-    ctx.clone(),
-    "menu_viewport".into(),
-    egui::UiBuilder::new()
-        .layer_id(egui::LayerId::background())
-        .max_rect(ctx.viewport_rect()),
-);
+        ctx.clone(),
+        "menu_viewport".into(),
+        egui::UiBuilder::new()
+            .layer_id(egui::LayerId::background())
+            .max_rect(ctx.viewport_rect()),
+    );
 
     egui::CentralPanel::default()
         .frame(
