@@ -152,7 +152,7 @@ pub fn run_prediction(world: &mut World) {
         };
 
         let (x, y) = if tick <= estimated_server_tick {
-            (0, 0)
+            held_server_input(world, player)
         } else {
             (keyboard_x, keyboard_y)
         };
@@ -190,6 +190,16 @@ pub fn run_prediction(world: &mut World) {
             queue_recent_inputs(world, player, now);
         }
     }
+}
+
+/// Input for a tick the server has already simulated (we fell behind and are catching up).
+/// Our input for it can no longer arrive in time, so the server holds the last input it
+/// received; predicting the same avoids a misprediction and a visible correction.
+fn held_server_input(world: &World, player: Entity) -> (i8, i8) {
+    world
+        .get::<PredictionHistory>(player)
+        .and_then(PredictionHistory::latest_input)
+        .map_or((0, 0), |input| (input.x, input.y))
 }
 
 pub fn simulate_prediction_tick(

@@ -12,6 +12,7 @@ pub mod replication;
 pub mod role;
 pub mod server_messages;
 pub mod snapshots;
+pub mod world;
 
 pub fn register_components(app: &mut App) {
     app.add_replicated::<NetworkPhysicsState>()

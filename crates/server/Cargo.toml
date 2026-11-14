@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-bevy.workspace = true
+bevy = { workspace = true, features = ["multi_threaded"] }
 bevy_ecs.workspace = true
 bevy_renet.workspace = true
 fastrand = "2.5"
@@ -13,3 +13,4 @@ serde.workspace = true
 shared = { path = "../shared" }
 avian2d.workspace = true
 worldgen = { path = "../worldgen" }
+lz4_flex = "0.14.0"

@@ -12,3 +12,14 @@ avian2d = { version = "0.7", default-features = false, features = [
     "2d",
     "parry-f32",
 ] }
+
+# Bevy, avian and noise are unusably slow unoptimized; keep game crates quick to rebuild.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+# Terrain generation is all hot noise sampling.
+[profile.dev.package.worldgen]
+opt-level = 3

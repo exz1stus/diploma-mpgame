@@ -11,10 +11,13 @@ use shared::role::NetworkRole;
 use crate::{
     config::ClientConfig,
     game::{
+        debug_zoom,
         menu::{MenuState, menu_ui, toggle_menu},
         spawn_camera,
     },
-    networking::{client::GameClient, netgraph::network_diagnostics_ui},
+    networking::{
+        client::GameClient, netgraph::network_diagnostics_ui, world_streaming::WorldStreamingPlugin,
+    },
 };
 
 fn main() {
@@ -35,11 +38,12 @@ fn main() {
         EguiPlugin::default(),
         RenetClientPlugin,
         NetcodeClientPlugin,
+        WorldStreamingPlugin,
     ));
 
     app.add_systems(Startup, spawn_camera);
     app.init_resource::<MenuState>();
-    app.add_systems(Update, toggle_menu);
+    app.add_systems(Update, (toggle_menu, debug_zoom));
     app.add_systems(
         EguiPrimaryContextPass,
         (menu_ui, network_diagnostics_ui).chain(),

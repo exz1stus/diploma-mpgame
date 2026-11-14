@@ -120,6 +120,7 @@ pub fn spawn_remote_entity(
             NetworkIdentity { id },
             Transform::default(),
             GlobalTransform::default(),
+            Visibility::default(),
         ))
         .id();
     remote_world.despawned.remove(&id);

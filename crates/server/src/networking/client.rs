@@ -49,6 +49,14 @@ pub(crate) struct ClientState {
 }
 
 impl ClientState {
+    #[cfg(test)]
+    pub(crate) fn ready() -> Self {
+        Self {
+            owned_entities: HashSet::new(),
+            phase: ClientSyncPhase::Ready,
+        }
+    }
+
     pub fn has_intiated(&self) -> bool {
         self.phase == ClientSyncPhase::Ready
     }

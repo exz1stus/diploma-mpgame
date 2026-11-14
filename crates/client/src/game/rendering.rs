@@ -1,15 +1,22 @@
 use crate::game::commands::PredictedVisuals;
+use crate::game::world::{ChunkTiles, WorldObject, WorldPalette};
 use crate::networking::prediction::{Prediction, PredictionSettings};
 use crate::networking::{
     interpolation::{InterpolationSample, sample_at_tick},
     state::{ClientState, Owned, RemoteWorld},
 };
 use avian2d::physics_transform::Position as PhysicsPosition;
-use bevy::prelude::*;
+use bevy::{
+    asset::RenderAssetUsages,
+    image::ImageSampler,
+    prelude::*,
+    render::render_resource::{Extent3d, TextureDimension, TextureFormat},
+};
 use shared::{
     components::{NetworkPhysicsState, Player},
     replication::{ReplicatedComponent, ReplicationRegistry},
     snapshots::NetworkIdentity,
+    world::{TILE_SIZE, chunk_span},
 };
 
 #[derive(Component, Default)]
@@ -223,4 +230,111 @@ pub fn current_visual_position(world: &World, player: Entity) -> Vec2 {
         .visual_offset;
 
     physics_position + visual_offset
+}
+
+/// Draw order of world layers; players and projectiles render at z >= 0.
+const CHUNK_Z: f32 = -10.0;
+const OBJECT_Z: f32 = -9.0;
+
+/// Marks a world entity whose visual child has been created.
+#[derive(Component)]
+pub struct WorldVisual;
+
+/// Turns each streamed chunk into a tile texture (one pixel per tile) drawn under everything.
+pub fn render_world_chunks(
+    mut commands: Commands,
+    palette: Option<Res<WorldPalette>>,
+    chunks: Query<(Entity, &ChunkTiles), Without<WorldVisual>>,
+    mut images: ResMut<Assets<Image>>,
+) {
+    let Some(palette) = palette else {
+        return;
+    };
+    for (entity, tiles) in &chunks {
+        let span = chunk_span(tiles.size);
+        let image = images.add(chunk_image(tiles, &palette.tile_colors));
+        commands.entity(entity).insert(WorldVisual);
+        commands.spawn((
+            Sprite {
+                image,
+                custom_size: Some(Vec2::splat(span)),
+                ..default()
+            },
+            Transform::from_xyz(span / 2.0, span / 2.0, CHUNK_Z),
+            ChildOf(entity),
+        ));
+    }
+}
+
+/// Draws each world object as a footprint-sized rectangle colored by its kind.
+/// The sprite goes on the object entity itself: objects stream in by the thousand, and a
+/// child entity per object would double spawn and transform-propagation cost.
+pub fn render_world_objects(
+    mut commands: Commands,
+    mut objects: Query<(Entity, &WorldObject, &mut Transform), Without<WorldVisual>>,
+) {
+    for (entity, object, mut transform) in &mut objects {
+        let size = Vec2::new(
+            object.footprint.width as f32,
+            object.footprint.height as f32,
+        ) * TILE_SIZE;
+        let hue = (object.kind.0 as f32 * 137.5) % 360.0;
+        transform.translation.z = OBJECT_Z;
+        commands.entity(entity).insert((
+            WorldVisual,
+            Sprite::from_color(Color::hsl(hue, 0.35, 0.28), size * 0.9),
+        ));
+    }
+}
+
+/// Tiles are +Y up (`y * size + x`); image rows run top-down, so rows are flipped.
+fn chunk_image(tiles: &ChunkTiles, colors: &[[u8; 4]]) -> Image {
+    let size = tiles.size as usize;
+    let mut data = vec![0; size * size * 4];
+    for (index, tile) in tiles.tiles.iter().enumerate() {
+        let (x, y) = (index % size, index / size);
+        let row = size - 1 - y;
+        let color = colors
+            .get(tile.index())
+            .copied()
+            .unwrap_or([255, 0, 255, 255]);
+        data[(row * size + x) * 4..][..4].copy_from_slice(&color);
+    }
+    let mut image = Image::new(
+        Extent3d {
+            width: tiles.size,
+            height: tiles.size,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        data,
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::RENDER_WORLD,
+    );
+    image.sampler = ImageSampler::nearest();
+    image
+}
+
+#[cfg(test)]
+mod world_tests {
+    use super::*;
+    use shared::world::Tile;
+
+    #[test]
+    fn chunk_image_puts_tile_row_zero_at_the_bottom() {
+        let tiles = ChunkTiles {
+            size: 2,
+            tiles: vec![
+                Tile { id: 0 },
+                Tile { id: 0 },
+                Tile { id: 1 },
+                Tile { id: 9 },
+            ],
+        };
+        let image = chunk_image(&tiles, &[[1, 1, 1, 255], [2, 2, 2, 255]]);
+        let data = image.data.unwrap();
+        // Top image row = tile row y=1: tile 1, then unknown tile 9 (magenta).
+        assert_eq!(&data[0..8], &[2, 2, 2, 255, 255, 0, 255, 255]);
+        assert_eq!(&data[8..16], &[1, 1, 1, 255, 1, 1, 1, 255]);
+    }
 }

@@ -18,8 +18,9 @@ use bevy_ecs::{
 };
 use shared::components::{DisconnectPolicy, Health, NetworkPhysicsState, Player};
 
-use crate::networking::{
-    client::ClientIntiated, entity::NetworkCommandsExt, input::CurrentMovementInput,
+use crate::{
+    game::world::WorldObserver,
+    networking::{client::ClientIntiated, entity::NetworkCommandsExt, input::CurrentMovementInput},
 };
 
 pub fn plugin(app: &mut App) {
@@ -40,6 +41,7 @@ fn new_player_bundle_at(spawn: Vec2) -> impl Bundle {
             velocity: Vec2::ZERO,
         },
         CurrentMovementInput::default(),
+        WorldObserver::default(),
         RigidBody::Dynamic,
         Collider::circle(16.0),
         CollisionEventsEnabled,

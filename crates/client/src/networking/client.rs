@@ -1,3 +1,4 @@
+use crate::game::camera::follow_player_camera;
 use crate::game::commands::{
     PendingCommands, PredictedVisuals, ShootAimState, draw_shoot_aim, send_shoot_command,
     update_shoot_aim,
@@ -14,7 +15,10 @@ use crate::networking::reconciliation::{
 use crate::networking::simulation_clock::ClientSimulationClock;
 pub(crate) use crate::networking::state::Owned;
 
-use crate::game::rendering::{add_circle_visuals, render_player_visuals, setup_circle_assets};
+use crate::game::rendering::{
+    add_circle_visuals, render_player_visuals, render_world_chunks, render_world_objects,
+    setup_circle_assets,
+};
 use crate::networking::network::{
     collect_incoming, release_incoming, release_outgoing, reset_disconnected_client, send_messages,
 };
@@ -31,7 +35,6 @@ use bevy::prelude::*;
 use bevy_renet::{
     RenetClient, RenetSend, client_connected,
     netcode::{ClientAuthentication, NetcodeClientTransport},
-    renet::ConnectionConfig,
 };
 use std::{
     net::UdpSocket,
@@ -57,7 +60,7 @@ impl GameClient {
 
         let transport = NetcodeClientTransport::new(current_time, authentication, socket).unwrap();
 
-        let client = RenetClient::new(ConnectionConfig::default());
+        let client = RenetClient::new(shared::world::connection_config());
 
         app.insert_resource(client);
         app.insert_resource(transport);
@@ -106,6 +109,8 @@ impl GameClient {
         );
 
         app.add_systems(Update, reset_disconnected_client);
+        app.add_systems(Update, (render_world_chunks, render_world_objects));
+        app.add_systems(Update, follow_player_camera.after(render_player_visuals));
         app.add_systems(PostUpdate, sample_network.after(RenetSend));
 
         Self { app }

@@ -7,7 +7,6 @@ use bevy::app::{App, Plugin};
 use bevy_renet::{
     RenetServer,
     netcode::{NetcodeServerTransport, ServerAuthentication, ServerConfig},
-    renet::ConnectionConfig,
 };
 use shared::replication::{BufferedComponentChanges, NetworkEntityMap};
 
@@ -24,6 +23,7 @@ mod physics;
 mod replication;
 pub(crate) mod server;
 mod world;
+pub(crate) mod world_streaming;
 
 pub(crate) struct ServerPlugin {
     config: AppConfig,
@@ -46,7 +46,7 @@ impl Plugin for ServerPlugin {
             authentication: ServerAuthentication::Unsecure,
         };
         let transport = NetcodeServerTransport::new(server_config, socket).unwrap();
-        let server = RenetServer::new(ConnectionConfig::default());
+        let server = RenetServer::new(shared::world::connection_config());
 
 
         app.insert_resource(server);
