@@ -36,49 +36,7 @@ pub struct PlayerVisual;
 #[derive(Component, Default)]
 pub struct LocalVisualPosition {
     pub position: Option<Vec2>,
-    last_tick: Option<u64>,
-    phase_secs: f32,
 }
-
-impl LocalVisualPosition {
-    fn follow(
-        &mut self,
-        physics_position: Vec2,
-        velocity: Vec2,
-        offset: Vec2,
-        tick: u64,
-        dt: f32,
-        timestep: f32,
-    ) -> Vec2 {
-        const HALF_LIFE: f32 = 0.025;
-        const MAX_LAG: f32 = 4.0;
-        const SNAP_DISTANCE: f32 = 64.0;
-
-        if let Some(previous_tick) = self.last_tick {
-            if tick >= previous_tick && tick - previous_tick <= 2 && timestep > 0.0 {
-                self.phase_secs = (self.phase_secs + dt.max(0.0)
-                    - (tick - previous_tick) as f32 * timestep)
-                    .clamp(0.0, timestep);
-            } else {
-                self.phase_secs = 0.0;
-            }
-        }
-        self.last_tick = Some(tick);
-
-        let target = physics_position + velocity * self.phase_secs + offset;
-        let position = match self.position {
-            Some(previous) if previous.distance(target) < SNAP_DISTANCE => {
-                let fraction = 1.0 - 2.0_f32.powf(-dt.max(0.0) / HALF_LIFE);
-                let blended = previous.lerp(target, fraction);
-                target + (blended - target).clamp_length_max(MAX_LAG)
-            }
-            _ => target,
-        };
-        self.position = Some(position);
-        position
-    }
-}
-
 pub fn setup_circle_assets(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>) {
     commands.insert_resource(CircleAssets {
         mesh: meshes.add(Circle::new(16.0)),
@@ -115,15 +73,16 @@ pub fn render_player_visuals(
     mut client_state: ResMut<ClientState>,
     registry: Res<ReplicationRegistry>,
     prediction_settings: Res<PredictionSettings>,
-    fixed_time: Res<Time<Fixed>>,
     time: Res<Time<Real>>,
-
+    collision_proxies: Res<
+        crate::networking::physics::RemoteCollisionProxies,
+    >,
+    proxy_positions: Query<&PhysicsPosition>,
     mut players: Query<
         (
             &NetworkIdentity,
             &NetworkPhysicsState,
             Option<&Owned>,
-            Option<&Prediction>,
             Option<&PhysicsPosition>,
             &Transform,
             &mut InterpolationDebug,
@@ -131,13 +90,19 @@ pub fn render_player_visuals(
         ),
         Without<PlayerVisual>,
     >,
-    mut visuals: Query<(&ChildOf, &mut Transform), With<PlayerVisual>>,
+    mut visuals: Query<
+        (&ChildOf, &mut Transform),
+        With<PlayerVisual>,
+    >,
+
     predicted_visuals: Res<PredictedVisuals>,
 ) {
     if !client_state.initiated {
         return;
     }
-    let display_tick = client_state.clock.advance(time.elapsed_secs_f64());
+
+    let display_tick =
+        client_state.clock.advance(time.elapsed_secs_f64());
 
     let interpolate = registry
         .components
@@ -145,18 +110,15 @@ pub fn render_player_visuals(
         .is_some_and(|component| component.interpolated);
 
     for (child_of, mut visual_transform) in &mut visuals {
-        let player_entity = child_of.parent();
-
         let Ok((
             identity,
             authoritative,
             owned,
-            prediction,
             physics,
             root_transform,
             mut debug,
             mut local_visual,
-        )) = players.get_mut(player_entity)
+        )) = players.get_mut(child_of.parent())
         else {
             continue;
         };
@@ -164,51 +126,61 @@ pub fn render_player_visuals(
         debug.display_tick = display_tick;
         debug.sample = None;
 
-        visual_transform.scale = if predicted_visuals.is_hidden(identity.id) {
-            Vec3::ZERO
-        } else {
-            Vec3::ONE
-        };
+        visual_transform.scale =
+            if predicted_visuals.is_hidden(identity.id) {
+                Vec3::ZERO
+            } else {
+                Vec3::ONE
+            };
 
-        let root_position = root_transform.translation.truncate();
+        let root_position =
+            root_transform.translation.truncate();
 
-        let visual_world_position = if owned.is_some() {
-            if prediction_settings.enabled {
-                let offset = prediction.map_or(Vec2::ZERO, |prediction| prediction.visual_offset);
-                let predicted_position = physics.map_or(root_position, |position| position.0);
-                let state = prediction.map(|prediction| prediction.state);
-                local_visual.follow(
-                    predicted_position,
-                    state.map_or(Vec2::ZERO, |state| state.velocity),
-                    offset,
-                    state.map_or(0, |state| state.tick),
-                    time.delta_secs(),
-                    fixed_time.timestep().as_secs_f32(),
+        let proxy_position = collision_proxies
+            .entities
+            .get(&identity.id)
+            .and_then(|entity| proxy_positions.get(*entity).ok())
+            .map(|position| position.0);
+
+        let visual_position = if owned.is_some() {
+            let position = if prediction_settings.enabled {
+                physics.map_or(
+                    root_position,
+                    |position| position.0,
                 )
             } else {
-                *local_visual = LocalVisualPosition::default();
                 authoritative.position
-            }
+            };
+
+            local_visual.position = Some(position);
+            position
+        } else if let Some(position) = proxy_position {
+            position
         } else if interpolate {
-            if let Some(sample) = remote_world
+            match remote_world
                 .positions
                 .get(&identity.id)
-                .and_then(|samples| sample_at_tick(samples, display_tick))
+                .and_then(|samples| {
+                    sample_at_tick(samples, display_tick)
+                })
             {
-                debug.sample = Some(sample);
-                sample.position
-            } else {
-                authoritative.position
+                Some(sample) => {
+                    debug.sample = Some(sample);
+                    sample.position
+                }
+                None => authoritative.position,
             }
         } else {
             authoritative.position
         };
-        let local_offset = visual_world_position - root_position;
+
+        let local_offset = visual_position - root_position;
 
         visual_transform.translation.x = local_offset.x;
         visual_transform.translation.y = local_offset.y;
     }
 }
+
 pub fn current_visual_position(world: &World, player: Entity) -> Vec2 {
     let entity = world.entity(player);
 

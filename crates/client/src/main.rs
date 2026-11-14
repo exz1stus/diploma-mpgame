@@ -9,15 +9,10 @@ use shared::app_init;
 use shared::role::NetworkRole;
 
 use crate::{
-    config::ClientConfig,
-    game::{
-        debug_zoom,
+    config::ClientConfig, game::{
         menu::{MenuState, menu_ui, toggle_menu},
         spawn_camera,
-    },
-    networking::{
-        client::GameClient, netgraph::network_diagnostics_ui, world_streaming::WorldStreamingPlugin,
-    },
+    }, networking::{client::GameClient, netgraph::network_diagnostics_ui, session::{drive_session, install_session}},
 };
 
 fn main() {
@@ -43,16 +38,19 @@ fn main() {
 
     app.add_systems(Startup, spawn_camera);
     app.init_resource::<MenuState>();
-    app.add_systems(Update, (toggle_menu, debug_zoom));
+
+    app.add_systems(Update, (drive_session,toggle_menu, debug_zoom).chain());
     app.add_systems(
         EguiPrimaryContextPass,
         (menu_ui, network_diagnostics_ui).chain(),
     );
 
     let config = ClientConfig::new();
-    let mut client = GameClient::new(app, &config);
+    install_session(&mut app, &config);
 
+    let mut client = GameClient::new(app, &config);
     client.run();
+
 }
 
 #[cfg(target_os = "linux")]

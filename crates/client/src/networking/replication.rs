@@ -30,6 +30,7 @@ pub fn process_server_message(
 ) -> bool {
     let tick = message.tick;
     client_state.last_tick = client_state.last_tick.max(tick);
+    client_state.clock.observe(tick);
 
     match message.payload {
         ServerMessages::InitiateClientState { client_id, world } => {

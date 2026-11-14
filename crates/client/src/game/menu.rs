@@ -1,9 +1,10 @@
+use std::net::SocketAddr;
+
 use bevy::prelude::*;
 use bevy::window::{MonitorSelection, PrimaryWindow, WindowMode};
 use bevy_egui::{EguiContexts, egui};
-use bevy_renet::RenetClient;
 
-use crate::networking::state::ClientState;
+use crate::networking::session::SessionIntent;
 
 const GAME_TITLE: &str = "WORLD PROTOTYPE";
 const INK: egui::Color32 = egui::Color32::from_rgb(15, 23, 26);
@@ -13,17 +14,32 @@ const CREAM: egui::Color32 = egui::Color32::from_rgb(235, 226, 202);
 const MUTED: egui::Color32 = egui::Color32::from_rgb(157, 170, 158);
 const ACCENT: egui::Color32 = egui::Color32::from_rgb(222, 169, 91);
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Screen {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Screen {
     Main,
-    Options,
+    Join,
+    Host,
+    Connecting,
     InGame,
+    Pause,
+    Options,
+    Error,
+    ConfirmLeave,
+    ConfirmQuit,
 }
 
 #[derive(Resource)]
 pub struct MenuState {
-    screen: Screen,
-    has_entered_game: bool,
+    pub screen: Screen,
+    pub pending: Option<SessionIntent>,
+    pub error: Option<String>,
+    pub status: String,
+
+    return_to: Screen,
+    address: String,
+    seed: String,
+    port: String,
+
     pub show_diagnostics: bool,
 }
 
@@ -31,7 +47,13 @@ impl Default for MenuState {
     fn default() -> Self {
         Self {
             screen: Screen::Main,
-            has_entered_game: false,
+            pending: None,
+            error: None,
+            status: String::new(),
+            return_to: Screen::Main,
+            address: "127.0.0.1:5000".into(),
+            seed: "0".into(),
+            port: "5000".into(),
             show_diagnostics: false,
         }
     }
@@ -41,184 +63,320 @@ impl MenuState {
     pub fn in_game(&self) -> bool {
         self.screen == Screen::InGame
     }
+    pub fn set_default_address(&mut self, address: SocketAddr) {
+        self.address = address.to_string();
+    }
+    fn open(&mut self, screen: Screen) {
+        self.return_to = self.screen;
+        self.screen = screen;
+        self.error = None;
+    }
+    fn request(&mut self, intent: SessionIntent) {
+        if self.pending.is_some() {
+            return;
+        }
+
+        self.pending = Some(intent);
+        self.error = None;
+        self.status = "Please wait...".into();
+        self.screen = Screen::Connecting;
+    }
 }
 
 pub fn toggle_menu(keys: Res<ButtonInput<KeyCode>>, mut menu: ResMut<MenuState>) {
     if !keys.just_pressed(KeyCode::Escape) {
         return;
     }
-    menu.screen = match menu.screen {
-        Screen::InGame | Screen::Options => Screen::Main,
-        Screen::Main if menu.has_entered_game => Screen::InGame,
-        Screen::Main => Screen::Main,
-    };
+    match menu.screen {
+        Screen::InGame => menu.screen = Screen::Pause,
+        Screen::Pause => menu.screen = Screen::InGame,
+
+        Screen::Options | Screen::ConfirmQuit => {
+            menu.screen = menu.return_to;
+        }
+
+        Screen::ConfirmLeave => menu.screen = Screen::Pause,
+        Screen::Join | Screen::Host | Screen::Error => {
+            menu.error = None;
+            menu.screen = Screen::Main;
+        }
+        Screen::Connecting => menu.request(SessionIntent::Leave),
+
+        Screen::Main => {}
+    }
 }
 
 pub fn menu_ui(
     mut contexts: EguiContexts,
     mut menu: ResMut<MenuState>,
-    client: Res<RenetClient>,
-    client_state: Res<ClientState>,
     mut windows: Query<&mut Window, With<PrimaryWindow>>,
-    mut exit: MessageWriter<AppExit>,
 ) -> Result {
     if menu.in_game() {
         return Ok(());
     }
 
     let ctx = contexts.ctx_mut()?;
-    let available = client.is_connected() && client_state.initiated;
-    let status = if available {
-        "SERVER READY"
-    } else if client.is_disconnected() {
-        "SERVER UNAVAILABLE"
-    } else {
-        "CONNECTING TO SERVER"
-    };
-    let status_color = if available { MUTED } else { ACCENT };
+    let mut viewport_ui = egui::Ui::new(
+    ctx.clone(),
+    "menu_viewport".into(),
+    egui::UiBuilder::new()
+        .layer_id(egui::LayerId::background())
+        .max_rect(ctx.viewport_rect()),
+);
 
-    egui::Area::new(egui::Id::new("main_menu"))
-        .order(egui::Order::Foreground)
-        .fixed_pos(ctx.content_rect().min)
-        .movable(false)
-        .show(ctx, |ui| {
-            let rect = ctx.content_rect();
-            ui.set_min_size(rect.size());
-            ui.painter().rect_filled(rect, 0.0, INK);
-            paint_backdrop(ui.painter(), rect);
+    egui::CentralPanel::default()
+        .frame(
+            egui::Frame::new()
+                .fill(INK)
+                .inner_margin(24.0),
+        )
+        .show(&mut viewport_ui, |ui| {
+            paint_backdrop(ui.painter(), ui.max_rect());
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                ui.set_max_width(440.0);
+                ui.add_space(24.0);
 
-            let compact = rect.width() < 700.0;
-            let side = if compact { 24.0 } else { 64.0 };
-            let width = (rect.width() - side * 2.0).clamp(250.0, 440.0);
-            let top = if rect.height() < 600.0 { 35.0 } else { 75.0 };
-            let panel_rect = egui::Rect::from_min_size(
-                egui::pos2(rect.left() + side, rect.top() + top),
-                egui::vec2(width, (rect.height() - top - 30.0).max(360.0)),
-            );
-            ui.painter().rect_filled(panel_rect, 4.0, PANEL);
-            ui.painter().rect_stroke(
-                panel_rect,
-                4.0,
-                egui::Stroke::new(1.0, BORDER),
-                egui::StrokeKind::Inside,
-            );
-            ui.painter().rect_filled(
-                egui::Rect::from_min_size(panel_rect.min, egui::vec2(5.0, panel_rect.height())),
-                0.0,
-                ACCENT,
-            );
+                egui::Frame::new()
+                    .fill(PANEL)
+                    .inner_margin(24.0)
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
 
-            let content_rect = panel_rect.shrink2(egui::vec2(34.0, 34.0));
-            ui.scope_builder(egui::UiBuilder::new().max_rect(content_rect), |ui| {
-                ui.set_width(content_rect.width());
-                ui.label(
-                    egui::RichText::new("◆  EARLY DEVELOPMENT")
-                        .size(12.0)
-                        .strong()
-                        .color(ACCENT),
-                );
-                ui.add_space(20.0);
-                ui.label(
-                    egui::RichText::new(GAME_TITLE)
-                        .size(if compact { 32.0 } else { 39.0 })
-                        .strong()
-                        .color(CREAM),
-                );
-                ui.label(
-                    egui::RichText::new("A multiplayer world in progress")
-                        .size(14.0)
-                        .color(MUTED),
-                );
-                ui.add_space(28.0);
-                ui.separator();
-                ui.add_space(25.0);
-
-                match menu.screen {
-                    Screen::Main => {
-                        let label = if menu.has_entered_game {
-                            "CONTINUE"
-                        } else {
-                            "PLAY"
-                        };
-                        if menu_button(ui, label, available, true) {
-                            menu.has_entered_game = true;
-                            menu.screen = Screen::InGame;
-                        }
-                        ui.add_space(10.0);
-                        if menu_button(ui, "OPTIONS", true, false) {
-                            menu.screen = Screen::Options;
-                        }
-                        ui.add_space(10.0);
-                        if menu_button(ui, "QUIT", true, false) {
-                            exit.write(AppExit::Success);
-                        }
-                    }
-                    Screen::Options => {
                         ui.label(
-                            egui::RichText::new("DISPLAY & TOOLS")
-                                .color(ACCENT)
-                                .strong(),
+                            egui::RichText::new(GAME_TITLE)
+                                .size(32.0)
+                                .strong()
+                                .color(CREAM),
                         );
-                        ui.add_space(14.0);
-                        if let Ok(mut window) = windows.single_mut() {
-                            let mut fullscreen = !matches!(window.mode, WindowMode::Windowed);
-                            if ui
-                                .checkbox(&mut fullscreen, "Borderless fullscreen")
-                                .changed()
-                            {
-                                window.mode = if fullscreen {
-                                    WindowMode::BorderlessFullscreen(MonitorSelection::Current)
-                                } else {
-                                    WindowMode::Windowed
-                                };
+
+                        ui.add_space(20.0);
+
+                        match menu.screen {
+                            Screen::Main => {
+                                if action(ui, "JOIN GAME") {
+                                    menu.open(Screen::Join);
+                                }
+
+                                if action(ui, "HOST WORLD") {
+                                    menu.open(Screen::Host);
+                                }
+
+                                if action(ui, "OPTIONS") {
+                                    menu.open(Screen::Options);
+                                }
+
+                                if action(ui, "QUIT") {
+                                    menu.open(Screen::ConfirmQuit);
+                                }
                             }
-                        }
-                        ui.checkbox(&mut menu.show_diagnostics, "Network diagnostics in game");
-                        ui.add_space(18.0);
-                        ui.label(
-                            egui::RichText::new("WASD move  ·  Mouse aim and shoot  ·  Esc menu")
-                                .size(13.0)
-                                .color(MUTED),
-                        );
-                        ui.add_space(24.0);
-                        if menu_button(ui, "BACK", true, false) {
-                            menu.screen = Screen::Main;
-                        }
-                    }
-                    Screen::InGame => unreachable!(),
-                }
 
-                ui.add_space(26.0);
-                ui.separator();
-                ui.add_space(12.0);
-                ui.label(
-                    egui::RichText::new(format!("●  {status}"))
-                        .size(12.0)
-                        .strong()
-                        .color(status_color),
-                );
-                if !available {
-                    ui.label(
-                        egui::RichText::new(if client.is_disconnected() {
-                            "Start the server, then restart the client."
-                        } else {
-                            "Waiting for the server's world state."
-                        })
-                        .size(12.0)
-                        .color(MUTED),
-                    );
-                }
+                            Screen::Join => {
+                                ui.heading("Join game");
+                                ui.label("Server address");
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut menu.address)
+                                        .hint_text("127.0.0.1:5000")
+                                        .desired_width(f32::INFINITY),
+                                );
+
+                                ui.add_space(12.0);
+
+                                if action(ui, "CONNECT") {
+                                    match menu.address.trim().parse::<SocketAddr>() {
+                                        Ok(address) if address.port() != 0
+                                            && !address.ip().is_unspecified() =>
+                                        {
+                                            menu.request(SessionIntent::Join(address));
+                                        }
+
+                                        _ => {
+                                            menu.error = Some(
+                                                "Enter an IP address and a port from 1 to 65535."
+                                                    .into(),
+                                            );
+                                        }
+                                    }
+                                }
+
+                                if action(ui, "BACK") {
+                                    menu.error = None;
+                                    menu.screen = Screen::Main;
+                                }
+                            }
+
+                            Screen::Host => {
+                                ui.heading("Host a new world");
+                                ui.label("World seed");
+                                ui.text_edit_singleline(&mut menu.seed);
+
+                                ui.label("Server port");
+                                ui.text_edit_singleline(&mut menu.port);
+
+                                ui.add_space(12.0);
+                                ui.label(
+                                    "Starts a fresh session. World saving is not implemented yet.",
+                                );
+                                ui.add_space(12.0);
+
+                                if action(ui, "CREATE WORLD") {
+                                    let seed = menu.seed.trim().parse::<u64>();
+                                    let port = menu.port.trim().parse::<u16>();
+
+                                    match (seed, port) {
+                                        (Ok(seed), Ok(port)) if port != 0 => {
+                                            menu.request(SessionIntent::Host { seed, port });
+                                        }
+
+                                        _ => {
+                                            menu.error = Some(
+                                                "Use a whole-number seed and a port from 1 to 65535."
+                                                    .into(),
+                                            );
+                                        }
+                                    }
+                                }
+
+                                if action(ui, "BACK") {
+                                    menu.error = None;
+                                    menu.screen = Screen::Main;
+                                }
+                            }
+
+                            Screen::Connecting => {
+                                ui.heading("Opening world");
+                                ui.add_space(12.0);
+                                ui.spinner();
+                                ui.label(&menu.status);
+                                ui.add_space(20.0);
+
+                                if action(ui, "CANCEL") {
+                                    menu.request(SessionIntent::Leave);
+                                }
+
+                                ctx.request_repaint();
+                            }
+
+                            Screen::Pause => {
+                                ui.heading("Game menu");
+                                ui.label("The multiplayer world keeps running.");
+                                ui.add_space(16.0);
+
+                                if action(ui, "RESUME") {
+                                    menu.screen = Screen::InGame;
+                                }
+
+                                if action(ui, "OPTIONS") {
+                                    menu.open(Screen::Options);
+                                }
+
+                                if action(ui, "LEAVE WORLD") {
+                                    menu.open(Screen::ConfirmLeave);
+                                }
+
+                                if action(ui, "QUIT") {
+                                    menu.open(Screen::ConfirmQuit);
+                                }
+                            }
+
+                            Screen::Options => {
+                                ui.heading("Options");
+
+                                if let Ok(mut window) = windows.single_mut() {
+                                    let mut fullscreen =
+                                        !matches!(window.mode, WindowMode::Windowed);
+
+                                    if ui
+                                        .checkbox(
+                                            &mut fullscreen,
+                                            "Borderless fullscreen",
+                                        )
+                                        .changed()
+                                    {
+                                        window.mode = if fullscreen {
+                                            WindowMode::BorderlessFullscreen(
+                                                MonitorSelection::Current,
+                                            )
+                                        } else {
+                                            WindowMode::Windowed
+                                        };
+                                    }
+                                }
+
+                                ui.checkbox(
+                                    &mut menu.show_diagnostics,
+                                    "Network diagnostics",
+                                );
+
+                                ui.add_space(16.0);
+                                ui.label("WASD: move · Mouse: aim and shoot · Escape: menu");
+                                ui.add_space(16.0);
+
+                                if action(ui, "BACK") {
+                                    menu.screen = menu.return_to;
+                                }
+                            }
+
+                            Screen::ConfirmLeave => {
+                                ui.heading("Leave this world?");
+                                ui.label(
+                                    "If you are hosting, this closes the server for everyone.",
+                                );
+                                ui.add_space(16.0);
+
+                                if action(ui, "LEAVE WORLD") {
+                                    menu.request(SessionIntent::Leave);
+                                }
+
+                                if action(ui, "STAY") {
+                                    menu.screen = Screen::Pause;
+                                }
+                            }
+
+                            Screen::ConfirmQuit => {
+                                ui.heading("Quit the game?");
+                                ui.label(
+                                    "Any server hosted by this client will close.",
+                                );
+                                ui.add_space(16.0);
+
+                                if action(ui, "QUIT") {
+                                    menu.request(SessionIntent::Quit);
+                                }
+
+                                if action(ui, "CANCEL") {
+                                    menu.screen = menu.return_to;
+                                }
+                            }
+
+                            Screen::Error => {
+                                ui.heading("Could not continue");
+                                ui.add_space(12.0);
+
+                                if action(ui, "BACK TO MENU") {
+                                    menu.error = None;
+                                    menu.screen = Screen::Main;
+                                }
+                            }
+
+                            Screen::InGame => {}
+                        }
+
+                        if let Some(error) = &menu.error {
+                            ui.add_space(16.0);
+                            ui.colored_label(
+                                egui::Color32::from_rgb(240, 145, 130),
+                                error,
+                            );
+                        }
+                    });
             });
-
-            ui.painter().text(
-                egui::pos2(rect.right() - 28.0, rect.bottom() - 26.0),
-                egui::Align2::RIGHT_BOTTOM,
-                "PROTOTYPE  •  ART IN PROGRESS",
-                egui::FontId::proportional(11.0),
-                MUTED,
-            );
         });
+
     Ok(())
+}
+fn action(ui: &mut egui::Ui, label: &str) -> bool {
+    ui.add_space(8.0);
+    menu_button(ui, label, true, false)
 }
 
 fn menu_button(ui: &mut egui::Ui, label: &str, enabled: bool, primary: bool) -> bool {

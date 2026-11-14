@@ -35,10 +35,19 @@ impl InterpolationClock {
     pub fn advance(&mut self, now: f64) -> f64 {
         let elapsed = (now - self.last_frame_s).max(0.0);
         self.last_frame_s = now;
-        let gap = self.latest_tick as f64 - Self::BUFFER_TICKS - self.display_tick;
-        let speed = (1.0 + 0.05 * gap).clamp(0.9, 1.1);
-        self.display_tick = (self.display_tick + elapsed * self.tick_rate * speed)
-            .min(self.latest_tick as f64 + 1.0);
+
+        let target = self.latest_tick as f64 - Self::BUFFER_TICKS;
+        let gap = target - self.display_tick;
+
+        if gap.abs() > 6.0 {
+            self.display_tick = target;
+        } else {
+            let speed = (1.0 + 0.05 * gap).clamp(0.9, 1.1);
+
+            self.display_tick = (self.display_tick + elapsed * self.tick_rate * speed)
+                .min(self.latest_tick as f64 + 1.0);
+        }
+
         self.display_tick
     }
 }
