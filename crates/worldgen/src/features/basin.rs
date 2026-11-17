@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
 use rand::{Rng, RngExt};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
+use super::first_failure;
 use crate::features::feature::{FeatureGenerator, TerrainFeature};
 use crate::{BiomeMapDefinition, NoiseSource, TileDraft, TilePos};
 
@@ -62,64 +63,93 @@ impl TerrainFeature for Basin {
     }
 }
 
-#[derive(Clone)]
-pub struct BasinGenerator {
+/// `features/basins.rs` settings. Probability 0 disables basins.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BasinSettings {
     pub cell_size: i64,
-    pub min_radius: f64,
-    pub max_radius: f64,
     /// Probability of one basin per generation cell, in [0, 1].
     pub probability: f64,
+    pub min_radius: f64,
+    pub max_radius: f64,
     pub min_depth: f64,
     pub max_depth: f64,
     pub min_rim_height: f64,
     pub max_rim_height: f64,
     /// Fraction of fine terrain detail removed at the center, in [0, 1].
     pub smoothing: f64,
+    /// Octaves of the elevation noise that forms the smoothed basin floor.
+    pub smoothing_octaves: usize,
     pub temperature_offset: f64,
     pub biome_map: BiomeMapDefinition,
+}
+
+impl Default for BasinSettings {
+    fn default() -> Self {
+        crate::config::parse_ron(crate::ConfigFile::Basins.bundled())
+            .expect("bundled basin settings must be valid")
+    }
+}
+
+/// Basin settings plus the coarse elevation the basin floors are smoothed towards.
+#[derive(Clone)]
+pub struct BasinGenerator {
+    pub settings: BasinSettings,
     coarse_elevation: Arc<dyn NoiseSource>,
 }
 
 impl BasinGenerator {
-    pub fn new(coarse_elevation: impl NoiseSource) -> Self {
-        Self::from_ron(include_str!("basin.ron"), coarse_elevation)
-            .expect("bundled basin definition must be valid")
-    }
-
-    pub fn from_ron(
-        source: &str,
-        coarse_elevation: impl NoiseSource,
-    ) -> Result<Self, ron::error::SpannedError> {
-        #[derive(Deserialize)]
-        #[serde(deny_unknown_fields)]
-        struct Definition {
-            cell_size: i64,
-            min_radius: f64,
-            max_radius: f64,
-            probability: f64,
-            min_depth: f64,
-            max_depth: f64,
-            min_rim_height: f64,
-            max_rim_height: f64,
-            smoothing: f64,
-            temperature_offset: f64,
-            biome_map: BiomeMapDefinition,
-        }
-        let definition: Definition = ron::from_str(source)?;
-        Ok(Self {
-            cell_size: definition.cell_size,
-            min_radius: definition.min_radius,
-            max_radius: definition.max_radius,
-            probability: definition.probability,
-            min_depth: definition.min_depth,
-            max_depth: definition.max_depth,
-            min_rim_height: definition.min_rim_height,
-            max_rim_height: definition.max_rim_height,
-            smoothing: definition.smoothing,
-            temperature_offset: definition.temperature_offset,
-            biome_map: definition.biome_map,
+    pub fn new(settings: BasinSettings, coarse_elevation: impl NoiseSource) -> Self {
+        Self {
+            settings,
             coarse_elevation: Arc::new(coarse_elevation),
-        })
+        }
+    }
+}
+
+impl BasinSettings {
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        let checks = [
+            (self.cell_size > 0, "cell_size must be positive"),
+            (
+                self.probability.is_finite() && (0.0..=1.0).contains(&self.probability),
+                "probability must be in [0, 1]",
+            ),
+            (
+                self.min_radius.is_finite()
+                    && self.min_radius > 0.0
+                    && self.max_radius.is_finite()
+                    && self.max_radius >= self.min_radius,
+                "radii must satisfy 0 < min_radius <= max_radius",
+            ),
+            (
+                self.min_depth.is_finite()
+                    && self.min_depth >= 0.0
+                    && self.max_depth.is_finite()
+                    && self.max_depth >= self.min_depth,
+                "depths must satisfy 0 <= min_depth <= max_depth",
+            ),
+            (
+                self.min_rim_height.is_finite()
+                    && self.min_rim_height >= 0.0
+                    && self.max_rim_height.is_finite()
+                    && self.max_rim_height >= self.min_rim_height,
+                "rim heights must satisfy 0 <= min_rim_height <= max_rim_height",
+            ),
+            (
+                self.smoothing.is_finite() && (0.0..=1.0).contains(&self.smoothing),
+                "smoothing must be in [0, 1]",
+            ),
+            (
+                self.smoothing_octaves > 0,
+                "smoothing_octaves must be positive",
+            ),
+            (
+                self.temperature_offset.is_finite(),
+                "temperature_offset must be finite",
+            ),
+        ];
+        first_failure(&checks)
     }
 }
 
@@ -127,43 +157,30 @@ impl FeatureGenerator for BasinGenerator {
     type Feature = Basin;
 
     fn biome_map(&self) -> BiomeMapDefinition {
-        self.biome_map.clone()
+        self.settings.biome_map.clone()
     }
 
     fn cell_size(&self) -> i64 {
-        assert!(self.cell_size > 0, "basin cell size must be positive");
-        self.cell_size
+        self.settings.cell_size
     }
 
     fn max_influence_radius(&self) -> f64 {
-        assert!(self.max_radius.is_finite() && self.max_radius > 0.0);
-        self.max_radius * 1.5
+        self.settings.max_radius * 1.5
     }
 
     fn generate_cell(&self, cx: i64, cy: i64, rng: &mut impl Rng) -> Vec<Basin> {
-        assert!(self.cell_size > 0, "basin cell size must be positive");
-        assert!(self.min_radius.is_finite() && self.min_radius > 0.0);
-        assert!(self.max_radius.is_finite() && self.max_radius >= self.min_radius);
-        assert!(self.probability.is_finite() && (0.0..=1.0).contains(&self.probability));
-        assert!(self.temperature_offset.is_finite());
-        assert!(self.smoothing.is_finite() && (0.0..=1.0).contains(&self.smoothing));
-        assert!(self.min_depth.is_finite() && self.min_depth >= 0.0);
-        assert!(self.max_depth.is_finite() && self.max_depth >= self.min_depth);
-        assert!(self.min_rim_height.is_finite() && self.min_rim_height >= 0.0);
-        assert!(self.max_rim_height.is_finite() && self.max_rim_height >= self.min_rim_height);
-
-        if self.probability == 0.0 || rng.random::<f64>() >= self.probability {
+        let s = &self.settings;
+        if s.probability == 0.0 || rng.random::<f64>() >= s.probability {
             return Vec::new();
         }
-
         vec![Basin {
-            x: (cx as f64 + rng.random::<f64>()) * self.cell_size as f64,
-            y: (cy as f64 + rng.random::<f64>()) * self.cell_size as f64,
-            radius: rng.random_range(self.min_radius..=self.max_radius),
-            depth: rng.random_range(self.min_depth..=self.max_depth),
-            rim_height: rng.random_range(self.min_rim_height..=self.max_rim_height),
-            smoothing: self.smoothing,
-            temperature_offset: self.temperature_offset,
+            x: (cx as f64 + rng.random::<f64>()) * s.cell_size as f64,
+            y: (cy as f64 + rng.random::<f64>()) * s.cell_size as f64,
+            radius: rng.random_range(s.min_radius..=s.max_radius),
+            depth: rng.random_range(s.min_depth..=s.max_depth),
+            rim_height: rng.random_range(s.min_rim_height..=s.max_rim_height),
+            smoothing: s.smoothing,
+            temperature_offset: s.temperature_offset,
             coarse_elevation: Arc::clone(&self.coarse_elevation),
         }]
     }

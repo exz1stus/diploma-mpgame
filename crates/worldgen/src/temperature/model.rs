@@ -2,7 +2,8 @@ use std::f64::consts::TAU;
 
 use crate::{GeoPosition, NoiseSource, TilePos, WorldGeography};
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PlanetParams {
     /// Orbital phase in [0, 1): 0 is equinox, 0.25 northern summer, 0.75 northern winter.
     pub orbit: f64,
@@ -29,7 +30,8 @@ pub struct TemperatureModel {
 }
 
 // all coefficients are in Celsius
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TemperatureCoefficients {
     pub base: f64, //   at zero solar exposure, zero height, and zero noise
     pub region: f64,

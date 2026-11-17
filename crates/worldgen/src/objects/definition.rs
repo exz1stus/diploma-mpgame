@@ -71,7 +71,8 @@ pub struct ObjectRepository {
 
 impl ObjectRepository {
     pub fn parse() -> Self {
-        Self::from_ron(include_str!("objects.ron")).expect("bundled objects must be valid")
+        Self::new(crate::WorldConfig::bundled().objects.kinds)
+            .expect("bundled objects must be valid")
     }
 
     pub fn from_ron(source: &str) -> Result<Self, ObjectsError> {
@@ -119,6 +120,7 @@ pub enum ObjectsError {
     DuplicateRuleId(u32),
     UnknownObject(String),
     UnknownBiome(String),
+    UnknownSet(String),
     InvalidRule { id: u32, field: &'static str },
 }
 
@@ -133,9 +135,15 @@ impl fmt::Display for ObjectsError {
             Self::InvalidFootprint(name) => {
                 write!(f, "object {name:?} must have a nonempty footprint")
             }
-            Self::DuplicateRuleId(id) => write!(f, "duplicate object placement rule ID {id}"),
-            Self::UnknownObject(name) => write!(f, "placement references unknown object {name:?}"),
-            Self::UnknownBiome(name) => write!(f, "placement references unknown biome {name:?}"),
+            Self::DuplicateRuleId(id) => write!(
+                f,
+                "duplicate object spawn (rule ID {id}); each object may be listed once per biome or set"
+            ),
+            Self::UnknownObject(name) => {
+                write!(f, "a spawn references unknown object kind {name:?}")
+            }
+            Self::UnknownBiome(name) => write!(f, "a spawn references unknown biome {name:?}"),
+            Self::UnknownSet(name) => write!(f, "a biome includes unknown object set {name:?}"),
             Self::InvalidRule { id, field } => write!(f, "object rule {id} has invalid {field}"),
         }
     }

@@ -377,8 +377,9 @@ fn invalid_configuration_is_rejected_before_generation() {
 
 #[test]
 fn bundled_definitions_resolve_and_appending_preserves_object_ids() {
+    let config = crate::WorldConfig::bundled();
     let biomes = BiomeRepository::parse();
-    let placer = ObjectPlacer::parse(&biomes);
+    let placer = ObjectPlacer::from_config(&config.biomes, &config.objects, &biomes).unwrap();
     assert_eq!(placer.objects().objects().len(), 4);
     let original = repository();
     let mut definitions = original.objects().to_vec();
@@ -393,4 +394,121 @@ fn bundled_definitions_resolve_and_appending_preserves_object_ids() {
     for definition in original.objects() {
         assert_eq!(original.id(&definition.name), appended.id(&definition.name));
     }
+}
+
+fn spawn(object: &str, density: f64) -> crate::ObjectSpawn {
+    crate::ObjectSpawn {
+        object: object.into(),
+        density,
+        height: crate::Range::full_height(),
+        temperature: crate::Range::unbounded(),
+        max_height_difference: None,
+    }
+}
+
+fn biomes_file(source: &str) -> crate::BiomesFile {
+    crate::config::parse_ron(source).unwrap()
+}
+
+fn objects_file() -> crate::ObjectsFile {
+    crate::ObjectsFile {
+        kinds: repository().objects().to_vec(),
+        sets: [("rocks".to_owned(), vec![spawn("small", 0.1)])].into(),
+    }
+}
+
+#[test]
+fn biome_spawns_and_sets_become_rules_with_stable_ids() {
+    let file = biomes_file(
+        r#"(
+        defaults: (object_sets: ["rocks"]),
+        biomes: [
+            (name: "plain", objects: [(object: "wide", density: 0.2)]),
+            (name: "other"),
+            (name: "bare", object_sets: []),
+        ],
+    )"#,
+    );
+    let rules = spawn_rules(&file, &objects_file()).unwrap();
+    assert_eq!(rules.len(), 2);
+    let own = rules.iter().find(|rule| rule.object == "wide").unwrap();
+    assert_eq!(own.biomes, ["plain"]);
+    assert_eq!(own.id, rule_id("biome", "plain", "wide"));
+    let shared = rules.iter().find(|rule| rule.object == "small").unwrap();
+    assert_eq!(
+        shared.biomes,
+        ["plain", "other"],
+        "defaults apply, [] opts out"
+    );
+    assert_eq!(shared.id, rule_id("set", "rocks", "small"));
+
+    // Reordering biomes keeps every rule ID.
+    let reordered = biomes_file(
+        r#"(
+        defaults: (object_sets: ["rocks"]),
+        biomes: [
+            (name: "other"),
+            (name: "plain", objects: [(object: "wide", density: 0.2)]),
+        ],
+    )"#,
+    );
+    let mut ids: Vec<_> = spawn_rules(&reordered, &objects_file())
+        .unwrap()
+        .iter()
+        .map(|rule| rule.id)
+        .collect();
+    let mut original: Vec<_> = rules.iter().map(|rule| rule.id).collect();
+    ids.sort_unstable();
+    original.sort_unstable();
+    assert_eq!(ids, original);
+}
+
+#[test]
+fn set_objects_may_straddle_the_biomes_that_include_the_set() {
+    let file = biomes_file(
+        r#"(biomes: [(name: "plain", object_sets: ["rocks"]), (name: "other", object_sets: ["rocks"])])"#,
+    );
+    let mut objects = objects_file();
+    objects
+        .sets
+        .insert("rocks".into(), vec![spawn("square", 0.5)]);
+    let repository = BiomeRepository::from_definitions(&file.biomes).unwrap();
+    let placer = ObjectPlacer::from_config(&file, &objects, &repository).unwrap();
+    let config = config(4, 2);
+    // Columns alternate between the two biomes, so every 2x2 footprint covers both.
+    let striped = |pos: TilePos| {
+        Ok(TileData {
+            height: 0.5,
+            temperature: 0.0,
+            biome: BiomeId((pos.x % 2) as u16),
+        })
+    };
+    let placed = placer
+        .place_in(config.tile_bounds().unwrap(), config, striped)
+        .unwrap();
+    assert!(!placed.is_empty());
+}
+
+#[test]
+fn unknown_sets_objects_and_duplicate_spawns_are_rejected() {
+    let objects = objects_file();
+    let unknown_set = biomes_file(r#"(biomes: [(name: "plain", object_sets: ["missing"])])"#);
+    assert!(matches!(
+        spawn_rules(&unknown_set, &objects),
+        Err(ObjectsError::UnknownSet(name)) if name == "missing"
+    ));
+    let repository = biomes();
+    let unknown_object =
+        biomes_file(r#"(biomes: [(name: "plain", objects: [(object: "missing", density: 0.1)])])"#);
+    assert!(matches!(
+        ObjectPlacer::from_config(&unknown_object, &objects, &repository),
+        Err(ObjectsError::UnknownObject(_))
+    ));
+    let duplicate = biomes_file(
+        r#"(biomes: [(name: "plain", objects: [(object: "small", density: 0.1), (object: "small", density: 0.2)])])"#,
+    );
+    assert!(matches!(
+        ObjectPlacer::from_config(&duplicate, &objects, &repository),
+        Err(ObjectsError::DuplicateRuleId(_))
+    ));
 }

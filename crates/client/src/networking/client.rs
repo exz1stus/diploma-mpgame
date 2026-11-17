@@ -15,10 +15,7 @@ use crate::networking::reconciliation::{
 use crate::networking::simulation_clock::ClientSimulationClock;
 pub(crate) use crate::networking::state::Owned;
 
-use crate::game::rendering::{
-    add_circle_visuals, render_player_visuals, render_world_chunks, render_world_objects,
-    setup_circle_assets,
-};
+use crate::game::rendering::{add_circle_visuals, render_player_visuals, setup_circle_assets};
 use crate::networking::network::{
     collect_incoming, release_incoming, release_outgoing, reset_disconnected_client, send_messages,
 };
@@ -89,7 +86,6 @@ impl GameClient {
         );
 
         app.add_systems(Update, reset_disconnected_client);
-        app.add_systems(Update, (render_world_chunks, render_world_objects));
         app.add_systems(Update, follow_player_camera.after(render_player_visuals));
         app.add_systems(PostUpdate, sample_network.after(RenetSend));
 

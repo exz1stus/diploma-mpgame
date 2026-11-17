@@ -37,6 +37,8 @@ fi
 
 cargo build -p server -p client
 binary_dir="${CARGO_TARGET_DIR:-target}/debug"
+# Clients run as plain executables, so tell Bevy where the client's assets live.
+export BEVY_ASSET_ROOT="${BEVY_ASSET_ROOT:-$PWD/crates/client}"
 
 pids=()
 cleanup() {

@@ -1,0 +1,64 @@
+// Ground textures per biome.
+//
+// A biome is drawn with the texture `textures/tiles/<texture>.png`. By default the texture
+// name is the biome name; list a biome under `textures` to rename it or share one texture
+// between several biomes. All tile textures must have the same size.
+//
+// Until a texture file exists, the tile is drawn flat with its placeholder color
+// (keyed by texture name).
+(
+    textures: {
+        // "volcano": "basalt",
+    },
+    default_placeholder: "#FF00FF",
+    placeholder_colors: {
+        "permanent_polar_ice": "#F3FAFF",
+        "fractured_ice_basins": "#B7DCEB",
+        "polar_ice_highlands": "#E0EDF7",
+        "buried_ice_basins": "#597E9A",
+        "blue_ice_plains": "#83BDDA",
+        "sintered_frost_fields": "#B9CFD8",
+        "glacier_ridges": "#DFE7F2",
+        "cold_trap_ice": "#3D637D",
+        "frosted_crater_floors": "#8DAAB9",
+        "ice_cemented_regolith": "#A2AEB5",
+        "rime_covered_ridges": "#CEDBE5",
+        "frozen_shadow_basins": "#304658",
+        "frost_margin_regolith": "#76868B",
+        "frosted_breccia": "#8D9497",
+        "patchy_ice_highlands": "#B3BEC8",
+        "dark_crater_floors": "#2E3542",
+        "salt_crust_pans": "#BEB8A4",
+        "mixed_ice_regolith": "#8B9F9D",
+        "silicate_gravel_plains": "#7D8089",
+        "bright_ejecta_ridges": "#C3C0B7",
+        "carbonaceous_basins": "#32313A",
+        "ochre_dust_plains": "#A18B68",
+        "weathered_basalt": "#5B626B",
+        "exposed_anorthosite": "#ACA9A2",
+        "dark_basalt_depressions": "#3E414D",
+        "iron_rich_regolith": "#96715D",
+        "rocky_crater_uplands": "#8C8986",
+        "sunlit_crater_floors": "#645347",
+        "copper_toned_scree": "#AD8060",
+        "barren_silicate_ridges": "#ABA18B",
+        "warm_exposed_rock": "#B99572",
+        "hot_dark_regolith": "#6F4F42",
+        // Feature territories.
+        "basin": "#4A4E57",
+        "volcano": "#454850",
+        "crater": "#3A3F4A",
+        "frozen_basin": "#8DAAB9",
+        "frozen_volcano": "#677986",
+        "frozen_crater": "#76868B",
+        "polar_crater": "#E0EDF7",
+        "crater_ejecta": "#9A968E",
+        "frozen_crater_ejecta": "#CEDBE5",
+        "polar_basin": "#F3FAFF",
+        "basin_salt_flats": "#BEB8A4",
+        "weathered_basin": "#8C7462",
+        "polar_volcano": "#9EB9C8",
+        "volcanic_highlands": "#777870",
+        "frozen_volcanic_highlands": "#AFC2CB",
+    },
+)

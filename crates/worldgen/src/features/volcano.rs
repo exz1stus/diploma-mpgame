@@ -1,6 +1,7 @@
 use rand::{Rng, RngExt};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
+use super::first_failure;
 use crate::features::feature::{FeatureGenerator, TerrainFeature};
 use crate::{BiomeMapDefinition, TileDraft, TilePos};
 
@@ -46,7 +47,7 @@ impl TerrainFeature for Volcano {
     }
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct VolcanoGenerator {
     pub cell_size: i64,
@@ -65,26 +66,46 @@ pub struct VolcanoGenerator {
 
 impl Default for VolcanoGenerator {
     fn default() -> Self {
-        Self::from_ron(include_str!("volcano.ron"))
-            .expect("bundled volcano definition must be valid")
+        crate::config::parse_ron(crate::ConfigFile::Volcanoes.bundled())
+            .expect("bundled volcano settings must be valid")
     }
 }
 
 impl VolcanoGenerator {
-    pub fn from_ron(source: &str) -> Result<Self, ron::error::SpannedError> {
-        ron::from_str(source)
-    }
-
-    pub(crate) fn validate(&self) {
-        assert!(self.cell_size > 0, "volcano cell size must be positive");
-        assert!(self.min_radius.is_finite() && self.min_radius > 0.0);
-        assert!(self.max_radius.is_finite() && self.max_radius >= self.min_radius);
-        assert!(self.probability.is_finite() && (0.0..=1.0).contains(&self.probability));
-        assert!(self.min_height.is_finite() && self.min_height >= 0.0);
-        assert!(self.max_height.is_finite() && self.max_height >= self.min_height);
-        assert!(self.caldera_ratio.is_finite() && (0.0..1.0).contains(&self.caldera_ratio));
-        assert!(self.caldera_depth.is_finite() && self.caldera_depth >= 0.0);
-        assert!(self.temperature_offset.is_finite());
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        first_failure(&[
+            (self.cell_size > 0, "cell_size must be positive"),
+            (
+                self.min_radius.is_finite()
+                    && self.min_radius > 0.0
+                    && self.max_radius.is_finite()
+                    && self.max_radius >= self.min_radius,
+                "radii must satisfy 0 < min_radius <= max_radius",
+            ),
+            (
+                self.probability.is_finite() && (0.0..=1.0).contains(&self.probability),
+                "probability must be in [0, 1]",
+            ),
+            (
+                self.min_height.is_finite()
+                    && self.min_height >= 0.0
+                    && self.max_height.is_finite()
+                    && self.max_height >= self.min_height,
+                "heights must satisfy 0 <= min_height <= max_height",
+            ),
+            (
+                self.caldera_ratio.is_finite() && (0.0..1.0).contains(&self.caldera_ratio),
+                "caldera_ratio must be in [0, 1)",
+            ),
+            (
+                self.caldera_depth.is_finite() && self.caldera_depth >= 0.0,
+                "caldera_depth must be non-negative",
+            ),
+            (
+                self.temperature_offset.is_finite(),
+                "temperature_offset must be finite",
+            ),
+        ])
     }
 }
 
@@ -104,7 +125,6 @@ impl FeatureGenerator for VolcanoGenerator {
     }
 
     fn generate_cell(&self, cx: i64, cy: i64, rng: &mut impl Rng) -> Vec<Volcano> {
-        self.validate();
         if self.probability == 0.0 || rng.random::<f64>() >= self.probability {
             return Vec::new();
         }

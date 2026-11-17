@@ -9,7 +9,7 @@ use shared::world::{
     ChunkPos, ChunkSnapshot, TILE_SIZE, WORLD_CHANNEL, WorldMessage, chunk_span, decode,
 };
 
-use crate::game::world::{ChunkTiles, InChunk, WorldChunk, WorldObject, WorldPalette};
+use crate::game::world::{ChunkTiles, InChunk, WorldChunk, WorldInfo, WorldObject};
 
 pub struct WorldStreamingPlugin;
 
@@ -79,17 +79,16 @@ impl StreamedChunks {
 
     fn apply(&mut self, message: WorldMessage, commands: &mut Commands) -> Applied {
         match message {
-            WorldMessage::Init(info) => {
+            WorldMessage::Init(manifest) => {
                 info!(
-                    "world stream started: {}-tile chunks, {} tile colors",
-                    info.chunk_size,
-                    info.tile_colors.len()
+                    "world stream started: {}-tile chunks, {} biomes, {} object kinds",
+                    manifest.chunk_size,
+                    manifest.biomes.len(),
+                    manifest.objects.len()
                 );
                 // Queued messages after Init belong to the new stream, so keep them.
                 self.despawn_all(commands);
-                commands.insert_resource(WorldPalette {
-                    tile_colors: info.tile_colors,
-                });
+                commands.insert_resource(WorldInfo(manifest));
                 Applied::Updated
             }
             WorldMessage::ChunkLoad(snapshot) => {
@@ -174,13 +173,13 @@ fn spawn_chunk(commands: &mut Commands, snapshot: ChunkSnapshot) -> Entity {
 
 fn clear_world_on_disconnect(
     client: Res<RenetClient>,
-    palette: Option<Res<WorldPalette>>,
+    world: Option<Res<WorldInfo>>,
     mut chunks: ResMut<StreamedChunks>,
     mut commands: Commands,
 ) {
-    if client.is_disconnected() && (palette.is_some() || chunks.len() > 0) {
+    if client.is_disconnected() && (world.is_some() || chunks.len() > 0) {
         chunks.clear(&mut commands);
-        commands.remove_resource::<WorldPalette>();
+        commands.remove_resource::<WorldInfo>();
     }
 }
 
@@ -189,13 +188,13 @@ mod tests {
     use super::*;
     use crate::game::world::ChunkContents;
     use bevy::ecs::system::RunSystemOnce;
-    use shared::world::{ChunkObject, Footprint, ObjectId, Tile, TilePos};
+    use shared::world::{BiomeId, ChunkObject, Footprint, ObjectId, TilePos, TileSample};
 
     fn snapshot(x: i64) -> ChunkSnapshot {
         ChunkSnapshot {
             pos: ChunkPos { x, y: -1 },
             size: 2,
-            tiles: vec![Tile { id: 1 }; 4],
+            tiles: vec![TileSample::new(BiomeId(1), 0.5); 4],
             objects: vec![ChunkObject {
                 kind: ObjectId(0),
                 anchor: TilePos { x: x * 2, y: -2 },

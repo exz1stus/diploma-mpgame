@@ -27,15 +27,6 @@ impl Candidate {
 }
 
 impl ObjectPlacer {
-    pub fn parse(biomes: &BiomeRepository) -> Self {
-        Self::from_ron(
-            include_str!("placement.ron"),
-            ObjectRepository::parse(),
-            biomes,
-        )
-        .expect("bundled object placement must be valid")
-    }
-
     pub fn empty() -> Self {
         Self {
             objects: ObjectRepository::default(),
@@ -75,9 +66,11 @@ impl ObjectPlacer {
                     field: "density",
                 });
             }
-            for (field, range) in [("height", rule.height), ("temperature", rule.temperature)] {
-                if !range.is_valid() || (field == "height" && (range.min < 0.0 || range.max > 1.0))
-                {
+            for (field, valid) in [
+                ("height", rule.height.is_valid_height()),
+                ("temperature", rule.temperature.is_valid()),
+            ] {
+                if !valid {
                     return Err(ObjectsError::InvalidRule { id: rule.id, field });
                 }
             }

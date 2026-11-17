@@ -1,5 +1,5 @@
 // Generation settings and biome selection for volcanoes.
-// Biome names reference the single repository in ../biomes/biomes.ron.
+// Biome names reference ../biomes.ron; the map is evaluated on final height and temperature.
 (
     cell_size: 4096,
     probability: 0.2,

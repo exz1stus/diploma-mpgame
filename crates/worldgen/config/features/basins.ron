@@ -1,5 +1,5 @@
 // Generation settings and biome selection for basins.
-// Biome names reference the single repository in ../biomes/biomes.ron.
+// Biome names reference ../biomes.ron; the map is evaluated on final height and temperature.
 (
     cell_size: 6144,
     probability: 0.2,
@@ -10,6 +10,8 @@
     min_rim_height: 0.012,
     max_rim_height: 0.026,
     smoothing: 0.9,
+    // Octaves of the elevation noise used as the smoothed basin floor (capped by elevation octaves).
+    smoothing_octaves: 2,
     temperature_offset: 0.0,
     // First match wins: preserve polar ice, then choose climate-appropriate territory biomes.
     biome_map: [

@@ -1,4 +1,4 @@
-use std::net::SocketAddr;
+use std::{net::SocketAddr, path::PathBuf};
 
 use bevy_ecs::resource::Resource;
 
@@ -7,8 +7,11 @@ pub(crate) struct AppConfig {
     pub(crate) protocol_id: u64,
     pub(crate) server_addr: SocketAddr,
     pub(crate) tickrate: u32,
-    /// Folder name under `src/game/worldgen_presets`, or a path to a preset folder.
-    pub(crate) worldgen_preset: String,
+    /// Folder whose files override the worldgen defaults
+    /// (`WORLDGEN_CONFIG`, default `crates/server/worldgen`).
+    pub(crate) worldgen_config: PathBuf,
+    /// Replaces the configured world seed (`WORLD_SEED`), e.g. when the client hosts a new world.
+    pub(crate) world_seed: Option<u64>,
 }
 
 impl AppConfig {
@@ -28,14 +31,21 @@ impl AppConfig {
             .parse()
             .expect("TICKRATE must be a valid u64");
 
-        let worldgen_preset =
-            std::env::var("WORLDGEN_PRESET").unwrap_or_else(|_| "default".to_string());
+        let worldgen_config = std::env::var_os("WORLDGEN_CONFIG").map_or_else(
+            || PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/worldgen")),
+            PathBuf::from,
+        );
+
+        let world_seed = std::env::var("WORLD_SEED")
+            .ok()
+            .map(|seed| seed.parse().expect("WORLD_SEED must be a valid u64"));
 
         Self {
             protocol_id,
             server_addr,
             tickrate,
-            worldgen_preset,
+            worldgen_config,
+            world_seed,
         }
     }
 }

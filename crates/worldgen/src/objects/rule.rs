@@ -3,21 +3,12 @@ use serde::{Deserialize, Serialize};
 use super::{Footprint, ObjectId};
 use crate::{BiomeId, Range, TileData};
 
-fn full_height() -> Range {
-    Range { min: 0.0, max: 1.0 }
-}
-
-fn full_temperature() -> Range {
-    Range {
-        min: -f64::MAX,
-        max: f64::MAX,
-    }
-}
-
+/// A resolved-by-name placement rule. Configs declare spawns per biome or set
+/// (see `biomes.ron`); [`super::spawn_rules`] turns them into these.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ObjectRule {
-    /// Stable across rule-file reordering; contributes to randomness and instance IDs.
+    /// Stable across rule reordering; contributes to randomness and instance IDs.
     pub id: u32,
     pub object: String,
     /// Proposal probability per eligible anchor, before overlap rejection.
@@ -25,9 +16,9 @@ pub struct ObjectRule {
     /// An empty list allows every biome. Every occupied tile must qualify.
     #[serde(default)]
     pub biomes: Vec<String>,
-    #[serde(default = "full_height")]
+    #[serde(default = "Range::full_height")]
     pub height: Range,
-    #[serde(default = "full_temperature")]
+    #[serde(default = "Range::unbounded")]
     pub temperature: Range,
     #[serde(default)]
     pub max_height_difference: Option<f64>,

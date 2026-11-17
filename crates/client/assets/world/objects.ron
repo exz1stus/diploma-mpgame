@@ -1,0 +1,16 @@
+// Object sprites per object kind.
+//
+// A kind is drawn with `textures/objects/<texture>.png`, stretched over its footprint.
+// By default the texture name is the kind name; list a kind under `textures` to rename it
+// or share a texture. Until a texture file exists, the object is drawn as a rectangle in
+// its placeholder color (keyed by texture name).
+(
+    textures: {},
+    default_placeholder: "#475A47",
+    placeholder_colors: {
+        "rock": "#5A5550",
+        "large_rock": "#4A4642",
+        "iron_ore": "#7A4A35",
+        "tree": "#3E5A34",
+    },
+)

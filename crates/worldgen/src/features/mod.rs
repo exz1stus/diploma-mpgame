@@ -7,6 +7,14 @@ pub(crate) mod volcano;
 pub use feature::{FeatureGenerator, TerrainFeature};
 pub use stage::FeatureStage;
 
+/// The message of the first failed `(passed, message)` check.
+pub(crate) fn first_failure(checks: &[(bool, &str)]) -> Result<(), String> {
+    match checks.iter().find(|(passed, _)| !passed) {
+        Some((_, message)) => Err((*message).to_owned()),
+        None => Ok(()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -81,20 +89,22 @@ mod tests {
     }
 
     #[test]
-    fn each_feature_loads_ron_maps_and_preserves_heating_until_biome_selection() {
-        let heated =
-            |source: &str| source.replace("temperature_offset: 0.0", "temperature_offset: 20.0");
-        let mut crater =
-            crater::CraterGenerator::from_ron(&heated(include_str!("crater.ron"))).unwrap();
+    fn each_feature_uses_its_configured_map_and_preserves_heating_until_biome_selection() {
+        let config = crate::WorldConfig::bundled();
+        let mut crater = config.craters;
         crater.density = 4.0;
+        crater.temperature_offset = 20.0;
         check_feature(crater, "crater");
-        let mut basin =
-            basin::BasinGenerator::from_ron(&heated(include_str!("basin.ron")), FlatNoise).unwrap();
+        let mut basin = config.basins;
         basin.probability = 1.0;
-        check_feature(basin, "weathered_basin");
-        let mut volcano =
-            volcano::VolcanoGenerator::from_ron(&heated(include_str!("volcano.ron"))).unwrap();
+        basin.temperature_offset = 20.0;
+        check_feature(
+            basin::BasinGenerator::new(basin, FlatNoise),
+            "weathered_basin",
+        );
+        let mut volcano = config.volcanoes;
         volcano.probability = 1.0;
+        volcano.temperature_offset = 20.0;
         check_feature(volcano, "volcano");
     }
 
@@ -103,7 +113,7 @@ mod tests {
         let repository = BiomeRepository::parse();
         for definition in [
             crater::CraterGenerator::default().biome_map,
-            basin::BasinGenerator::new(FlatNoise).biome_map,
+            basin::BasinSettings::default().biome_map,
             volcano::VolcanoGenerator::default().biome_map,
         ] {
             let map = definition.resolve(&repository).unwrap();

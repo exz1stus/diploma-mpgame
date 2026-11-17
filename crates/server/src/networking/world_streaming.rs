@@ -24,9 +24,7 @@ use bevy_renet::{
 };
 use shared::{
     components::Ownership,
-    world::{
-        ChunkObject, ChunkSnapshot, WORLD_CHANNEL, WorldInfo, WorldMessage, encode, parse_hex_color,
-    },
+    world::{ChunkObject, ChunkSnapshot, WORLD_CHANNEL, WorldMessage, encode},
 };
 use worldgen::ChunkPos;
 
@@ -117,19 +115,6 @@ fn encode_chunks(
     }
 }
 
-fn world_info(generator: &WorldGenerator) -> WorldInfo {
-    WorldInfo {
-        chunk_size: generator.config().chunk_size,
-        tile_colors: generator
-            .tile_mapper()
-            .palette()
-            .tiles()
-            .iter()
-            .map(|tile| parse_hex_color(&tile.color).unwrap_or([255, 0, 255, 255]))
-            .collect(),
-    }
-}
-
 fn stream_chunks(
     config: Res<WorldStreamConfig>,
     generator: Res<WorldGenerator>,
@@ -157,7 +142,7 @@ fn stream_chunks(
     for client in clients.ready_clients() {
         let stream = streams.clients.entry(client).or_default();
         if !stream.initialized {
-            let init = encode(&WorldMessage::Init(world_info(&generator)));
+            let init = encode(&WorldMessage::Init(generator.manifest()));
             server.send_message(client, WORLD_CHANNEL, init);
             stream.initialized = true;
         }
@@ -322,7 +307,8 @@ mod tests {
             panic!("first world message must be Init");
         };
         assert_eq!(info.chunk_size, 4);
-        assert_eq!(info.tile_colors, vec![[0x12, 0x34, 0x56, 255]]);
+        assert_eq!(info.biomes, ["plain"]);
+        assert_eq!(info.objects[0].name, "rock");
         let has_objects = harness.messages.iter().any(|message| {
             matches!(message, WorldMessage::ChunkLoad(chunk) if !chunk.objects.is_empty())
         });

@@ -27,9 +27,11 @@ impl BiomeMapDefinition {
     pub fn resolve(&self, repository: &BiomeRepository) -> Result<BiomeMap, BiomeMapError> {
         let mut rules = Vec::with_capacity(self.0.len());
         for rule in &self.0 {
-            for (field, range) in [("height", rule.height), ("temperature", rule.temperature)] {
-                if !range.is_valid() || (field == "height" && (range.min < 0.0 || range.max > 1.0))
-                {
+            for (field, valid) in [
+                ("height", rule.height.is_valid_height()),
+                ("temperature", rule.temperature.is_valid()),
+            ] {
+                if !valid {
                     return Err(BiomeMapError::InvalidRange {
                         biome: rule.biome.clone(),
                         field,
@@ -65,7 +67,7 @@ pub struct BiomeMap {
 
 impl BiomeMap {
     pub fn parse(repository: &BiomeRepository) -> Self {
-        Self::from_ron(include_str!("maps/default.ron"), repository)
+        Self::from_ron(crate::ConfigFile::BiomeMap.bundled(), repository)
             .expect("bundled default biome map must be valid")
     }
 

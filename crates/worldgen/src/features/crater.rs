@@ -1,6 +1,7 @@
 use rand::{Rng, RngExt};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
+use super::first_failure;
 use crate::features::feature::{FeatureGenerator, TerrainFeature};
 use crate::{BiomeMapDefinition, TileDraft, TilePos};
 
@@ -45,7 +46,7 @@ impl TerrainFeature for Crater {
     }
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CraterGenerator {
     pub cell_size: i64,
@@ -59,13 +60,31 @@ pub struct CraterGenerator {
 
 impl Default for CraterGenerator {
     fn default() -> Self {
-        Self::from_ron(include_str!("crater.ron")).expect("bundled crater definition must be valid")
+        crate::config::parse_ron(crate::ConfigFile::Craters.bundled())
+            .expect("bundled crater settings must be valid")
     }
 }
 
 impl CraterGenerator {
-    pub fn from_ron(source: &str) -> Result<Self, ron::error::SpannedError> {
-        ron::from_str(source)
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        first_failure(&[
+            (self.cell_size > 0, "cell_size must be positive"),
+            (
+                self.min_radius.is_finite()
+                    && self.min_radius > 0.0
+                    && self.max_radius.is_finite()
+                    && self.max_radius >= self.min_radius,
+                "radii must satisfy 0 < min_radius <= max_radius",
+            ),
+            (
+                self.density.is_finite() && (0.0..=4.0).contains(&self.density),
+                "density must be in [0, 4]",
+            ),
+            (
+                self.temperature_offset.is_finite(),
+                "temperature_offset must be finite",
+            ),
+        ])
     }
 }
 

@@ -1,6 +1,7 @@
 mod config;
 mod game;
 mod networking;
+mod world_presentation;
 
 use bevy::{DefaultPlugins, prelude::*, window::WindowPlugin};
 use bevy_egui::{EguiPlugin, EguiPrimaryContextPass};
@@ -21,6 +22,7 @@ use crate::{
         session::{drive_session, install_session},
         world_streaming::WorldStreamingPlugin,
     },
+    world_presentation::WorldPresentationPlugin,
 };
 
 fn main() {
@@ -42,6 +44,7 @@ fn main() {
         RenetClientPlugin,
         NetcodeClientPlugin,
         WorldStreamingPlugin,
+        WorldPresentationPlugin,
     ));
 
     app.add_systems(Startup, spawn_camera);

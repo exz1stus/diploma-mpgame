@@ -7,6 +7,7 @@ use crate::*;
 
 type Samples = Arc<Mutex<HashMap<TilePos, usize>>>;
 
+/// Alternating low/high columns of one biome; counts how often each tile is sampled.
 struct TestTerrain(Samples);
 
 impl GenerationStage for TestTerrain {
@@ -18,26 +19,7 @@ impl GenerationStage for TestTerrain {
     }
 }
 
-fn mapper(biomes: &BiomeRepository, reversed: bool) -> TileMapper {
-    let source = if reversed {
-        r#"[(tile: "high", height: (min: 0.0, max: 0.5)), (tile: "low", height: (min: 0.5, max: 1.0))]"#
-    } else {
-        r#"[(tile: "low", height: (min: 0.0, max: 0.5)), (tile: "high", height: (min: 0.5, max: 1.0))]"#
-    };
-    TileMapper::from_ron(
-        source,
-        TilePalette::from_ron(
-            r##"[
-        (name: "low", color: "#123456"), (name: "high", color: "#abcdef"),
-    ]"##,
-        )
-        .unwrap(),
-        biomes,
-    )
-    .unwrap()
-}
-
-fn generator(size: u32, samples: Samples, reversed: bool) -> WorldGenerator {
+fn generator(size: u32, samples: Samples) -> WorldGenerator {
     let config = WorldGeneratorConfig {
         chunk_size: size,
         world_size_chunks: 16 / size,
@@ -64,7 +46,6 @@ fn generator(size: u32, samples: Samples, reversed: bool) -> WorldGenerator {
         config,
         vec![Box::new(TestTerrain(samples))],
         Arc::clone(&biomes),
-        mapper(&biomes, reversed),
         objects,
     )
 }
@@ -72,15 +53,14 @@ fn generator(size: u32, samples: Samples, reversed: bool) -> WorldGenerator {
 #[test]
 fn chunk_reuses_terrain_samples_and_returns_row_major_tiles() {
     let samples = Samples::default();
-    let generator = generator(4, Arc::clone(&samples), false);
+    let generator = generator(4, Arc::clone(&samples));
     let position = ChunkPos { x: 1, y: 1 };
     let chunk = generator.chunk_at(position).unwrap();
     assert_eq!(chunk.position, position);
     assert_eq!(chunk.size, 4);
-    assert_eq!(
-        chunk.tiles.iter().map(|tile| tile.id).collect::<Vec<_>>(),
-        vec![0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1]
-    );
+    let low = TileSample::new(BiomeId(0), 0.25);
+    let high = TileSample::new(BiomeId(0), 0.75);
+    assert_eq!(chunk.tiles, [low, high].repeat(8));
     assert!(!chunk.objects.is_empty());
     let counts = samples.lock().unwrap();
     assert!(counts.len() >= 16);
@@ -94,7 +74,7 @@ fn chunk_reuses_terrain_samples_and_returns_row_major_tiles() {
             assert_eq!(
                 chunk.tiles[y * 4 + x],
                 generator
-                    .tile_at(TilePos {
+                    .sample_at(TilePos {
                         x: 4 + x as i64,
                         y: 4 + y as i64,
                     })
@@ -111,7 +91,7 @@ fn chunk_reuses_terrain_samples_and_returns_row_major_tiles() {
 
 #[test]
 fn chunk_results_are_identical_across_worker_and_request_orders() {
-    let generator = Arc::new(generator(4, Samples::default(), false));
+    let generator = Arc::new(generator(4, Samples::default()));
     let positions: Vec<_> = (0..4)
         .flat_map(|y| (0..4).map(move |x| ChunkPos { x, y }))
         .collect();
@@ -133,18 +113,14 @@ fn chunk_results_are_identical_across_worker_and_request_orders() {
 }
 
 #[test]
-fn palette_changes_preserve_objects_and_chunk_partitions_preserve_global_placement() {
-    let small = generator(4, Samples::default(), false);
-    let alternate = generator(4, Samples::default(), true);
-    let large = generator(8, Samples::default(), false);
+fn chunk_partitions_preserve_global_placement() {
+    let small = generator(4, Samples::default());
+    let large = generator(8, Samples::default());
     let big_chunk = large.chunk_at(ChunkPos { x: 0, y: 0 }).unwrap();
     for y in 0..2 {
         for x in 0..2 {
             let pos = ChunkPos { x, y };
             let original = small.chunk_at(pos).unwrap();
-            let changed = alternate.chunk_at(pos).unwrap();
-            assert_eq!(original.objects, changed.objects);
-            assert_ne!(original.tiles, changed.tiles);
             let bounds = TileRect {
                 min: TilePos { x: x * 4, y: y * 4 },
                 max: TilePos {
@@ -171,7 +147,7 @@ fn palette_changes_preserve_objects_and_chunk_partitions_preserve_global_placeme
 
 #[test]
 fn invalid_chunk_requests_and_classification_gaps_return_errors() {
-    let generator = generator(4, Samples::default(), false);
+    let generator = generator(4, Samples::default());
     for position in [
         ChunkPos { x: -1, y: 0 },
         ChunkPos { x: 0, y: 4 },
@@ -188,7 +164,7 @@ fn invalid_chunk_requests_and_classification_gaps_return_errors() {
         TilePos { x: 0, y: i64::MAX },
     ] {
         assert_eq!(
-            generator.tile_at(position),
+            generator.sample_at(position),
             Err(GenerationError::TileOutsideWorld(position))
         );
     }
@@ -197,7 +173,6 @@ fn invalid_chunk_requests_and_classification_gaps_return_errors() {
         generator.config(),
         vec![],
         Arc::clone(&biomes),
-        mapper(&biomes, false),
         ObjectPlacer::empty(),
     );
     let origin = TilePos { x: 0, y: 0 };
@@ -205,20 +180,9 @@ fn invalid_chunk_requests_and_classification_gaps_return_errors() {
         no_biome.chunk_at(ChunkPos { x: 0, y: 0 }),
         Err(GenerationError::NoBiome(origin))
     );
-    let no_tile = WorldGenerator::new(
-        generator.config(),
-        vec![Box::new(TestTerrain(Samples::default()))],
-        Arc::clone(&biomes),
-        TileMapper::from_ron("[]", TilePalette::new(vec![]).unwrap(), &biomes).unwrap(),
-        ObjectPlacer::empty(),
-    );
     assert_eq!(
-        no_tile.chunk_at(ChunkPos { x: 0, y: 0 }),
-        Err(GenerationError::NoTile(origin))
-    );
-    assert_eq!(
-        no_tile.tile_at(origin),
-        Err(GenerationError::NoTile(origin))
+        no_biome.sample_at(origin),
+        Err(GenerationError::NoBiome(origin))
     );
     for config in [
         WorldGeneratorConfig {

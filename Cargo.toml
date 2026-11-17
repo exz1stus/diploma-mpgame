@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/client", "crates/server", "crates/shared", "crates/worldgen"]
+members = ["crates/client", "crates/server", "crates/shared", "crates/worldgen", "tools/thesis-figures"]
 resolver = "3"
 
 # Bevy systems take many params and nested query filters by design.

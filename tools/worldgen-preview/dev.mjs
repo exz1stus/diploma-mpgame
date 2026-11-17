@@ -15,6 +15,8 @@ const root = resolve(import.meta.dirname, '../..');
 const source = resolve(root, 'crates/worldgen/src');
 const example = resolve(root, 'crates/worldgen/examples');
 const manifest = resolve(root, 'crates/worldgen/Cargo.toml');
+const config = resolve(root, 'crates/worldgen/config');
+const presentation = resolve(root, 'crates/client/assets/world');
 const dist = resolve(import.meta.dirname, 'dist');
 const binary = resolve(root, 'target/debug/examples/worldgen_preview');
 let generator = null;
@@ -71,12 +73,9 @@ function compile() {
 
 function schedule() { clearTimeout(timer); timer = setTimeout(compile, 180); }
 const watchers = [
-  watch(source, (_, name) => { if (name?.endsWith('.rs')) schedule(); }),
-  watch(resolve(source, 'features'), (_, name) => { if (name?.endsWith('.rs') || name?.endsWith('.ron')) schedule(); }),
-  watch(resolve(source, 'biomes'), (_, name) => { if (name?.endsWith('.rs') || name?.endsWith('.ron')) schedule(); }),
-  watch(resolve(source, 'tiles'), (_, name) => { if (name?.endsWith('.rs') || name?.endsWith('.ron')) schedule(); }),
-  watch(resolve(source, 'objects'), (_, name) => { if (name?.endsWith('.rs') || name?.endsWith('.ron')) schedule(); }),
-  watch(resolve(source, 'biomes/maps'), (_, name) => { if (name?.endsWith('.ron')) schedule(); }),
+  watch(source, { recursive: true }, (_, name) => { if (name?.endsWith('.rs')) schedule(); }),
+  watch(config, { recursive: true }, (_, name) => { if (name?.endsWith('.ron')) schedule(); }),
+  watch(presentation, (_, name) => { if (name?.endsWith('.ron')) schedule(); }),
   watch(example, (_, name) => { if (name === 'worldgen_preview.rs') schedule(); }),
   watch(manifest, schedule),
 ];

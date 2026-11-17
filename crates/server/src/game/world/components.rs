@@ -1,5 +1,5 @@
 use bevy_ecs::{component::Component, entity::Entity};
-use worldgen::{ChunkPos, PlacedObject, Tile};
+use worldgen::{ChunkPos, PlacedObject, TileSample};
 
 /// Keeps chunks loaded (and simulated) around this entity's physics position.
 /// Distance is in chunks, measured as a square around the observer's chunk.
@@ -23,11 +23,11 @@ pub(crate) struct Chunk {
     pub pos: ChunkPos,
 }
 
-/// Ground tiles, indexed `y * size + x` in chunk-local coordinates.
+/// Ground tiles (biome and height), indexed `y * size + x` in chunk-local coordinates.
 #[derive(Component, Clone, Debug)]
 pub(crate) struct ChunkTiles {
     pub size: u32,
-    pub tiles: Vec<Tile>,
+    pub tiles: Vec<TileSample>,
 }
 
 /// A generated object living as an ECS entity (tree, rock, ...). Game logic attaches more
