@@ -35,13 +35,13 @@ impl TerrainFeature for Basin {
         self.radius * 1.5
     }
 
-    fn apply(&self, pos: TilePos, tile: &mut TileDraft) -> bool {
+    fn apply(&self, pos: TilePos, tile: &mut TileDraft) -> Option<f64> {
         let x = pos.x as f64;
         let y = pos.y as f64;
         let height = tile.height;
         let u = (x - self.x).hypot(y - self.y) / self.radius;
         if u >= 1.5 {
-            return false;
+            return None;
         }
 
         let bowl = (1.0 - u * u).max(0.0).powi(2);
@@ -59,7 +59,7 @@ impl TerrainFeature for Basin {
         // continuously at the influence boundary. Clamp only after all layers.
         tile.height = smoothed + edge * (depression + rim);
         tile.temperature_offset += self.temperature_offset * bowl;
-        true
+        Some(u)
     }
 }
 
@@ -81,7 +81,13 @@ pub struct BasinSettings {
     /// Octaves of the elevation noise that forms the smoothed basin floor.
     pub smoothing_octaves: usize,
     pub temperature_offset: f64,
+    /// Biome rules for the territory, evaluated on final height and temperature.
+    /// Empty or omitted: the feature only shapes terrain and keeps the terrain biome.
+    #[serde(default)]
     pub biome_map: BiomeMapDefinition,
+    /// Objects spawned only inside this feature's territory, in any biome.
+    #[serde(default)]
+    pub objects: Vec<crate::ObjectSpawn>,
 }
 
 impl Default for BasinSettings {

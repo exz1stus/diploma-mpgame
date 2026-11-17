@@ -9,7 +9,9 @@ use super::{
     chunk_mesh::build_chunk_mesh,
     layers::TileLayers,
     material::TerrainMaterial,
-    textures::{AssetRoot, TILE_FOLDER, all_settled, request_textures, stack_layers},
+    textures::{
+        AssetRoot, TILE_FOLDER, all_settled, request_textures, stack_layers, texture_file_exists,
+    },
 };
 use crate::game::world::{ChunkTiles, WorldInfo};
 
@@ -36,7 +38,9 @@ pub fn prepare_tile_catalog(
     root: Res<AssetRoot>,
     asset_server: Res<AssetServer>,
 ) {
-    let catalog = TileCatalog::build(&world, &config.tiles);
+    let catalog = TileCatalog::build(&world, &config.tiles, |texture| {
+        texture_file_exists(&root, TILE_FOLDER, texture)
+    });
     let handles = request_textures(&root, TILE_FOLDER, &catalog.textures, &asset_server);
     commands.remove_resource::<GroundMaterial>();
     commands.insert_resource(PendingTileTextures(handles));

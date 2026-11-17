@@ -52,7 +52,8 @@ mod tests {
     #[test]
     fn folder_overrides_only_the_files_it_contains() {
         let dir = temp_dir("override");
-        let objects = r#"(kinds: [(name: "rock", footprint: (width: 1, height: 1)), (name: "tree", footprint: (width: 1, height: 1))], sets: {"common_rocks": [(object: "rock", density: 0.5)], "iron_deposits": []})"#;
+        // Crater spawns in the bundled features/craters.ron need rock and large_rock.
+        let objects = r#"(kinds: [(name: "rock", footprint: (width: 1, height: 1)), (name: "large_rock", footprint: (width: 2, height: 2)), (name: "tree", footprint: (width: 1, height: 1))], sets: {"common_rocks": [(object: "rock", density: 0.5)], "iron_deposits": []})"#;
         let volcanoes = ConfigFile::Volcanoes
             .bundled()
             .replace("probability: 0.2", "probability: 0.0");
@@ -71,8 +72,22 @@ mod tests {
         );
         let config = WorldConfig::load(&source).unwrap();
         assert_eq!(config.volcanoes.probability, 0.0);
-        let generator = small(config).build().unwrap();
-        assert_eq!(generator.manifest().objects.len(), 2);
+        let generator = small(config.clone()).build().unwrap();
+        assert_eq!(generator.manifest().objects.len(), 3);
+
+        // A kind a feature still spawns cannot be removed; the error names the feature file.
+        let mut missing = config;
+        missing
+            .objects
+            .kinds
+            .retain(|kind| kind.name != "large_rock");
+        assert!(matches!(
+            small(missing).build(),
+            Err(ConfigError::Invalid {
+                file: ConfigFile::Craters,
+                ..
+            })
+        ));
         fs::remove_dir_all(dir).unwrap();
     }
 

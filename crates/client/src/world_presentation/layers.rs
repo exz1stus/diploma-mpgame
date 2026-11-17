@@ -118,12 +118,13 @@ impl TileLayerAppExt for App {
     }
 }
 
-/// Picks each tile's texture from its biome.
+/// Picks each tile's texture from its biome, or from its ground biome when the biome
+/// has no tiles of its own (see [`TileCatalog`]).
 pub struct TextureLayer;
 
 impl TileLayer for TextureLayer {
     fn apply(&self, sample: TileSample, context: &TileContext, visual: &mut TileVisual) {
-        visual.texture_layer = context.catalog.layer(sample.biome);
+        visual.texture_layer = context.catalog.layer(sample);
     }
 }
 
@@ -158,10 +159,13 @@ mod tests {
             name: name.into(),
             placeholder: Srgba::WHITE,
         };
-        TileCatalog(TextureCatalog {
-            textures: vec![entry("a"), entry("b")],
-            texture_of: vec![1, 0],
-        })
+        TileCatalog {
+            set: TextureCatalog {
+                textures: vec![entry("a"), entry("b")],
+                texture_of: vec![1, 0],
+            },
+            own_tiles: vec![true, true],
+        }
     }
 
     fn manifest() -> WorldManifest {

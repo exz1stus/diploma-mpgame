@@ -2,11 +2,12 @@
 
 use std::sync::Arc;
 
+use crate::objects::feature_rules;
 use crate::{
     BasinGenerator, BiomeMap, BiomeRepository, BiomeStage, ClampHeightStage, ConfigError,
-    ConfigFile, ElevationStage, FbmNoise, FeatureGenerator, FeatureStage, GenerationStage,
-    NoiseSource, ObjectPlacer, ObjectsError, TemperatureModel, TemperatureStage, WorldConfig,
-    WorldGenerator, WorldGeography,
+    ConfigFile, ElevationStage, FbmNoise, FeatureGenerator, FeatureKind, FeatureSpawns,
+    FeatureStage, GenerationStage, NoiseSource, ObjectPlacer, ObjectRepository, ObjectsError,
+    TemperatureModel, TemperatureStage, WorldConfig, WorldGenerator, WorldGeography,
 };
 
 const BASIN_SEED: u64 = 0x4352_4152;
@@ -63,8 +64,10 @@ impl WorldConfig {
             .resolve(&biomes)
             .map_err(|error| ConfigError::invalid(ConfigFile::BiomeMap, error))?;
         self.check_feature_biome_maps(&biomes)?;
-        let object_placer = ObjectPlacer::from_config(&self.biomes, &self.objects, &biomes)
-            .map_err(|error| ConfigError::invalid(objects_error_file(&error), error))?;
+        self.check_feature_spawns(&biomes)?;
+        let object_placer =
+            ObjectPlacer::from_config(&self.biomes, &self.objects, &self.feature_spawns(), &biomes)
+                .map_err(|error| ConfigError::invalid(objects_error_file(&error), error))?;
         let stages = self.stages(sources, &biomes, biome_map);
         Ok(WorldGenerator::new(
             dimensions,
@@ -88,6 +91,7 @@ impl WorldConfig {
             vec![Box::new(ElevationStage::new(sources.elevation))];
         if self.basins.probability > 0.0 {
             stages.push(feature_stage(
+                FeatureKind::Basin,
                 seed ^ BASIN_SEED,
                 BasinGenerator::new(self.basins.clone(), sources.basin_floor),
                 chunk_size,
@@ -96,6 +100,7 @@ impl WorldConfig {
         }
         if self.craters.density > 0.0 {
             stages.push(feature_stage(
+                FeatureKind::Crater,
                 seed ^ CRATER_SEED,
                 self.craters.clone(),
                 chunk_size,
@@ -104,6 +109,7 @@ impl WorldConfig {
         }
         if self.volcanoes.probability > 0.0 {
             stages.push(feature_stage(
+                FeatureKind::Volcano,
                 seed ^ VOLCANO_SEED,
                 self.volcanoes.clone(),
                 chunk_size,
@@ -116,6 +122,15 @@ impl WorldConfig {
         )));
         stages.push(Box::new(BiomeStage::new(Arc::new(biome_map))));
         stages
+    }
+
+    /// Objects declared in each feature file, whether or not the feature is enabled.
+    fn feature_spawns(&self) -> [FeatureSpawns<'_>; 3] {
+        [
+            (FeatureKind::Basin, &self.basins.objects),
+            (FeatureKind::Crater, &self.craters.objects),
+            (FeatureKind::Volcano, &self.volcanoes.objects),
+        ]
     }
 
     fn temperature_model(&self, regions: Box<dyn NoiseSource>) -> TemperatureModel {
@@ -149,6 +164,22 @@ impl WorldConfig {
             .map_err(invalid(ConfigFile::Volcanoes))
     }
 
+    /// Validates each feature's spawns on their own, so errors name the feature file.
+    fn check_feature_spawns(&self, biomes: &BiomeRepository) -> Result<(), ConfigError> {
+        let files = [
+            ConfigFile::Basins,
+            ConfigFile::Craters,
+            ConfigFile::Volcanoes,
+        ];
+        for (file, (kind, spawns)) in files.into_iter().zip(self.feature_spawns()) {
+            let objects = ObjectRepository::new(self.objects.kinds.clone())
+                .map_err(|error| ConfigError::invalid(ConfigFile::Objects, error))?;
+            ObjectPlacer::new(feature_rules(kind, spawns).collect(), objects, biomes)
+                .map_err(|error| ConfigError::invalid(file, error))?;
+        }
+        Ok(())
+    }
+
     fn check_feature_biome_maps(&self, biomes: &BiomeRepository) -> Result<(), ConfigError> {
         for (file, map) in [
             (ConfigFile::Craters, &self.craters.biome_map),
@@ -163,12 +194,13 @@ impl WorldConfig {
 }
 
 fn feature_stage<G: FeatureGenerator + 'static>(
+    kind: FeatureKind,
     seed: u64,
     generator: G,
     chunk_size: u32,
     biomes: &BiomeRepository,
 ) -> Box<dyn GenerationStage> {
-    Box::new(FeatureStage::new(seed, generator, chunk_size, biomes))
+    Box::new(FeatureStage::new(kind, seed, generator, chunk_size, biomes))
 }
 
 /// Spawn references are written in `biomes.ron`; kinds and sets in `objects.ron`.

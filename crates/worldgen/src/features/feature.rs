@@ -19,9 +19,10 @@ pub trait TerrainFeature: Send + Sync {
 
     /// Modify terrain at a world-space position. Chunk queries may select this
     /// feature for tiles outside its influence; leave those tiles unchanged.
-    /// Return true inside the territory, even for weak or zero changes.
+    /// Inside the territory, even for weak or zero changes, return the distance
+    /// from the centre divided by the feature radius; outside, return `None`.
     /// Biomes and appearance are decided by later stages.
-    fn apply(&self, pos: TilePos, tile: &mut TileDraft) -> bool;
+    fn apply(&self, pos: TilePos, tile: &mut TileDraft) -> Option<f64>;
 }
 
 pub trait FeatureGenerator: Send + Sync {

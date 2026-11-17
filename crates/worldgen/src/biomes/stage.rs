@@ -14,15 +14,18 @@ impl BiomeStage {
 }
 
 impl GenerationStage for BiomeStage {
+    /// The terrain map gives the ground; a feature map, where it has a rule, overrides
+    /// the biome (and so the objects) but not the ground.
     fn apply(&self, _pos: TilePos, tile: &mut TileDraft) {
-        tile.biome = tile
+        let ground = self
+            .default_map
+            .determine_biome(tile.temperature, tile.height);
+        let feature = tile
             .biome_map
             .as_ref()
-            .and_then(|map| map.determine_biome(tile.temperature, tile.height))
-            .or_else(|| {
-                self.default_map
-                    .determine_biome(tile.temperature, tile.height)
-            });
+            .and_then(|map| map.determine_biome(tile.temperature, tile.height));
+        tile.biome = feature.or(ground);
+        tile.ground = ground.or(feature);
     }
 }
 
@@ -61,6 +64,13 @@ mod tests {
             assert_eq!(
                 tile.biome, expected,
                 "height={height}, temperature={temperature}"
+            );
+            assert_eq!(
+                tile.ground,
+                default_map
+                    .determine_biome(temperature, height)
+                    .or(expected),
+                "the ground is always the terrain biome"
             );
         }
     }

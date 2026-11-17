@@ -11,7 +11,7 @@ pub use definition::{
 };
 pub use placer::ObjectPlacer;
 pub use rule::ObjectRule;
-pub use spawns::{rule_id, spawn_rules};
+pub use spawns::{FeatureSpawns, feature_rules, rule_id, spawn_rules};
 
 #[cfg(test)]
 mod tests;

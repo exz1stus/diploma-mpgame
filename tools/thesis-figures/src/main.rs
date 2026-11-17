@@ -12,7 +12,7 @@ mod timing;
 
 use std::{fs, path::PathBuf};
 
-use maps::{Territories, Transect, WorldGrid};
+use maps::{Transect, WorldGrid};
 use worldgen::{TilePos, WorldConfig};
 
 /// World tiles per map pixel: an 8000-tile world becomes a 1000-pixel map.
@@ -39,19 +39,18 @@ fn main() {
     let base = timing::without_features(&config)
         .build()
         .expect("generator");
-    let territories = Territories::new(&config, &full);
     let full_grid = WorldGrid::sample(&full, MAP_STEP);
     let base_grid = WorldGrid::sample(&base, MAP_STEP);
-    maps::world_maps(&base_grid, &full_grid, &full, &territories, &out);
+    maps::world_maps(&base_grid, &full_grid, &full, &out);
     maps::map_legends(&out);
     maps::distributions(&full_grid, &out.join("distributions.svg"));
     let shares = maps::biome_shares(&full_grid, &full, &out.join("biome_coverage.svg"));
-    report_territories(&full_grid, &territories);
+    report_territories(&full_grid);
     println!("top biomes: {:?}", &shares[..shares.len().min(8)]);
 
-    let crater = maps::largest_territory(&full_grid, &territories, 2).expect("a crater");
+    let crater = maps::largest_territory(&full_grid, 2).expect("a crater");
     let centre = |owner, sign| {
-        maps::strongest_change(&base_grid, &full_grid, &territories, owner, sign)
+        maps::strongest_change(&base_grid, &full_grid, owner, sign)
             .expect("a feature")
     };
     let lines = [
@@ -81,7 +80,6 @@ fn main() {
     maps::transects(
         &base,
         &full,
-        &territories,
         &lines,
         &out.join("transects.svg"),
     );
@@ -110,10 +108,10 @@ fn main() {
     }
 }
 
-fn report_territories(grid: &WorldGrid, territories: &Territories) {
+fn report_territories(grid: &WorldGrid) {
     let mut counts = [0usize; 4];
     for tile in &grid.tiles {
-        counts[territories.owner(tile.biome)] += 1;
+        counts[maps::territory(tile)] += 1;
     }
     let total = grid.tiles.len() as f64;
     let shares: Vec<_> = counts

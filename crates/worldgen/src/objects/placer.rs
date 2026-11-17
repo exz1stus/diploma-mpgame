@@ -83,6 +83,7 @@ impl ObjectPlacer {
                     field: "max_height_difference",
                 });
             }
+            let feature = rule.feature_limit()?;
             let object = objects
                 .id(&rule.object)
                 .ok_or_else(|| ObjectsError::UnknownObject(rule.object.clone()))?;
@@ -105,6 +106,7 @@ impl ObjectPlacer {
                 height: rule.height,
                 temperature: rule.temperature,
                 max_height_difference: rule.max_height_difference,
+                feature,
             });
         }
         Ok(Self {

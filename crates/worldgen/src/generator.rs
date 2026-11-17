@@ -55,12 +55,9 @@ impl WorldGenerator {
 
     /// Fallible terrain sampling, also usable for diagnostics outside world bounds.
     pub fn try_tile_data_at(&self, pos: TilePos) -> Result<TileData, GenerationError> {
-        let draft = self.draft_at(pos);
-        Ok(TileData {
-            height: draft.height,
-            temperature: draft.temperature,
-            biome: draft.biome.ok_or(GenerationError::NoBiome(pos))?,
-        })
+        self.draft_at(pos)
+            .try_finish()
+            .ok_or(GenerationError::NoBiome(pos))
     }
 
     /// One tile of the finite world, as stored in chunks.
@@ -199,10 +196,16 @@ mod tests {
         assert_eq!(cone.height, 1.0);
         assert_eq!(cone.temperature, 2.0);
         assert_eq!(cone.biome, biomes.id("volcano").unwrap());
+        assert_eq!(
+            Some(cone.ground),
+            BiomeMap::parse(&biomes).determine_biome(2.0, 1.0),
+            "the feature biome sits on the terrain biome"
+        );
         let plain = generator.tile_data_at(TilePos { x: 1, y: 0 });
         assert_eq!(plain.height, 0.5);
         assert_eq!(plain.temperature, -5.0);
         assert_ne!(plain.biome, cone.biome);
+        assert_eq!(plain.ground, plain.biome);
     }
 
     #[test]

@@ -30,6 +30,12 @@ impl TextureTable {
         self.textures.get(name).map_or(name, String::as_str)
     }
 
+    /// Whether this file says anything about `name`: a texture or a placeholder color.
+    pub fn lists(&self, name: &str) -> bool {
+        self.textures.contains_key(name)
+            || self.placeholder_colors.contains_key(self.texture_for(name))
+    }
+
     pub fn placeholder(&self, texture: &str) -> Srgba {
         let hex = self
             .placeholder_colors

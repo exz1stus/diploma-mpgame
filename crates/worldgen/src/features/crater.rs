@@ -24,7 +24,7 @@ impl TerrainFeature for Crater {
         self.radius * 1.5
     }
 
-    fn apply(&self, pos: TilePos, tile: &mut TileDraft) -> bool {
+    fn apply(&self, pos: TilePos, tile: &mut TileDraft) -> Option<f64> {
         let x = pos.x as f64;
         let y = pos.y as f64;
         let dx = x - self.x;
@@ -33,7 +33,7 @@ impl TerrainFeature for Crater {
         let r = (dx * dx + dy * dy).sqrt() / self.radius;
 
         if r >= 1.5 {
-            return false;
+            return None;
         }
 
         let bowl = -self.depth * (1.0 - r * r).max(0.0).powi(2);
@@ -42,7 +42,7 @@ impl TerrainFeature for Crater {
 
         tile.height = tile.height + bowl + rim;
         tile.temperature_offset += self.temperature_offset * (1.0 - r / 1.5).powi(2);
-        true
+        Some(r)
     }
 }
 
@@ -55,7 +55,13 @@ pub struct CraterGenerator {
     /// Expected craters per cell, in [0, 4]. Zero disables crater generation.
     pub density: f64,
     pub temperature_offset: f64,
+    /// Biome rules for the territory, evaluated on final height and temperature.
+    /// Empty or omitted: the feature only shapes terrain and keeps the terrain biome.
+    #[serde(default)]
     pub biome_map: BiomeMapDefinition,
+    /// Objects spawned only inside this feature's territory, in any biome.
+    #[serde(default)]
+    pub objects: Vec<crate::ObjectSpawn>,
 }
 
 impl Default for CraterGenerator {

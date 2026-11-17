@@ -2,7 +2,7 @@
 
 use std::{collections::HashMap, fs::File, io::BufWriter, path::Path, thread};
 
-use worldgen::{BiomeId, ChunkPos, TileData, TilePos, WorldConfig, WorldGenerator};
+use worldgen::{BiomeId, ChunkPos, FeatureKind, TileData, TilePos, WorldGenerator};
 
 use crate::chart::{Axes, AxisLabels, SERIES, legend};
 use crate::palette::{self, Rgb, TERRITORY};
@@ -115,28 +115,13 @@ impl WorldGrid {
     }
 }
 
-/// Which feature layer owns a biome, by the names in its territory map.
-pub struct Territories(HashMap<BiomeId, usize>);
-
-impl Territories {
-    pub fn new(config: &WorldConfig, generator: &WorldGenerator) -> Self {
-        let mut owners = HashMap::new();
-        for (owner, map) in [
-            (1, &config.basins.biome_map),
-            (2, &config.craters.biome_map),
-            (3, &config.volcanoes.biome_map),
-        ] {
-            for rule in &map.0 {
-                if let Some(id) = generator.biomes().id(&rule.biome) {
-                    owners.insert(id, owner);
-                }
-            }
-        }
-        Self(owners)
-    }
-
-    pub fn owner(&self, biome: BiomeId) -> usize {
-        self.0.get(&biome).copied().unwrap_or(0)
+/// Index into [`TERRITORY`] of the feature whose territory contains the tile (0 = none).
+pub fn territory(tile: &TileData) -> usize {
+    match tile.feature.map(|mark| mark.kind) {
+        None => 0,
+        Some(FeatureKind::Basin) => 1,
+        Some(FeatureKind::Crater) => 2,
+        Some(FeatureKind::Volcano) => 3,
     }
 }
 
@@ -163,7 +148,6 @@ pub fn world_maps(
     base: &WorldGrid,
     full: &WorldGrid,
     generator: &WorldGenerator,
-    territories: &Territories,
     out: &Path,
 ) {
     let biome_name = |id: BiomeId| generator.biomes().get(id).map_or("", |b| b.name.as_str());
@@ -178,7 +162,7 @@ pub fn world_maps(
         palette::temperature_rgb(t.temperature)
     });
     raster(full, &out.join("map_territories.png"), |c, r, t| {
-        let hex = TERRITORY[territories.owner(t.biome)].1;
+        let hex = TERRITORY[territory(t)].1;
         palette::shade(hex_rgb(hex), full.light(c, r, RELIEF))
     });
     raster(full, &out.join("map_biomes.png"), |c, r, t| {
@@ -385,14 +369,13 @@ pub fn biome_shares(
 /// Largest connected group of grid samples owned by `owner`; returns its centre in tiles.
 pub fn largest_territory(
     full: &WorldGrid,
-    territories: &Territories,
     owner: usize,
 ) -> Option<TilePos> {
     let side = full.side;
     let mut seen = vec![false; side * side];
     let mut best: Option<(usize, (f64, f64))> = None;
     for start in 0..side * side {
-        if seen[start] || territories.owner(full.tiles[start].biome) != owner {
+        if seen[start] || territory(&full.tiles[start]) != owner {
             continue;
         }
         let (mut stack, mut count, mut sum) = (vec![start], 0usize, (0.0, 0.0));
@@ -410,7 +393,7 @@ pub fn largest_territory(
             for (r, c) in neighbours {
                 if r < side && c < side {
                     let next = r * side + c;
-                    if !seen[next] && territories.owner(full.tiles[next].biome) == owner {
+                    if !seen[next] && territory(&full.tiles[next]) == owner {
                         seen[next] = true;
                         stack.push(next);
                     }
@@ -432,12 +415,11 @@ pub fn largest_territory(
 pub fn strongest_change(
     base: &WorldGrid,
     full: &WorldGrid,
-    territories: &Territories,
     owner: usize,
     sign: f64,
 ) -> Option<TilePos> {
     (0..full.tiles.len())
-        .filter(|&i| territories.owner(full.tiles[i].biome) == owner)
+        .filter(|&i| territory(&full.tiles[i]) == owner)
         .max_by(|&a, &b| {
             let change = |i: usize| sign * (full.tiles[i].height - base.tiles[i].height);
             change(a).total_cmp(&change(b))
@@ -459,7 +441,6 @@ pub struct Transect<'a> {
 pub fn transects(
     base: &WorldGenerator,
     full: &WorldGenerator,
-    territories: &Territories,
     lines: &[Transect],
     path: &Path,
 ) {
@@ -473,7 +454,7 @@ pub fn transects(
                     y: line.center.y,
                 };
                 let final_tile = full.tile_data_at(pos);
-                let owned = territories.owner(final_tile.biome) == line.owner;
+                let owned = territory(&final_tile) == line.owner;
                 (
                     offset as f64,
                     base.tile_data_at(pos).height,

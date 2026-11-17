@@ -722,6 +722,11 @@ fn feature_biome_rules(config: &WorldConfig, path: &Path) {
             },
         );
         draw_rules(&mut svg, &axes, map, 9.5);
+        if map.0.is_empty() {
+            let (x, y) = (axes.left + axes.width / 2.0, axes.top + axes.height / 2.0);
+            let note = TextStyle::new(12.0).middle().color(MUTED);
+            svg.lines(x, y, &["no biome map:", "terrain biomes are kept,", "only height changes"], note);
+        }
     }
     svg.save(path);
 }

@@ -26,12 +26,12 @@ impl TerrainFeature for Volcano {
         self.radius
     }
 
-    fn apply(&self, pos: TilePos, tile: &mut TileDraft) -> bool {
+    fn apply(&self, pos: TilePos, tile: &mut TileDraft) -> Option<f64> {
         let x = pos.x as f64;
         let y = pos.y as f64;
         let u = (x - self.x).hypot(y - self.y) / self.radius;
         if u >= 1.0 {
-            return false;
+            return None;
         }
         // Smooth summit and foot avoid a central spike or a seam at the base.
         let cone = self.height * (1.0 - u).powi(2) * (1.0 + 2.0 * u);
@@ -43,7 +43,7 @@ impl TerrainFeature for Volcano {
         };
         tile.height = tile.height + cone - caldera;
         tile.temperature_offset += self.temperature_offset * (1.0 - u).powi(2);
-        true
+        Some(u)
     }
 }
 
@@ -61,7 +61,13 @@ pub struct VolcanoGenerator {
     pub caldera_ratio: f64,
     pub caldera_depth: f64,
     pub temperature_offset: f64,
+    /// Biome rules for the territory, evaluated on final height and temperature.
+    /// Empty or omitted: the feature only shapes terrain and keeps the terrain biome.
+    #[serde(default)]
     pub biome_map: BiomeMapDefinition,
+    /// Objects spawned only inside this feature's territory, in any biome.
+    #[serde(default)]
+    pub objects: Vec<crate::ObjectSpawn>,
 }
 
 impl Default for VolcanoGenerator {

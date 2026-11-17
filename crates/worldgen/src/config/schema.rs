@@ -105,6 +105,10 @@ pub struct ObjectSpawn {
     /// Largest height spread allowed under the footprint.
     #[serde(default)]
     pub max_height_difference: Option<f64>,
+    /// Only for spawns in `features/*.ron`: distance from the feature centre,
+    /// where 1 is the feature radius (crater rim, volcano foot).
+    #[serde(default)]
+    pub distance: Option<Range>,
 }
 
 /// `objects.ron`: object kinds (list order is the object ID) and shared spawn sets.

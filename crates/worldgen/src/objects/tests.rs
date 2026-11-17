@@ -49,6 +49,8 @@ fn flat(_: TilePos) -> Result<TileData, GenerationError> {
         height: 0.5,
         temperature: 0.0,
         biome: BiomeId(0),
+        ground: BiomeId(0),
+        feature: None,
     })
 }
 
@@ -379,7 +381,7 @@ fn invalid_configuration_is_rejected_before_generation() {
 fn bundled_definitions_resolve_and_appending_preserves_object_ids() {
     let config = crate::WorldConfig::bundled();
     let biomes = BiomeRepository::parse();
-    let placer = ObjectPlacer::from_config(&config.biomes, &config.objects, &biomes).unwrap();
+    let placer = ObjectPlacer::from_config(&config.biomes, &config.objects, &[], &biomes).unwrap();
     assert_eq!(placer.objects().objects().len(), 4);
     let original = repository();
     let mut definitions = original.objects().to_vec();
@@ -403,6 +405,7 @@ fn spawn(object: &str, density: f64) -> crate::ObjectSpawn {
         height: crate::Range::full_height(),
         temperature: crate::Range::unbounded(),
         max_height_difference: None,
+        distance: None,
     }
 }
 
@@ -473,7 +476,7 @@ fn set_objects_may_straddle_the_biomes_that_include_the_set() {
         .sets
         .insert("rocks".into(), vec![spawn("square", 0.5)]);
     let repository = BiomeRepository::from_definitions(&file.biomes).unwrap();
-    let placer = ObjectPlacer::from_config(&file, &objects, &repository).unwrap();
+    let placer = ObjectPlacer::from_config(&file, &objects, &[], &repository).unwrap();
     let config = config(4, 2);
     // Columns alternate between the two biomes, so every 2x2 footprint covers both.
     let striped = |pos: TilePos| {
@@ -481,6 +484,8 @@ fn set_objects_may_straddle_the_biomes_that_include_the_set() {
             height: 0.5,
             temperature: 0.0,
             biome: BiomeId((pos.x % 2) as u16),
+            ground: BiomeId(0),
+            feature: None,
         })
     };
     let placed = placer
@@ -501,14 +506,70 @@ fn unknown_sets_objects_and_duplicate_spawns_are_rejected() {
     let unknown_object =
         biomes_file(r#"(biomes: [(name: "plain", objects: [(object: "missing", density: 0.1)])])"#);
     assert!(matches!(
-        ObjectPlacer::from_config(&unknown_object, &objects, &repository),
+        ObjectPlacer::from_config(&unknown_object, &objects, &[], &repository),
         Err(ObjectsError::UnknownObject(_))
     ));
     let duplicate = biomes_file(
         r#"(biomes: [(name: "plain", objects: [(object: "small", density: 0.1), (object: "small", density: 0.2)])])"#,
     );
     assert!(matches!(
-        ObjectPlacer::from_config(&duplicate, &objects, &repository),
+        ObjectPlacer::from_config(&duplicate, &objects, &[], &repository),
         Err(ObjectsError::DuplicateRuleId(_))
+    ));
+}
+
+#[test]
+fn feature_spawns_stay_inside_their_feature_and_distance_band() {
+    use crate::{FeatureKind, FeatureMark};
+    let mut rim = spawn("small", 1.0);
+    rim.distance = Some(crate::Range { min: 0.8, max: 1.2 });
+    let file = biomes_file(
+        r#"(biomes: [(name: "plain", object_sets: []), (name: "other", object_sets: [])])"#,
+    );
+    let objects = objects_file();
+    let placer =
+        ObjectPlacer::from_config(&file, &objects, &[(FeatureKind::Crater, &[rim])], &biomes())
+            .unwrap();
+    let config = config(8, 1);
+    // A crater centred at x = 0: distance grows by 0.1 per column; columns 8+ are outside.
+    // Every other row is a volcano instead, which a crater spawn must ignore.
+    let terrain = |pos: TilePos| {
+        let feature = (pos.x < 8).then_some(FeatureMark {
+            kind: if pos.y % 2 == 0 {
+                FeatureKind::Crater
+            } else {
+                FeatureKind::Volcano
+            },
+            distance: pos.x as f64 / 10.0 + 0.5,
+        });
+        Ok(TileData {
+            biome: BiomeId((pos.y % 2) as u16),
+            feature,
+            ..flat(pos).unwrap()
+        })
+    };
+    let placed = placer
+        .place_in(config.tile_bounds().unwrap(), config, terrain)
+        .unwrap();
+    assert!(!placed.is_empty());
+    for object in &placed {
+        let TilePos { x, y } = object.id.anchor;
+        assert_eq!(y % 2, 0, "only crater rows, in any biome");
+        assert!(
+            (3..7).contains(&x),
+            "only the rim band 0.8..1.2, got x = {x}"
+        );
+        assert_eq!(object.id.rule_id, rule_id("feature", "crater", "small"));
+    }
+}
+
+#[test]
+fn distance_is_rejected_on_biome_and_set_spawns() {
+    let file = biomes_file(
+        r#"(biomes: [(name: "plain", object_sets: [], objects: [(object: "small", density: 0.1, distance: (min: 0.0, max: 1.0))])])"#,
+    );
+    assert!(matches!(
+        ObjectPlacer::from_config(&file, &objects_file(), &[], &biomes()),
+        Err(ObjectsError::InvalidRule { .. })
     ));
 }

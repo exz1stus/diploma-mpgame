@@ -37,14 +37,14 @@ pub use error::GenerationError;
 pub use features::basin::{BasinGenerator, BasinSettings};
 pub use features::crater::CraterGenerator;
 pub use features::volcano::VolcanoGenerator;
-pub use features::{FeatureGenerator, FeatureStage, TerrainFeature};
+pub use features::{FeatureGenerator, FeatureKind, FeatureMark, FeatureStage, TerrainFeature};
 pub use generator::WorldGenerator;
 pub use geographical::{GeoPosition, WorldGeography};
 pub use manifest::{ObjectKind, WorldManifest};
 pub use noise::{FbmNoise, NoiseConfig, NoiseSource};
 pub use objects::{
-    Footprint, ObjectDefinition, ObjectId, ObjectInstanceId, ObjectPlacer, ObjectRepository,
-    ObjectRule, ObjectsError, PlacedObject,
+    FeatureSpawns, Footprint, ObjectDefinition, ObjectId, ObjectInstanceId, ObjectPlacer,
+    ObjectRepository, ObjectRule, ObjectsError, PlacedObject,
 };
 pub use pipeline::TerrainSources;
 pub use range::Range;

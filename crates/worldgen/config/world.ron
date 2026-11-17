@@ -1,7 +1,7 @@
 // World dimensions and the terrain/climate models every chunk is sampled from.
 (
     // Bump when generation output changes for the same seed (invalidates saved chunks).
-    generator_version: 2,
+    generator_version: 4,
     seed: 0,
     world_size_chunks: 250,
     chunk_size: 32,

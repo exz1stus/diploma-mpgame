@@ -1,4 +1,4 @@
-use crate::{BiomeId, BiomeMap};
+use crate::{BiomeId, BiomeMap, FeatureMark};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -15,27 +15,42 @@ pub struct TileData {
     /// Daily average Celsius temperature for the configured season.
     pub temperature: f64,
     pub biome: BiomeId,
+    /// The biome the terrain map gives the final height and temperature. Equals `biome`
+    /// outside feature territories; inside them it names the surrounding ground.
+    pub ground: BiomeId,
+    /// Feature territory containing the tile, for placement rules. Not stored in chunks.
+    pub feature: Option<FeatureMark>,
 }
 
-/// What a chunk stores per tile: the biome and the final height, quantized to u16.
+/// What a chunk stores per tile: the biomes and the final height, quantized to u16.
 /// Appearance (textures, tint, relief) is derived from this by the consumer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct TileSample {
+    /// The tile's biome; decides which objects spawn.
     pub biome: BiomeId,
+    /// The terrain biome under a feature biome (see [`TileData::ground`]), for consumers
+    /// that draw feature territories like the surrounding terrain.
+    pub ground: BiomeId,
     /// Normalized height × `u16::MAX`; read it with [`TileSample::height`].
     pub height: u16,
 }
 
 impl TileSample {
+    /// A tile outside feature territories: its ground is its biome.
     pub fn new(biome: BiomeId, height: f64) -> Self {
+        Self::on_ground(biome, biome, height)
+    }
+
+    pub fn on_ground(biome: BiomeId, ground: BiomeId, height: f64) -> Self {
         Self {
             biome,
+            ground,
             height: (height.clamp(0.0, 1.0) * f64::from(u16::MAX)).round() as u16,
         }
     }
 
     pub fn from_data(data: &TileData) -> Self {
-        Self::new(data.biome, data.height)
+        Self::on_ground(data.biome, data.ground, data.height)
     }
 
     /// Normalized height in [0, 1].
@@ -52,17 +67,30 @@ pub struct TileDraft {
     /// Selected feature map; only the biome stage evaluates its rules.
     pub biome_map: Option<Arc<BiomeMap>>,
     pub biome: Option<BiomeId>,
+    /// Terrain-map biome; defaults to `biome` when no stage sets it.
+    pub ground: Option<BiomeId>,
+    /// Last feature whose territory contains the tile.
+    pub feature: Option<FeatureMark>,
 }
 
 impl TileDraft {
     /// Finish a tile after all stages. Only biome stages assign the final biome.
     /// Panics if no biome stage assigned a biome.
     pub fn finish(&self) -> TileData {
-        TileData {
+        self.try_finish()
+            .expect("no biome covers the generated tile")
+    }
+
+    /// The finished tile, or `None` if no biome stage assigned a biome.
+    pub fn try_finish(&self) -> Option<TileData> {
+        let biome = self.biome?;
+        Some(TileData {
             height: self.height,
             temperature: self.temperature,
-            biome: self.biome.expect("no biome covers the generated tile"),
-        }
+            biome,
+            ground: self.ground.unwrap_or(biome),
+            feature: self.feature,
+        })
     }
 }
 

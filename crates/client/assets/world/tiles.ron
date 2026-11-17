@@ -6,6 +6,10 @@
 //
 // Until a texture file exists, the tile is drawn flat with its placeholder color
 // (keyed by texture name).
+//
+// A biome with no entry here and no texture file has no tiles of its own: it is drawn
+// with the tiles of the terrain biome underneath (the biome the terrain map gives the
+// tile). Feature biomes rely on this to override only objects.
 (
     textures: {
         // "volcano": "basalt",
@@ -44,19 +48,10 @@
         "barren_silicate_ridges": "#ABA18B",
         "warm_exposed_rock": "#B99572",
         "hot_dark_regolith": "#6F4F42",
-        // Feature territories.
-        "basin": "#4A4E57",
+        // Volcano territories. Basin and crater biomes are not listed: they only change
+        // objects and are drawn with the terrain biome underneath.
         "volcano": "#454850",
-        "crater": "#3A3F4A",
-        "frozen_basin": "#8DAAB9",
         "frozen_volcano": "#677986",
-        "frozen_crater": "#76868B",
-        "polar_crater": "#E0EDF7",
-        "crater_ejecta": "#9A968E",
-        "frozen_crater_ejecta": "#CEDBE5",
-        "polar_basin": "#F3FAFF",
-        "basin_salt_flats": "#BEB8A4",
-        "weathered_basin": "#8C7462",
         "polar_volcano": "#9EB9C8",
         "volcanic_highlands": "#777870",
         "frozen_volcanic_highlands": "#AFC2CB",

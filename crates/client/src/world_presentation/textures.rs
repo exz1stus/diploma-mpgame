@@ -21,6 +21,15 @@ pub const OBJECT_FOLDER: &str = "objects";
 #[derive(Resource, Clone, Debug, Deref)]
 pub struct AssetRoot(pub PathBuf);
 
+/// Asset path of a texture.
+fn texture_path(folder: &str, name: &str) -> String {
+    format!("textures/{folder}/{name}.png")
+}
+
+pub fn texture_file_exists(root: &Path, folder: &str, name: &str) -> bool {
+    root.join(texture_path(folder, name)).is_file()
+}
+
 /// One handle per catalog entry; `None` where no texture file exists.
 pub fn request_textures(
     root: &Path,
@@ -31,8 +40,8 @@ pub fn request_textures(
     entries
         .iter()
         .map(|entry| {
-            let path = format!("textures/{folder}/{}.png", entry.name);
-            root.join(&path).is_file().then(|| asset_server.load(path))
+            texture_file_exists(root, folder, &entry.name)
+                .then(|| asset_server.load(texture_path(folder, &entry.name)))
         })
         .collect()
 }

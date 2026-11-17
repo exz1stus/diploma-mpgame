@@ -84,7 +84,7 @@ for object in &chunk.objects {
 }
 ```
 
-`tile_data_at(pos)` and `try_tile_data_at(pos)` return full `TileData { height, temperature, biome }`
+`tile_data_at(pos)` and `try_tile_data_at(pos)` return full `TileData { height, temperature, biome, ground, feature }`
 at global coordinates. `sample_at(pos)` returns the stored `TileSample` inside the finite world.
 `draft_at(pos)` also covers locations that no biome map classifies.
 
@@ -93,12 +93,18 @@ including terrain sampled just beyond the chunk.
 
 ## Pipeline details
 
-Features deform height, accumulate a Celsius `temperature_offset`, and mark their territory with
-their own biome map. In overlaps, the last feature in pipeline/cell order marks the territory.
+Features deform height, accumulate a Celsius `temperature_offset`, and mark their territory: every
+tile inside gets a `FeatureMark { kind, distance }` (distance 1 = feature radius). A feature with a
+biome map also attaches it; with none the tile keeps its terrain biome, and a partial map overrides
+only where its rules match. In overlaps, the last feature in pipeline/cell order marks the territory.
+Spawns in `features/*.ron` place objects only inside that feature, optionally within a `distance`
+band.
 After features, height is clamped to [0, 1]. Temperature comes from final height, geography,
 regional noise, planet settings and feature offsets. `BiomeStage` evaluates the feature map first
-and falls back to `biome_map.ron`. All ranges are `[min, max)`, except that height 1 belongs to
-ranges ending at 1.
+and falls back to `biome_map.ron`. It also records the `biome_map.ron` biome as the tile's `ground`,
+so a feature biome changes which objects spawn while clients can still draw the terrain underneath
+(the client does unless its `tiles.ron` defines the feature biome).
+All ranges are `[min, max)`, except that height 1 belongs to ranges ending at 1.
 
 Object overlaps use a bounded priority rule: a candidate is accepted only if no overlapping,
 terrain-valid candidate has a higher priority (ties broken by instance ID). Instance IDs combine
@@ -106,8 +112,9 @@ the rule ID with the global anchor. Spawn and priority rolls are hashed from see
 and anchor, so chunk partitioning and worker scheduling never change placement.
 
 `WorldGenerator::new(config, stages, Arc<BiomeRepository>, object_placer)` builds custom pipelines,
-for example in tests. `FeatureStage::new(seed, generator, chunk_size, &biomes)` adapts any
-`FeatureGenerator`. `TerrainFeature::apply` must leave tiles outside its territory unchanged.
+for example in tests. `FeatureStage::new(kind, seed, generator, chunk_size, &biomes)` adapts any
+`FeatureGenerator`. `TerrainFeature::apply` returns the normalized distance inside the territory
+and must leave tiles outside it unchanged.
 
 Run `cargo test --offline -p worldgen --all-targets` to check config loading, generation, placement,
 chunk borders, concurrency, serialization and the preview adapter.

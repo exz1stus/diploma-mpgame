@@ -7,6 +7,35 @@ pub(crate) mod volcano;
 pub use feature::{FeatureGenerator, TerrainFeature};
 pub use stage::FeatureStage;
 
+use serde::{Deserialize, Serialize};
+
+/// The terrain feature types; object spawns can be limited to one of them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum FeatureKind {
+    Basin,
+    Crater,
+    Volcano,
+}
+
+impl FeatureKind {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Basin => "basin",
+            Self::Crater => "crater",
+            Self::Volcano => "volcano",
+        }
+    }
+}
+
+/// The feature whose territory contains a tile (the last one applied on overlap).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FeatureMark {
+    pub kind: FeatureKind,
+    /// Distance from the feature centre divided by its radius: 0 at the centre,
+    /// 1 at the rim (crater, basin) or foot (volcano).
+    pub distance: f64,
+}
+
 /// The message of the first failed `(passed, message)` check.
 pub(crate) fn first_failure(checks: &[(bool, &str)]) -> Result<(), String> {
     match checks.iter().find(|(passed, _)| !passed) {
@@ -50,7 +79,7 @@ mod tests {
             height: 0.5,
             ..Default::default()
         };
-        assert!(feature.apply(pos, &mut tile));
+        assert!(feature.apply(pos, &mut tile).is_some());
         assert!(tile.biome.is_none());
         assert!(tile.temperature_offset > 19.0);
         tile.biome_map = Some(map);
@@ -71,19 +100,31 @@ mod tests {
             tile.temperature,
             tile.temperature_offset - 10.0 * tile.height
         );
-        BiomeStage::new(Arc::new(BiomeMap::parse(&repository))).apply(pos, &mut tile);
-        assert_eq!(tile.finish().biome, repository.id(expected_biome).unwrap());
+        let terrain = BiomeMap::parse(&repository);
+        let ground = terrain.determine_biome(tile.temperature, tile.height);
+        BiomeStage::new(Arc::new(terrain)).apply(pos, &mut tile);
+        let finished = tile.finish();
+        assert_eq!(finished.biome, repository.id(expected_biome).unwrap());
+        assert_eq!(
+            Some(finished.ground),
+            ground,
+            "the ground stays the terrain biome"
+        );
         let mut outside = TileDraft {
             height: 0.5,
             ..Default::default()
         };
-        assert!(!feature.apply(
-            TilePos {
-                x: (x + feature.influence_radius() + 2.0).ceil() as i64,
-                y: y.round() as i64
-            },
-            &mut outside
-        ));
+        assert!(
+            feature
+                .apply(
+                    TilePos {
+                        x: (x + feature.influence_radius() + 2.0).ceil() as i64,
+                        y: y.round() as i64
+                    },
+                    &mut outside
+                )
+                .is_none()
+        );
         assert_eq!(outside.height, 0.5);
         assert_eq!(outside.temperature_offset, 0.0);
     }
