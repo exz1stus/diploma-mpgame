@@ -22,8 +22,10 @@ let build = null;
 let queued = false;
 let timer = null;
 
-const mime = { '.html': 'text/html', '.css': 'text/css', '.mjs': 'text/javascript' };
-const staticFiles = new Set(['/', '/index.html', '/style.css', '/app.mjs', '/zoom.mjs', '/decode-worker.mjs', '/protocol.mjs', '/settings.mjs', '/biomes.mjs', '/objects.mjs']);
+const mime = { '.html': 'text/html', '.css': 'text/css', '.mjs': 'text/javascript', '.png': 'image/png' };
+const staticFiles = new Set(['/', '/index.html', '/style.css', '/app.mjs', '/zoom.mjs', '/decode-worker.mjs', '/protocol.mjs', '/settings.mjs', '/biomes.mjs', '/objects.mjs', '/sprites.mjs', '/terrain.mjs']);
+// The sprite sheet lives next to the preview example so artists edit a single source image.
+const assets = { '/textures.png': resolve(example, 'textures.png') };
 
 const frontend = createServer((req, res) => {
   const path = new URL(req.url, 'http://localhost').pathname;
@@ -39,12 +41,13 @@ const frontend = createServer((req, res) => {
     req.pipe(proxy);
     return;
   }
-  if (!staticFiles.has(path)) { res.writeHead(404); res.end(); return; }
+  if (!staticFiles.has(path) && !Object.hasOwn(assets, path)) { res.writeHead(404); res.end(); return; }
   const name = path === '/' ? 'index.html' : path.slice(1);
-  const file = createReadStream(resolve(dist, name));
+  const file = createReadStream(assets[path] ?? resolve(dist, name));
   file.on('error', () => { if (!res.headersSent) res.writeHead(404); res.end(); });
   file.on('open', () => {
-    res.writeHead(200, { 'content-type': `${mime[name.slice(name.lastIndexOf('.'))]}; charset=utf-8`, 'cache-control': 'no-store' });
+    const type = mime[name.slice(name.lastIndexOf('.'))];
+    res.writeHead(200, { 'content-type': type.startsWith('image/') ? type : `${type}; charset=utf-8`, 'cache-control': 'no-store' });
     file.pipe(res);
   });
 });

@@ -25,10 +25,15 @@
         </details>
       </section>
       <section class="object-panel" aria-label="Placed objects">
-        <label class="object-toggle"><input type="checkbox" id="show-objects" checked>Objects</label>
+        <div class="object-toggles"><label class="object-toggle"><input type="checkbox" id="show-textures" checked>Textures</label><label class="object-toggle"><input type="checkbox" id="show-objects" checked>Objects</label></div>
         <div class="object-legend" id="object-legend"></div>
         <p class="settings-hint" id="object-status" aria-live="polite">Loading object definitions…</p>
       </section>
+      <details class="settings-group" id="display-settings" open>
+        <summary>Display</summary>
+        <p class="settings-hint">Biomes view only; the generator is unchanged. Height tint darkens ground below 0.65 and brightens it above, so crater and basin bowls show as dark discs (0 turns it off). Relief shading lights slopes from the north-west.</p>
+        <div class="action-row"><button id="reset-display" type="button">Reset display</button></div>
+      </details>
       <div id="generator-settings" aria-label="Generation parameters">Loading generator settings…</div>
       <div class="action-row"><button id="randomize" type="button" disabled>↝ &nbsp; Random seed</button><button id="reset-settings" type="button" disabled>Reset settings</button></div>
       <div class="action-row"><button id="reset" type="button">Reset view</button></div>

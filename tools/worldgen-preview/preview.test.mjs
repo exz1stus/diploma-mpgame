@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { SAMPLE_BYTES, decodePixels, readSample, readMapMode } from './dist/protocol.mjs';
+import { SAMPLE_BYTES, decodePixels, readSample, readMapMode, displayFactor, readDisplay, DEFAULT_DISPLAY } from './dist/protocol.mjs';
+
+const FLAT = { height_tint: 0, relief: 0 };
 import { zoomMetrics, fitWorldZoom, clampCamera } from './dist/zoom.mjs';
 import { defaultSettings, settingsError, readSettings, settingsQuery } from './dist/settings.mjs';
 import { biomeAt, biomeForSample, tileForSample, biomeDescription, tileRegions, temperatureDomain } from './dist/biomes.mjs';
@@ -86,14 +88,14 @@ test('generator colors and Celsius/height data survive binary decoding', () => {
     view.setUint16(i * SAMPLE_BYTES + 14, 42, true);
   }
   assert.deepEqual(readSample(bytes, 0), { status: 1, color: '#38476a', height: 0.625, temperature: -12.5, biomeId: 65535, tileId: 42 });
-  assert.deepEqual([...decodePixels(buffer, 2).slice(0, 4)], [56, 71, 106, 255]);
+  assert.deepEqual([...decodePixels(buffer, 2, 'biomes', FLAT).slice(0, 4)], [56, 71, 106, 255]);
 });
 
 test('unclassified cells stay visible and world padding stays transparent', () => {
   const buffer = new ArrayBuffer(4 * SAMPLE_BYTES);
   const bytes = new Uint8Array(buffer);
   bytes[SAMPLE_BYTES] = 255;
-  const pixels = decodePixels(buffer, 2);
+  const pixels = decodePixels(buffer, 2, 'biomes', FLAT);
   assert.equal(pixels[3], 255);
   assert.equal(pixels[7], 0);
   assert.throws(() => decodePixels(new ArrayBuffer(5), 2), /Incomplete chunk data/);
@@ -294,4 +296,15 @@ test('biome identity survives an unmapped tile and never supplies palette IDs', 
   assert.equal(unmapped.tileId, null);
   assert.equal(tileForSample(palette, unmapped), null);
   assert.equal(tileForSample(palette, { status: 1, tileId: 65535 }), null);
+});
+
+test('display coefficients darken bowls, light north-west slopes, and default from the URL', () => {
+  assert.equal(displayFactor(.65, 0), 1, 'reference height with no slope is unchanged');
+  assert.ok(displayFactor(.5, 0) < .7 && displayFactor(.8, 0) > 1.3, 'default height tint separates bowls clearly');
+  assert.equal(displayFactor(.3, 0, FLAT), 1);
+  assert.ok(displayFactor(.65, .002) > 1 && displayFactor(.65, -.002) < 1);
+  assert.equal(displayFactor(.65, .002, { height_tint: 3, relief: 0 }), 1);
+  assert.ok(displayFactor(0, -1) > 0, 'factors stay positive');
+  assert.deepEqual(readDisplay(new URLSearchParams('height_tint=6&relief=99')), { height_tint: 6, relief: DEFAULT_DISPLAY.relief });
+  assert.deepEqual(readDisplay(new URLSearchParams('height_tint=')), DEFAULT_DISPLAY);
 });

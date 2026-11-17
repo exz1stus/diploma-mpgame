@@ -1,8 +1,10 @@
 import { zoomMetrics, fitWorldZoom, clampCamera } from './zoom.mjs';
-import { SAMPLE_BYTES, readSample, MAP_MODES, readMapMode } from './protocol.mjs';
+import { SAMPLE_BYTES, readSample, MAP_MODES, readMapMode, DISPLAY_CONTROLS, readDisplay } from './protocol.mjs';
 import { settingsError, readSettings, settingsQuery } from './settings.mjs';
 import { biomeForSample, tileForSample, renderBiomes } from './biomes.mjs';
-import { collectObjects, drawObjects, objectAt, objectKey, objectStyle, objectsVisibleAt, readObjectChunk, renderObjectLegend } from './objects.mjs';
+import { collectObjects, drawObjects, loadObjectSprites, objectAt, objectKey, objectStyle, objectsVisibleAt, readObjectChunk, renderObjectLegend } from './objects.mjs';
+import { SURFACE_NAMES, isBasaltTile, surfaceFor } from './sprites.mjs';
+import { UNCLASSIFIED_TINT, terrainTilePx } from './terrain.mjs';
 
 const canvas = document.querySelector('#map');
 const viewport = document.querySelector('.viewport');
@@ -32,6 +34,18 @@ const apiBase = (params.get('api') || '').replace(/\/$/, '');
 const objectsToggle = document.querySelector('#show-objects');
 const objectStatus = document.querySelector('#object-status');
 objectsToggle.checked = params.get('objects') !== '0';
+const texturesToggle = document.querySelector('#show-textures');
+texturesToggle.checked = params.get('textures') !== '0';
+// Textured chunk images, keyed like LOD 0 sample chunks. Each entry remembers the sample
+// chunks it was composed from and is rebuilt when a neighbor arrives or the palette changes.
+const terrainCache = new Map();
+const terrainActive = new Map();
+let terrainTiles = [];
+// Bumped when the palette or display coefficients change; textured chunks then recompose.
+let terrainPaletteRevision = 0;
+let display = readDisplay(params);
+let displayRevision = 0;
+let terrainError = '';
 let objectTypes = [];
 let visibleObjects = [];
 const objectCache = new Map();
@@ -75,19 +89,181 @@ let decoderCursor = 0;
 let decoderId = 0;
 for (const worker of decoders) worker.onmessage = ({ data }) => {
   const job = decoderJobs.get(data.id);
-  if (!job) { for (const image of Object.values(data.images || {})) image.close(); return; }
+  if (!job) { for (const image of Object.values(data.images || {})) image.close(); data.image?.close(); return; }
   decoderJobs.delete(data.id);
   if (data.error) job.reject(new Error(data.error));
+  else if (data.image) job.resolve(data.image);
   else job.resolve({ bytes: new Uint8Array(data.buffer), images: data.images });
 };
 
-function decode(buffer, size) {
+function decode(buffer, size, lod) {
   return new Promise((resolve, reject) => {
     const id = ++decoderId;
     decoderJobs.set(id, { resolve, reject });
-    decoders[decoderCursor++ % decoders.length].postMessage({ id, buffer, size }, [buffer]);
+    decoders[decoderCursor++ % decoders.length].postMessage({ id, buffer, size, display, stride: 2 ** lod }, [buffer]);
   });
 }
+
+// Display coefficients only change colors: decode cached samples again instead of refetching.
+async function redecode(chunk, lod) {
+  const revision = displayRevision;
+  const next = await decode(chunk.bytes.slice().buffer, config.size, lod);
+  // Chunks evicted meanwhile were closed and have no images left.
+  if (revision !== displayRevision || !Object.keys(chunk.images).length) { closeChunk(next); return; }
+  for (const image of Object.values(chunk.images)) image.close();
+  chunk.images = next.images;
+  invalidate();
+}
+
+function applyDisplay() {
+  const next = {};
+  for (const control of DISPLAY_CONTROLS) {
+    const value = Number(displayInputs[control.key].value);
+    if (!Number.isFinite(value) || value < control.min || value > control.max) {
+      labels.validation.textContent = `${control.label}: enter a number from ${control.min} to ${control.max}.`;
+      return;
+    }
+    next[control.key] = value;
+  }
+  labels.validation.textContent = inputError;
+  display = next;
+  displayRevision++;
+  terrainPaletteRevision++;
+  for (const source of [cache, staleCache]) for (const [id, chunk] of source) {
+    redecode(chunk, Number(id.split(':')[0])).catch(() => {});
+  }
+  updateUrl();
+  invalidate();
+}
+
+const displayInputs = {};
+{
+  const section = document.querySelector('#display-settings');
+  for (const control of DISPLAY_CONTROLS) {
+    const label = document.createElement('label');
+    label.className = 'field';
+    const text = document.createElement('span');
+    text.textContent = control.label;
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.id = `display-${control.key}`;
+    input.min = control.min; input.max = control.max; input.step = control.step;
+    input.value = display[control.key];
+    input.addEventListener('change', applyDisplay);
+    displayInputs[control.key] = input;
+    label.append(text, input);
+    section.insertBefore(label, section.querySelector('.settings-hint'));
+  }
+  document.querySelector('#reset-display').addEventListener('click', () => {
+    for (const control of DISPLAY_CONTROLS) displayInputs[control.key].value = control.default;
+    applyDisplay();
+  });
+}
+function composeTerrainImage(message, transfer) {
+  return new Promise((resolve, reject) => {
+    const id = ++decoderId;
+    decoderJobs.set(id, { resolve, reject });
+    decoders[decoderCursor++ % decoders.length].postMessage({ ...message, id, type: 'terrain' }, transfer);
+  });
+}
+
+function terrainSources(cx, cy) {
+  const sources = [];
+  for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) sources.push(cache.get(key(cx + dx, cy + dy, 0)) || null);
+  return sources;
+}
+
+function terrainCurrent(entry, sources) {
+  return entry.palette === terrainPaletteRevision && entry.sources.every((source, i) => source === sources[i]);
+}
+
+function closeTerrain(entry) { entry.image.close(); }
+
+function clearTerrain() {
+  for (const entry of terrainCache.values()) closeTerrain(entry);
+  terrainCache.clear();
+  terrainActive.clear();
+}
+
+function texturedAt(m) {
+  return texturesToggle.checked && mapMode === 'biomes' && m.lod === 0 && m.baseTilePx >= 4;
+}
+
+function fetchTerrainVisible(minX, minY, maxX, maxY) {
+  if (!terrainTiles.length) return;
+  const wanted = [];
+  const centerX = (minX + maxX) / 2;
+  const centerY = (minY + maxY) / 2;
+  for (let cy = minY; cy <= maxY; cy++) for (let cx = minX; cx <= maxX; cx++) {
+    const id = key(cx, cy, 0);
+    const sources = terrainSources(cx, cy);
+    if (!sources[4] || terrainActive.has(id)) continue;
+    const entry = terrainCache.get(id);
+    if (entry && terrainCurrent(entry, sources)) continue;
+    wanted.push({ cx, cy, id, sources, distance: (cx - centerX) ** 2 + (cy - centerY) ** 2 });
+  }
+  wanted.sort((a, b) => a.distance - b.distance);
+  for (const { cx, cy, id, sources } of wanted.slice(0, Math.max(0, 4 - terrainActive.size))) {
+    const token = {};
+    terrainActive.set(id, token);
+    const palette = terrainPaletteRevision;
+    const neighbors = sources.map(source => source && source.bytes.slice().buffer);
+    composeTerrainImage({ neighbors, size: config.size, chunkX: cx, chunkY: cy, tiles: terrainTiles, display }, neighbors.filter(Boolean))
+      .then(image => {
+        if (terrainActive.get(id) !== token || cache.get(id) !== sources[4]) { image.close(); return; }
+        const previous = terrainCache.get(id);
+        if (previous) closeTerrain(previous);
+        terrainCache.delete(id);
+        terrainCache.set(id, { image, sources, palette });
+        const limit = Math.max(24, Math.floor(160 * 1024 ** 2 / ((config.size * terrainTilePx(config.size)) ** 2 * 4)));
+        while (terrainCache.size > limit) {
+          const oldest = terrainCache.keys().next().value;
+          closeTerrain(terrainCache.get(oldest)); terrainCache.delete(oldest);
+        }
+        terrainError = '';
+      })
+      .catch(error => { terrainError = `Textures unavailable: ${error.message}`; })
+      .finally(() => { if (terrainActive.get(id) === token) terrainActive.delete(id); invalidate(); });
+  }
+}
+
+function drawTerrain(cx, cy, edgeX, edgeY, span) {
+  const id = key(cx, cy, 0);
+  const entry = terrainCache.get(id);
+  // An outdated image stays as a placeholder while its sample chunk is still the one on screen.
+  if (!entry || (entry.sources[4] !== cache.get(id) && entry.sources[4] !== staleCache.get(id))) return false;
+  ctx.save();
+  ctx.imageSmoothingEnabled = span < entry.image.width;
+  ctx.drawImage(entry.image, edgeX, edgeY, span, span);
+  ctx.restore();
+  return true;
+}
+
+function sampleAtTile(x, y) {
+  const chunkX = Math.floor(x / config.size);
+  const chunkY = Math.floor(y / config.size);
+  const chunk = cache.get(key(chunkX, chunkY, 0)) || staleCache.get(key(chunkX, chunkY, 0));
+  return chunk ? readSample(chunk.bytes, (y - chunkY * config.size) * config.size + x - chunkX * config.size) : null;
+}
+
+function surfaceOfSample(sample) {
+  if (!sample || sample.status === 255 || !Number.isFinite(sample.height) || !Number.isFinite(sample.temperature)) return null;
+  const tile = sample.status === 1 ? terrainTiles[sample.tileId] : null;
+  return { surface: surfaceFor(!!tile?.basalt, sample.height, sample.temperature), tint: tile ? tile.tint : UNCLASSIFIED_TINT };
+}
+
+// Objects take the tint and material of the tile under the middle of their bottom row.
+function objectEnvironment(object) {
+  return surfaceOfSample(sampleAtTile(object.id.anchor.x + Math.floor(object.footprint.width / 2),
+    object.id.anchor.y + object.footprint.height - 1));
+}
+
+function hexColor(color) {
+  const value = color.replace('#', '');
+  const full = value.length === 3 ? [...value].map(c => c + c).join('') : value;
+  return [0, 2, 4].map(i => parseInt(full.slice(i, i + 2), 16));
+}
+
 let retryAt = 0;
 let inputError = '';
 
@@ -148,6 +324,10 @@ function updateUrl() {
   const query = controls.length ? settingsQuery(config, controls, true) : new URLSearchParams(location.search);
   query.set('mode', mapMode);
   if (!objectsToggle.checked) query.set('objects', '0');
+  if (!texturesToggle.checked) query.set('textures', '0');
+  for (const control of DISPLAY_CONTROLS) {
+    if (display[control.key] !== control.default) query.set(control.key, display[control.key]);
+  }
   if (biomeFile) query.set('biome', biomeFile);
   if (apiBase) query.set('api', apiBase);
   history.replaceState(null, '', `${location.pathname}?${query}`);
@@ -168,7 +348,7 @@ function applyInputs() {
   const chunkSizeChanged = candidate.size !== config.size;
   config = candidate;
   clearCache(staleCache);
-  if (chunkSizeChanged) { clearCache(cache); world = null; }
+  if (chunkSizeChanged) { clearCache(cache); clearTerrain(); world = null; }
   staleCache = cache;
   cache = new Map();
   revision++;
@@ -224,6 +404,7 @@ function clearCache(map) {
 
 function closeChunk(chunk) {
   for (const image of Object.values(chunk.images)) image.close();
+  chunk.images = {};
 }
 
 function resetObjects() {
@@ -315,8 +496,10 @@ function fetchVisible(minX, minY, maxX, maxY, lod) {
         const buffer = await response.arrayBuffer();
         if (buffer.byteLength !== size * size * SAMPLE_BYTES) throw new Error('Incomplete chunk data');
         if (requestRevision !== revision || controller.signal.aborted) return;
-        const chunk = await decode(buffer, size);
+        const decodedDisplay = displayRevision;
+        const chunk = await decode(buffer, size, lod);
         if (requestRevision !== revision || controller.signal.aborted) { closeChunk(chunk); return; }
+        if (decodedDisplay !== displayRevision) redecode(chunk, lod).catch(() => {});
         cache.set(id, chunk);
         while (cache.size > Math.min(2000, Math.floor(64 * 1024 ** 2 / (size * size * (SAMPLE_BYTES + 4 * Object.keys(MAP_MODES).length))))) {
           const oldest = cache.keys().next().value;
@@ -397,6 +580,7 @@ function draw() {
   const right = Math.min(Math.ceil(world.width / stride), Math.ceil(cameraX + width / (2 * m.cellPx)) + 1);
   const bottom = Math.min(Math.ceil(world.height / stride), Math.ceil(cameraY + height / (2 * m.cellPx)) + 1);
   const chunkSize = config.size;
+  const textured = texturedAt(m);
   const minChunkX = Math.floor(left / chunkSize);
   const minChunkY = Math.floor(top / chunkSize);
   const maxChunkX = Math.floor((right - 1) / chunkSize);
@@ -406,7 +590,7 @@ function draw() {
       const edgeX = width / 2 + (cx * chunkSize - cameraX) * m.cellPx;
       const edgeY = height / 2 + (cy * chunkSize - cameraY) * m.cellPx;
       const span = chunkSize * m.cellPx;
-      drawFallback(cx, cy, m.lod, edgeX, edgeY, span);
+      if (!textured || !drawTerrain(cx, cy, edgeX, edgeY, span)) drawFallback(cx, cy, m.lod, edgeX, edgeY, span);
       ctx.strokeStyle = '#d3f3e477';
       ctx.lineWidth = 1.5;
       ctx.strokeRect(Math.round(edgeX) + .5, Math.round(edgeY) + .5, span, span);
@@ -420,7 +604,9 @@ function draw() {
     }
   }
   fetchVisible(minChunkX, minChunkY, maxChunkX, maxChunkY, m.lod);
-  if (m.cellPx >= 18) {
+  if (textured) fetchTerrainVisible(minChunkX, minChunkY, maxChunkX, maxChunkY);
+  else terrainActive.clear();
+  if (m.cellPx >= 18 && !textured) {
     ctx.strokeStyle = '#07172022';
     ctx.lineWidth = 1;
     for (let x = left; x <= right; x++) {
@@ -443,7 +629,7 @@ function draw() {
     visibleObjects = collectObjects(chunks, { minX: left, minY: top, maxX: right, maxY: bottom });
     const hover = pointer && !dragging ? cellAt(pointer.x, pointer.y, m) : null;
     drawObjects(ctx, visibleObjects, objectTypes, worldX, worldY, m.baseTilePx,
-      hover ? objectAt(visibleObjects, hover.x, hover.y) : null);
+      hover ? objectAt(visibleObjects, hover.x, hover.y) : null, objectEnvironment);
     const unavailable = chunks.filter(chunk => chunk.error).length;
     objectStatus.textContent = objectError || (unavailable
       ? `${visibleObjects.length} objects · ${unavailable} chunks have no matching terrain or tiles.`
@@ -456,7 +642,8 @@ function draw() {
   }
   ctx.restore();
   labels.zoom.textContent = zoom >= 0 ? `2^−${zoom.toFixed(1)}×` : `${2 ** -zoom < 1e6 ? (2 ** -zoom).toFixed(1) : `2^${(-zoom).toFixed(0)}`}×`;
-  labels.status.textContent = m.lod === 0 ? `LOD 0 · exact tiles · ${m.baseTilePx.toFixed(2)} px / tile` : `LOD ${m.lod} · 2^${m.lod} tiles / cell`;
+  labels.status.textContent = m.lod === 0 ? `LOD 0 · exact tiles · ${m.baseTilePx.toFixed(2)} px / tile${textured ? ' · textured' : ''}` : `LOD ${m.lod} · 2^${m.lod} tiles / cell`;
+  if (terrainError && textured) labels.validation.textContent = terrainError;
 
   updateReadout();
 }
@@ -495,7 +682,8 @@ function updateReadout() {
   tooltipFields.tile.textContent = `${m.lod === 0 ? 'Tile' : 'Sample'} ${tileX}, ${tileY} · ${title}`;
   tooltipFields.temperature.textContent = temperature;
   tooltipFields.height.textContent = height;
-  tooltipFields.note.textContent = `${sample?.status === 1 ? `Tile ${sample.tileId}: ${surface?.name || sample.color} · ${sample.color} · ` : ''}Height 0–1 · daily average temperature${m.lod ? ` · LOD ${m.lod}` : ''}`;
+  const material = m.lod === 0 ? surfaceOfSample(sample) : null;
+  tooltipFields.note.textContent = `${sample?.status === 1 ? `Tile ${sample.tileId}: ${surface?.name || sample.color} · ${sample.color} · ` : ''}${material ? `Surface ${SURFACE_NAMES[material.surface]} · ` : ''}Height 0–1 · daily average temperature${m.lod ? ` · LOD ${m.lod}` : ''}`;
   if (object) {
     const label = objectStyle(objectTypes[object.kind]).label;
     tooltipFields.object.textContent = `${label} · footprint ${object.footprint.width} × ${object.footprint.height}\nAnchor ${object.id.anchor.x}, ${object.id.anchor.y} · instance ${objectKey(object)}`;
@@ -531,6 +719,11 @@ modeSelect.addEventListener('change', () => {
   mapMode = readMapMode(modeSelect.value);
   updateMapMode();
   updateUrl();
+});
+
+texturesToggle.addEventListener('change', () => {
+  updateUrl();
+  invalidate();
 });
 
 objectsToggle.addEventListener('change', () => {
@@ -645,6 +838,8 @@ async function pollBuild() {
       || JSON.stringify(tilePalette) !== JSON.stringify(nextPalette) || JSON.stringify(tileRules) !== JSON.stringify(nextTileRules)) {
       biomes = nextBiomes;
       tilePalette = nextPalette;
+      terrainTiles = tilePalette.map(tile => ({ tint: hexColor(tile.color), basalt: isBasaltTile(tile.name) }));
+      terrainPaletteRevision++;
       tileRules = nextTileRules;
       biomeMaps = nextMaps;
       const selectedMap = biomeMapView.value;
@@ -683,3 +878,7 @@ setInterval(pollBuild, 1200);
 updateMapMode();
 pollBuild();
 invalidate();
+loadObjectSprites().then(() => {
+  renderObjectLegend(document.querySelector('#object-legend'), objectTypes);
+  invalidate();
+}, () => { objectError = 'Sprite sheet unavailable; showing symbols.'; });

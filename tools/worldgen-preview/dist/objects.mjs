@@ -1,3 +1,5 @@
+import { ATLAS_URL, SOURCE_TILE_PX, SPRITES, objectIconSprite, objectSprite, spriteHash } from './sprites.mjs';
+
 const STYLES = {
   rock: { label: 'Rock', color: '#a6b2bd', shade: '#5b6d7e' },
   large_rock: { label: 'Large rock', color: '#c1ccd3', shade: '#657b8a' },
@@ -69,8 +71,6 @@ export function drawObjectSymbol(ctx, type, x, y, width, height) {
   ctx.scale(width, height);
   ctx.lineJoin = 'round';
   ctx.lineWidth = 1.25 / Math.min(width, height);
-  ctx.fillStyle = '#07151b65';
-  ctx.beginPath(); ctx.ellipse(.53, .76, .38, .16, 0, 0, Math.PI * 2); ctx.fill();
   if (type?.name === 'tree') {
     ctx.fillStyle = '#684f3b';
     ctx.fillRect(.43, .57, .14, .3);
@@ -104,13 +104,109 @@ export function drawObjectSymbol(ctx, type, x, y, width, height) {
   ctx.restore();
 }
 
-export function drawObjects(ctx, objects, types, originX, originY, pixels, hovered = null) {
+let atlas = null;
+let atlasRequest = null;
+const setMeans = new Map();
+const tinted = new Map();
+
+// Loads the shared sprite sheet once; callers redraw when the promise settles.
+export function loadObjectSprites() {
+  atlasRequest ??= new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = image.naturalWidth; canvas.height = image.naturalHeight;
+      const context = canvas.getContext('2d', { willReadFrequently: true });
+      context.drawImage(image, 0, 0);
+      atlas = context.getImageData(0, 0, canvas.width, canvas.height);
+      resolve(atlas);
+    };
+    image.onerror = () => { atlasRequest = null; reject(new Error('Texture atlas unavailable')); };
+    image.src = ATLAS_URL;
+  });
+  return atlasRequest;
+}
+
+export function objectSpritesReady() { return atlas !== null; }
+
+function setMean(set) {
+  if (!setMeans.has(set)) {
+    const mean = [0, 0, 0];
+    let count = 0;
+    for (const rect of SPRITES[set]) for (let y = 0; y < rect.height; y++) for (let x = 0; x < rect.width; x++) {
+      const offset = ((rect.y + y) * atlas.width + rect.x + x) * 4;
+      if (atlas.data[offset + 3] < 255) continue;
+      for (let c = 0; c < 3; c++) mean[c] += atlas.data[offset + c];
+      count++;
+    }
+    setMeans.set(set, mean.map(value => value / Math.max(1, count)));
+  }
+  return setMeans.get(set);
+}
+
+// Tinted sprites match the ground tint rules: gray art takes the full biome color, slate
+// stalagmites keep part of their hue. Ore nuggets are baked onto opaque lower pixels.
+function spriteCanvas(choice, tint) {
+  const key = `${choice.set}:${choice.index}:${tint?.join(',') ?? 'none'}:${choice.ore}`;
+  if (tinted.has(key)) return tinted.get(key);
+  const { rect } = choice;
+  const pixels = new ImageData(rect.width, rect.height);
+  const mean = setMean(choice.set);
+  for (let y = 0; y < rect.height; y++) for (let x = 0; x < rect.width; x++) {
+    const source = ((rect.y + y) * atlas.width + rect.x + x) * 4;
+    const out = (y * rect.width + x) * 4;
+    for (let c = 0; c < 3; c++) {
+      const value = atlas.data[source + c];
+      pixels.data[out + c] = !tint ? value : choice.tint.tint === 'luminance' ? tint[c] * atlas.data[source] / mean[0]
+        : value * (1 + choice.tint.strength * (tint[c] / mean[c] - 1));
+    }
+    pixels.data[out + 3] = atlas.data[source + 3];
+  }
+  if (choice.ore) {
+    const spots = [];
+    for (let y = Math.floor(rect.height * .45); y < rect.height - 3; y++) for (let x = 2; x < rect.width - 2; x++) {
+      if ([[0, 0], [-1, 0], [1, 0], [0, -1], [0, 1]].every(([dx, dy]) => pixels.data[((y + dy) * rect.width + x + dx) * 4 + 3] === 255)) spots.push([x, y]);
+    }
+    for (let i = 0; i < Math.min(3, spots.length); i++) {
+      const [x, y] = spots[spriteHash(choice.index, i, rect.x) % spots.length];
+      for (const [dx, dy, color] of [[0, -1, [255, 196, 120]], [-1, 0, [231, 161, 90]], [1, 0, [176, 98, 52]], [0, 0, [231, 161, 90]], [0, 1, [120, 70, 46]]]) {
+        pixels.data.set(color, ((y + dy) * rect.width + x + dx) * 4);
+      }
+    }
+  }
+  const canvas = document.createElement('canvas');
+  canvas.width = rect.width; canvas.height = rect.height;
+  canvas.getContext('2d').putImageData(pixels, 0, 0);
+  if (tinted.size > 4096) tinted.clear();
+  tinted.set(key, canvas);
+  return canvas;
+}
+
+// Sprites keep their native 16 source pixels per tile, stand on the footprint's bottom edge,
+// and are centered horizontally. Types without art fall back to vector symbols.
+function drawObjectSprite(ctx, choice, tint, x, y, width, height, pixels) {
+  const image = spriteCanvas(choice, tint);
+  const scale = pixels / SOURCE_TILE_PX;
+  const drawWidth = choice.rect.width * scale;
+  const drawHeight = choice.rect.height * scale;
+  const left = x + (width - drawWidth) / 2;
+  const bottom = y + height - scale;
+  ctx.save();
+  ctx.imageSmoothingEnabled = scale < 1;
+  ctx.drawImage(image, left, bottom - drawHeight, drawWidth, drawHeight);
+  ctx.restore();
+}
+
+export function drawObjects(ctx, objects, types, originX, originY, pixels, hovered = null, environment = () => null) {
   for (const object of objects) {
     const x = originX + object.id.anchor.x * pixels;
     const y = originY + object.id.anchor.y * pixels;
     const width = object.footprint.width * pixels;
     const height = object.footprint.height * pixels;
-    drawObjectSymbol(ctx, types[object.kind], x, y, width, height);
+    const context = environment(object);
+    const choice = atlas ? objectSprite(types[object.kind]?.name, object, context?.surface) : null;
+    if (choice) drawObjectSprite(ctx, choice, context?.tint ?? null, x, y, width, height, pixels);
+    else drawObjectSymbol(ctx, types[object.kind], x, y, width, height);
   }
   if (hovered) {
     ctx.save();
@@ -129,7 +225,16 @@ export function renderObjectLegend(legend, types) {
     const row = document.createElement('span');
     const icon = document.createElement('canvas');
     icon.width = 48; icon.height = 48; icon.setAttribute('aria-hidden', 'true');
-    drawObjectSymbol(icon.getContext('2d'), type, 0, 0, 48, 48);
+    const choice = atlas ? objectIconSprite(type.name) : null;
+    const context = icon.getContext('2d');
+    if (choice) {
+      // Largest crisp integer scale that fits the icon, centered.
+      const scale = Math.max(1, Math.floor(44 / Math.max(choice.rect.width, choice.rect.height)));
+      const width = choice.rect.width * scale;
+      const height = choice.rect.height * scale;
+      context.imageSmoothingEnabled = false;
+      context.drawImage(spriteCanvas(choice, null), (48 - width) / 2, (48 - height) / 2, width, height);
+    } else drawObjectSymbol(context, type, 0, 0, 48, 48);
     const name = document.createElement('span');
     name.textContent = objectStyle(type).label;
     const dimensions = document.createElement('small');
