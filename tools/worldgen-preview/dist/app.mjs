@@ -1,10 +1,14 @@
 import { zoomMetrics, fitWorldZoom, clampCamera } from './zoom.mjs';
-import { SAMPLE_BYTES, readSample, MAP_MODES, readMapMode, DISPLAY_CONTROLS, readDisplay } from './protocol.mjs';
+import { PROTOCOL, SAMPLE_BYTES, readSample, sampleColor, MAP_MODES, readMapMode, DISPLAY_CONTROLS, readDisplay } from './protocol.mjs';
 import { settingsError, readSettings, settingsQuery } from './settings.mjs';
-import { biomeForSample, tileForSample, renderBiomes } from './biomes.mjs';
-import { collectObjects, drawObjects, loadObjectSprites, objectAt, objectKey, objectStyle, objectsVisibleAt, readObjectChunk, renderObjectLegend } from './objects.mjs';
-import { SURFACE_NAMES, isBasaltTile, surfaceFor } from './sprites.mjs';
-import { UNCLASSIFIED_TINT, terrainTilePx } from './terrain.mjs';
+import { biomeForSample, renderBiomes } from './biomes.mjs';
+import { collectObjects, drawObjects, objectAt, objectKey, objectStyle, objectsVisibleAt, readObjectChunk, renderObjectLegend } from './objects.mjs';
+import { buildTileData, imagePixelsPerTile } from './terrain.mjs';
+import { drawnBiome, drawnTexture } from './presentation.mjs';
+import { PresentationEditor } from './editor.mjs';
+
+// The map is drawn with +Y up, like the client: world drawing runs under a vertically
+// mirrored canvas transform, and screen positions convert through flipY.
 
 const canvas = document.querySelector('#map');
 const viewport = document.querySelector('.viewport');
@@ -37,12 +41,11 @@ objectsToggle.checked = params.get('objects') !== '0';
 const texturesToggle = document.querySelector('#show-textures');
 texturesToggle.checked = params.get('textures') !== '0';
 // Textured chunk images, keyed like LOD 0 sample chunks. Each entry remembers the sample
-// chunks it was composed from and is rebuilt when a neighbor arrives or the palette changes.
+// chunks it was composed from and is rebuilt when a neighbor arrives or the presentation changes.
 const terrainCache = new Map();
 const terrainActive = new Map();
-let terrainTiles = [];
-// Bumped when the palette or display coefficients change; textured chunks then recompose.
-let terrainPaletteRevision = 0;
+// The edited client presentation: catalogs, texture array, blend settings, object looks.
+let look = null;
 let display = readDisplay(params);
 let displayRevision = 0;
 let terrainError = '';
@@ -58,15 +61,23 @@ const biomeSelect = document.querySelector('#biome-file');
 let biomeFiles = [];
 let biomeFile = '';
 let biomes = [];
-let tilePalette = [];
-let tileRules = [];
 let biomeMaps = {};
 const biomeMapView = document.querySelector('#biome-map-view');
 
+const rgbHex = rgb => `#${[...rgb].map(value => value.toString(16).padStart(2, '0')).join('')}`;
+
+// Each biome is a chart "tile" colored like its texture; biomes drawn as their ground are gray.
 function renderBiomeMap() {
+  const palette = biomes.map((biome, id) => {
+    const own = look?.catalog.ownTiles[id];
+    return { name: own ? biome.name : `${biome.name} (ground)`, color: own ? rgbHex(sampleColor(look.palette, id, id)) : '#52616b' };
+  });
+  const rules = biomes.map((_, id) => ({ tile: id, biome: id, height: { min: 0, max: 1 }, temperature: { min: -Number.MAX_VALUE, max: Number.MAX_VALUE } }));
   renderBiomes(document.querySelector('#biome-chart'), document.querySelector('#biome-legend'),
-    document.querySelector('#biome-chart-readout'), biomeMaps[biomeMapView.value] || [], tilePalette, tileRules);
+    document.querySelector('#biome-chart-readout'), biomeMaps[biomeMapView.value] || [], palette, rules);
 }
+
+const flipY = screenY => viewport.clientHeight - screenY;
 
 biomeMapView.addEventListener('change', renderBiomeMap);
 let biomeReady = false;
@@ -100,7 +111,7 @@ function decode(buffer, size, lod) {
   return new Promise((resolve, reject) => {
     const id = ++decoderId;
     decoderJobs.set(id, { resolve, reject });
-    decoders[decoderCursor++ % decoders.length].postMessage({ id, buffer, size, display, stride: 2 ** lod }, [buffer]);
+    decoders[decoderCursor++ % decoders.length].postMessage({ id, buffer, size, display, stride: 2 ** lod, palette: look?.palette ?? null }, [buffer]);
   });
 }
 
@@ -127,14 +138,29 @@ function applyDisplay() {
   }
   labels.validation.textContent = inputError;
   display = next;
+  recolorFlat();
+  updateUrl();
+}
+
+// Flat images bake display coefficients and presentation colors: decode cached samples again.
+function recolorFlat() {
   displayRevision++;
-  terrainPaletteRevision++;
   for (const source of [cache, staleCache]) for (const [id, chunk] of source) {
     redecode(chunk, Number(id.split(':')[0])).catch(() => {});
   }
-  updateUrl();
   invalidate();
 }
+
+const objectLook = kind => look?.objectLooks[kind];
+
+function applyLook(next) {
+  look = next;
+  recolorFlat();
+  renderBiomeMap();
+  renderObjectLegend(document.querySelector('#object-legend'), objectTypes, objectLook);
+}
+
+const editor = new PresentationEditor(document.querySelector('#presentation-editor'), applyLook);
 
 const displayInputs = {};
 {
@@ -174,7 +200,30 @@ function terrainSources(cx, cy) {
 }
 
 function terrainCurrent(entry, sources) {
-  return entry.palette === terrainPaletteRevision && entry.sources.every((source, i) => source === sources[i]);
+  return entry.revision === look?.revision && entry.sources.every((source, i) => source === sources[i]);
+}
+
+// The client's tile data for one chunk, from the samples of it and its loaded neighbors.
+function terrainMessage(cx, cy, sources) {
+  const size = config.size;
+  const wrap = value => ((value % size) + size) % size;
+  const sampleAt = (x, y) => {
+    const chunk = sources[(y < 0 ? 0 : y >= size ? 2 : 1) * 3 + (x < 0 ? 0 : x >= size ? 2 : 1)];
+    return chunk ? readSample(chunk.bytes, wrap(y) * size + wrap(x)) : null;
+  };
+  const data = buildTileData(size, (x, y) => {
+    const sample = sampleAt(x, y);
+    if (sample?.status !== 1) return null;
+    const texture = drawnTexture(look.catalog, sample.biomeId, sample.groundId);
+    return [texture, look.catalog.overlay[texture] ?? 0, ...look.catalog.tints[drawnBiome(look.catalog, sample.biomeId, sample.groundId)]];
+  }, look.blend.tint_radius);
+  // Outside-world padding and unclassified tiles (which the client never receives) stay empty.
+  const hidden = new Uint8Array(size * size);
+  for (let i = 0; i < size * size; i++) hidden[i] = sources[4].bytes[i * SAMPLE_BYTES] === 1 ? 0 : 1;
+  return {
+    size, originX: cx * size, originY: cy * size, textures: look.stack, blend: look.blend,
+    data: { layer: data.layer.buffer, level: data.level.buffer, tint: data.tint.buffer }, hidden: hidden.buffer,
+  };
 }
 
 function closeTerrain(entry) { entry.image.close(); }
@@ -190,7 +239,7 @@ function texturedAt(m) {
 }
 
 function fetchTerrainVisible(minX, minY, maxX, maxY) {
-  if (!terrainTiles.length) return;
+  if (!look) return;
   const wanted = [];
   const centerX = (minX + maxX) / 2;
   const centerY = (minY + maxY) / 2;
@@ -206,16 +255,17 @@ function fetchTerrainVisible(minX, minY, maxX, maxY) {
   for (const { cx, cy, id, sources } of wanted.slice(0, Math.max(0, 4 - terrainActive.size))) {
     const token = {};
     terrainActive.set(id, token);
-    const palette = terrainPaletteRevision;
-    const neighbors = sources.map(source => source && source.bytes.slice().buffer);
-    composeTerrainImage({ neighbors, size: config.size, chunkX: cx, chunkY: cy, tiles: terrainTiles, display }, neighbors.filter(Boolean))
+    const revision = look.revision;
+    const message = terrainMessage(cx, cy, sources);
+    const imageSide = config.size * imagePixelsPerTile(config.size, look.blend);
+    composeTerrainImage(message, [message.data.layer, message.data.level, message.data.tint, message.hidden])
       .then(image => {
         if (terrainActive.get(id) !== token || cache.get(id) !== sources[4]) { image.close(); return; }
         const previous = terrainCache.get(id);
         if (previous) closeTerrain(previous);
         terrainCache.delete(id);
-        terrainCache.set(id, { image, sources, palette });
-        const limit = Math.max(24, Math.floor(160 * 1024 ** 2 / ((config.size * terrainTilePx(config.size)) ** 2 * 4)));
+        terrainCache.set(id, { image, sources, revision });
+        const limit = Math.max(24, Math.floor(160 * 1024 ** 2 / (imageSide ** 2 * 4)));
         while (terrainCache.size > limit) {
           const oldest = terrainCache.keys().next().value;
           closeTerrain(terrainCache.get(oldest)); terrainCache.delete(oldest);
@@ -237,31 +287,6 @@ function drawTerrain(cx, cy, edgeX, edgeY, span) {
   ctx.drawImage(entry.image, edgeX, edgeY, span, span);
   ctx.restore();
   return true;
-}
-
-function sampleAtTile(x, y) {
-  const chunkX = Math.floor(x / config.size);
-  const chunkY = Math.floor(y / config.size);
-  const chunk = cache.get(key(chunkX, chunkY, 0)) || staleCache.get(key(chunkX, chunkY, 0));
-  return chunk ? readSample(chunk.bytes, (y - chunkY * config.size) * config.size + x - chunkX * config.size) : null;
-}
-
-function surfaceOfSample(sample) {
-  if (!sample || sample.status === 255 || !Number.isFinite(sample.height) || !Number.isFinite(sample.temperature)) return null;
-  const tile = sample.status === 1 ? terrainTiles[sample.tileId] : null;
-  return { surface: surfaceFor(!!tile?.basalt, sample.height, sample.temperature), tint: tile ? tile.tint : UNCLASSIFIED_TINT };
-}
-
-// Objects take the tint and material of the tile under the middle of their bottom row.
-function objectEnvironment(object) {
-  return surfaceOfSample(sampleAtTile(object.id.anchor.x + Math.floor(object.footprint.width / 2),
-    object.id.anchor.y + object.footprint.height - 1));
-}
-
-function hexColor(color) {
-  const value = color.replace('#', '');
-  const full = value.length === 3 ? [...value].map(c => c + c).join('') : value;
-  return [0, 2, 4].map(i => parseInt(full.slice(i, i + 2), 16));
 }
 
 let retryAt = 0;
@@ -298,7 +323,7 @@ function installControls(nextControls) {
       label.append(text, input); section.append(label);
     }
     const hints = {
-      World: 'Terrain coordinate scale multiplies elevation noise frequency. Regional noise uses global tile coordinates.',
+      World: 'Terrain scale makes every noise pattern and terrain feature (cells, radii) that many times larger, like terrain_scale in world.ron. Terrain coordinate scale is a preview-only multiplier of elevation noise frequency. Regional noise uses global tile coordinates.',
       'Elevation noise': 'Leave seed override blank to follow the world seed.',
       'Temperature region noise': 'Leave seed override blank to derive it from the world seed.',
       'Temperature coefficients': 'Temperature is always the daily average for the selected season.',
@@ -366,6 +391,7 @@ function metrics() {
 
 function zoomAt(amount, screenX, screenY) {
   const old = metrics();
+  screenY = flipY(screenY);
   const oldX = cameraX + (screenX - viewport.clientWidth / 2) / old.cellPx;
   const oldY = cameraY + (screenY - viewport.clientHeight / 2) / old.cellPx;
   if (!world) return;
@@ -391,7 +417,7 @@ function constrainView() {
 function cellAt(screenX, screenY, m = metrics()) {
   return {
     x: Math.floor(cameraX + (screenX - viewport.clientWidth / 2) / m.cellPx),
-    y: Math.floor(cameraY + (screenY - viewport.clientHeight / 2) / m.cellPx),
+    y: Math.floor(cameraY + (flipY(screenY) - viewport.clientHeight / 2) / m.cellPx),
   };
 }
 
@@ -565,6 +591,9 @@ function draw() {
   ctx.fillRect(0, 0, width, height);
   if (!world) { labels.status.textContent = 'Waiting for world dimensions…'; tooltip.hidden = true; return; }
   constrainView();
+  // World drawing below uses y-up coordinates (y = 0 at the bottom of the viewport).
+  ctx.setTransform(dpr, 0, 0, -dpr, 0, height * dpr);
+  const chunkLabels = [];
   const m = metrics();
   const stride = 2 ** m.lod;
   const worldX = width / 2 - cameraX * m.cellPx;
@@ -595,11 +624,7 @@ function draw() {
       ctx.lineWidth = 1.5;
       ctx.strokeRect(Math.round(edgeX) + .5, Math.round(edgeY) + .5, span, span);
       if (span > 120 && edgeX < width && edgeY < height && edgeX + span > 0 && edgeY + span > 0) {
-        ctx.fillStyle = '#09202bd9';
-        ctx.fillRect(edgeX + 1, edgeY + 1, 105, 22);
-        ctx.fillStyle = '#c3e9dd';
-        ctx.font = '10px ui-monospace, monospace';
-        ctx.fillText(`CHUNK ${cx}, ${cy}`, edgeX + 8, edgeY + 16);
+        chunkLabels.push({ text: `CHUNK ${cx}, ${cy}`, x: edgeX, y: height - edgeY - span });
       }
     }
   }
@@ -628,8 +653,8 @@ function draw() {
     }
     visibleObjects = collectObjects(chunks, { minX: left, minY: top, maxX: right, maxY: bottom });
     const hover = pointer && !dragging ? cellAt(pointer.x, pointer.y, m) : null;
-    drawObjects(ctx, visibleObjects, objectTypes, worldX, worldY, m.baseTilePx,
-      hover ? objectAt(visibleObjects, hover.x, hover.y) : null, objectEnvironment);
+    drawObjects(ctx, visibleObjects, worldX, worldY, m.baseTilePx, objectLook,
+      hover ? objectAt(visibleObjects, hover.x, hover.y) : null);
     const unavailable = chunks.filter(chunk => chunk.error).length;
     objectStatus.textContent = objectError || (unavailable
       ? `${visibleObjects.length} objects · ${unavailable} chunks have no matching terrain or tiles.`
@@ -641,6 +666,14 @@ function draw() {
       ? 'No object definitions supplied.' : 'Zoom in to see placed objects.';
   }
   ctx.restore();
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.font = '10px ui-monospace, monospace';
+  for (const label of chunkLabels) {
+    ctx.fillStyle = '#09202bd9';
+    ctx.fillRect(label.x + 1, label.y + 1, 105, 22);
+    ctx.fillStyle = '#c3e9dd';
+    ctx.fillText(label.text, label.x + 8, label.y + 16);
+  }
   labels.zoom.textContent = zoom >= 0 ? `2^−${zoom.toFixed(1)}×` : `${2 ** -zoom < 1e6 ? (2 ** -zoom).toFixed(1) : `2^${(-zoom).toFixed(0)}`}×`;
   labels.status.textContent = m.lod === 0 ? `LOD 0 · exact tiles · ${m.baseTilePx.toFixed(2)} px / tile${textured ? ' · textured' : ''}` : `LOD ${m.lod} · 2^${m.lod} tiles / cell`;
   if (terrainError && textured) labels.validation.textContent = terrainError;
@@ -660,7 +693,7 @@ function updateReadout() {
     return;
   }
   const worldX = (cameraX + (pointer.x - viewport.clientWidth / 2) / m.cellPx) * stride;
-  const worldY = (cameraY + (pointer.y - viewport.clientHeight / 2) / m.cellPx) * stride;
+  const worldY = (cameraY + (flipY(pointer.y) - viewport.clientHeight / 2) / m.cellPx) * stride;
   if (worldX < 0 || worldX >= world.width || worldY < 0 || worldY >= world.height) return;
   const cell = cellAt(pointer.x, pointer.y, m);
   const chunkX = Math.floor(cell.x / config.size);
@@ -672,7 +705,9 @@ function updateReadout() {
   const tileX = Math.min(world.width - 1, cell.x * stride + offset);
   const tileY = Math.min(world.height - 1, cell.y * stride + offset);
   const biome = biomeForSample(biomes, sample);
-  const surface = tileForSample(tilePalette, sample);
+  const textureId = sample?.status === 1 && look ? drawnTexture(look.catalog, sample.biomeId, sample.groundId) : null;
+  const texture = textureId === null ? null : look.catalog.textures[textureId];
+  const ground = sample?.status === 1 && sample.groundId !== sample.biomeId ? biomes[sample.groundId]?.name : null;
   const title = sample ? (mapMode === 'biomes' ? (biome ? biome.name : 'No matching biome') : MAP_MODES[mapMode].label) : 'Loading tile…';
   const temperature = sample && Number.isFinite(sample.temperature) ? `${sample.temperature.toFixed(1)} °C` : '—';
   const height = sample && Number.isFinite(sample.height) ? sample.height.toFixed(4) : '—';
@@ -682,8 +717,7 @@ function updateReadout() {
   tooltipFields.tile.textContent = `${m.lod === 0 ? 'Tile' : 'Sample'} ${tileX}, ${tileY} · ${title}`;
   tooltipFields.temperature.textContent = temperature;
   tooltipFields.height.textContent = height;
-  const material = m.lod === 0 ? surfaceOfSample(sample) : null;
-  tooltipFields.note.textContent = `${sample?.status === 1 ? `Tile ${sample.tileId}: ${surface?.name || sample.color} · ${sample.color} · ` : ''}${material ? `Surface ${SURFACE_NAMES[material.surface]} · ` : ''}Height 0–1 · daily average temperature${m.lod ? ` · LOD ${m.lod}` : ''}`;
+  tooltipFields.note.textContent = `${texture ? `Texture ${texture.name} · layer ${look.catalog.overlay[textureId]} · ` : ''}${ground ? `Ground ${ground} · ` : ''}Height 0–1 · daily average temperature${m.lod ? ` · LOD ${m.lod}` : ''}`;
   if (object) {
     const label = objectStyle(objectTypes[object.kind]).label;
     tooltipFields.object.textContent = `${label} · footprint ${object.footprint.width} × ${object.footprint.height}\nAnchor ${object.id.anchor.x}, ${object.id.anchor.y} · instance ${objectKey(object)}`;
@@ -785,7 +819,7 @@ viewport.addEventListener('pointermove', event => {
   if (dragging) {
     const m = metrics();
     cameraX -= (event.clientX - dragging.x) / m.cellPx;
-    cameraY -= (event.clientY - dragging.y) / m.cellPx;
+    cameraY += (event.clientY - dragging.y) / m.cellPx;
     dragging = { x: event.clientX, y: event.clientY };
   }
   invalidate();
@@ -802,14 +836,14 @@ async function pollBuild() {
     const response = await fetch(`${apiBase}/api/meta?${query}`, { cache: 'no-store' });
     if (!response.ok) throw new Error(response.status === 400 ? await response.text() : 'Generator is rebuilding or unavailable. Waiting for the local server…');
     const { build, protocol, world: nextWorld, controls: nextControls, biome_files: nextFiles, biome_file: nextFile,
-      biomes: nextBiomes, biome_rules: nextRules, feature_biome_maps: nextFeatureMaps, tile_palette: nextPalette, tile_rules: nextTileRules,
+      biomes: nextBiomes, biome_rules: nextRules, feature_biome_maps: nextFeatureMaps,
       object_types: nextObjectTypes = [] } = await response.json();
     if (request !== metaRequest) return;
-    if (protocol !== 6 || !nextWorld || !Number.isSafeInteger(nextWorld.width) || !Number.isSafeInteger(nextWorld.height)
+    if (protocol !== PROTOCOL || !nextWorld || !Number.isSafeInteger(nextWorld.width) || !Number.isSafeInteger(nextWorld.height)
       || nextWorld.width <= 0 || nextWorld.height <= 0 || !Array.isArray(nextControls) || !nextControls.length) throw new Error('Unsupported preview metadata');
     if (JSON.stringify(controls) !== JSON.stringify(nextControls)) installControls(nextControls);
     if (!Array.isArray(nextFiles) || !nextFiles.includes(nextFile) || !Array.isArray(nextBiomes)
-      || !Array.isArray(nextRules) || !nextFeatureMaps || !Array.isArray(nextPalette) || !Array.isArray(nextTileRules)) throw new Error('Unsupported biome metadata');
+      || !Array.isArray(nextRules) || !nextFeatureMaps) throw new Error('Unsupported biome metadata');
     if (JSON.stringify(biomeFiles) !== JSON.stringify(nextFiles)) {
       biomeFiles = nextFiles;
       biomeSelect.replaceChildren(...biomeFiles.map(file => {
@@ -828,19 +862,15 @@ async function pollBuild() {
     if (!Array.isArray(nextObjectTypes) || nextObjectTypes.some(type => typeof type.name !== 'string'
       || !Number.isSafeInteger(type.footprint?.width) || !Number.isSafeInteger(type.footprint?.height)
       || type.footprint.width <= 0 || type.footprint.height <= 0)) throw new Error('Unsupported object metadata');
-    if (JSON.stringify(objectTypes) !== JSON.stringify(nextObjectTypes)) {
+    const objectsChanged = JSON.stringify(objectTypes) !== JSON.stringify(nextObjectTypes);
+    if (objectsChanged) {
       objectTypes = nextObjectTypes;
       resetObjects();
-      renderObjectLegend(document.querySelector('#object-legend'), objectTypes);
     }
-    if (!biomeReady || JSON.stringify(biomes) !== JSON.stringify(nextBiomes)
-      || JSON.stringify(biomeMaps) !== JSON.stringify(nextMaps)
-      || JSON.stringify(tilePalette) !== JSON.stringify(nextPalette) || JSON.stringify(tileRules) !== JSON.stringify(nextTileRules)) {
+    const biomesChanged = !biomeReady || JSON.stringify(biomes) !== JSON.stringify(nextBiomes)
+      || JSON.stringify(biomeMaps) !== JSON.stringify(nextMaps);
+    if (biomesChanged) {
       biomes = nextBiomes;
-      tilePalette = nextPalette;
-      terrainTiles = tilePalette.map(tile => ({ tint: hexColor(tile.color), basalt: isBasaltTile(tile.name) }));
-      terrainPaletteRevision++;
-      tileRules = nextTileRules;
       biomeMaps = nextMaps;
       const selectedMap = biomeMapView.value;
       biomeMapView.replaceChildren(...Object.keys(biomeMaps).map(name => {
@@ -850,6 +880,7 @@ async function pollBuild() {
       biomeMapView.value = Object.hasOwn(biomeMaps, selectedMap) ? selectedMap : 'Default';
       renderBiomeMap();
     }
+    if (biomesChanged || objectsChanged) editor.setMeta({ biomes, maps: biomeMaps, objectTypes });
     biomeReady = true;
     updateUrl();
     if (buildId !== null && build !== buildId) {
@@ -878,7 +909,3 @@ setInterval(pollBuild, 1200);
 updateMapMode();
 pollBuild();
 invalidate();
-loadObjectSprites().then(() => {
-  renderObjectLegend(document.querySelector('#object-legend'), objectTypes);
-  invalidate();
-}, () => { objectError = 'Sprite sheet unavailable; showing symbols.'; });

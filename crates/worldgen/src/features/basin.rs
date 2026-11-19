@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use super::first_failure;
 use crate::features::feature::{FeatureGenerator, TerrainFeature};
-use crate::{BiomeMapDefinition, NoiseSource, TileDraft, TilePos};
+use crate::{BiomeMapDefinition, NoiseConfig, NoiseSource, TileDraft, TilePos};
 
 /// A broad, shallow impact with a worn rim and reduced interior terrain detail.
 /// Height, depth, and rim height use the normalized terrain-height scale.
@@ -27,6 +27,15 @@ fn smoothstep(start: f64, end: f64, value: f64) -> f64 {
 }
 
 impl TerrainFeature for Basin {
+    fn scaled(self, scale: f64) -> Self {
+        Self {
+            x: self.x * scale,
+            y: self.y * scale,
+            radius: self.radius * scale,
+            ..self
+        }
+    }
+
     fn center(&self) -> (f64, f64) {
         (self.x, self.y)
     }
@@ -114,6 +123,14 @@ impl BasinGenerator {
 }
 
 impl BasinSettings {
+    /// The coarse elevation noise basin floors are smoothed towards.
+    pub fn floor_noise(&self, elevation: NoiseConfig) -> NoiseConfig {
+        NoiseConfig {
+            octaves: self.smoothing_octaves.min(elevation.octaves),
+            ..elevation
+        }
+    }
+
     pub(crate) fn validate(&self) -> Result<(), String> {
         let checks = [
             (self.cell_size > 0, "cell_size must be positive"),
@@ -166,8 +183,8 @@ impl FeatureGenerator for BasinGenerator {
         self.settings.biome_map.clone()
     }
 
-    fn cell_size(&self) -> i64 {
-        self.settings.cell_size
+    fn cell_size(&self) -> f64 {
+        self.settings.cell_size as f64
     }
 
     fn max_influence_radius(&self) -> f64 {

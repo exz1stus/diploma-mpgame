@@ -4,7 +4,7 @@ pub(crate) mod feature;
 mod stage;
 pub(crate) mod volcano;
 
-pub use feature::{FeatureGenerator, TerrainFeature};
+pub use feature::{FeatureGenerator, ScaledFeatures, TerrainFeature};
 pub use stage::FeatureStage;
 
 use serde::{Deserialize, Serialize};

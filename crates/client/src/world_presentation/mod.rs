@@ -5,9 +5,11 @@
 //! `assets/world/{tiles,objects}.ron`, and textures are looked up in
 //! `assets/textures/{tiles,objects}/<name>.png`.
 //!
-//! Tile appearance is composed by [`TileLayer`]s. The plugin registers [`TextureLayer`];
-//! more layers (biome tint, relief, ...) are added with [`TileLayerAppExt::add_tile_layer`]
-//! from their own plugins, which must be added after this one.
+//! Tile appearance is composed by [`TileLayer`]s. The plugin registers [`TextureLayer`],
+//! which picks each tile's texture and overlay layer; more layers are added with
+//! [`TileLayerAppExt::add_tile_layer`] from their own plugins, which must be added after
+//! this one. Neighboring textures are blended per pixel by `terrain.wgsl`, following the
+//! `layers` and `blend` settings in `tiles.ron`.
 
 mod catalog;
 mod chunk_mesh;
@@ -31,7 +33,7 @@ use catalog::ObjectCatalog;
 use config::PresentationConfig;
 
 use crate::game::world::WorldInfo;
-use chunks::{GroundMaterial, PendingTileTextures};
+use chunks::{GroundTextures, PendingTileTextures};
 use textures::AssetRoot;
 
 pub struct WorldPresentationPlugin;
@@ -78,8 +80,9 @@ impl Plugin for WorldPresentationPlugin {
             .add_systems(
                 Update,
                 (
-                    chunks::assemble_ground_material.run_if(resource_exists::<PendingTileTextures>),
-                    chunks::spawn_chunk_visuals.run_if(resource_exists::<GroundMaterial>),
+                    chunks::assemble_ground_textures.run_if(resource_exists::<PendingTileTextures>),
+                    chunks::spawn_chunk_visuals.run_if(resource_exists::<GroundTextures>),
+                    chunks::stitch_chunk_borders,
                     objects::spawn_object_visuals.run_if(resource_exists::<ObjectCatalog>),
                 )
                     .chain()

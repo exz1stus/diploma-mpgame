@@ -1,3 +1,5 @@
 /target
 .env
 /docs
+# worldgen preview presentation exports
+/tools/worldgen-preview/export/

@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { SAMPLE_BYTES, decodePixels, readSample, readMapMode, displayFactor, readDisplay, DEFAULT_DISPLAY } from './dist/protocol.mjs';
+import { SAMPLE_BYTES, decodePixels, readSample, readMapMode, displayFactor, readDisplay, sampleColor, DEFAULT_DISPLAY } from './dist/protocol.mjs';
 
 const FLAT = { height_tint: 0, relief: 0 };
 import { zoomMetrics, fitWorldZoom, clampCamera } from './dist/zoom.mjs';
 import { defaultSettings, settingsError, readSettings, settingsQuery } from './dist/settings.mjs';
-import { biomeAt, biomeForSample, tileForSample, biomeDescription, tileRegions, temperatureDomain } from './dist/biomes.mjs';
+import { biomeAt, biomeForSample, biomeDescription, tileRegions, temperatureDomain } from './dist/biomes.mjs';
 
 const controls = [
   { key: 'size', label: 'Chunk size', default: 32, min: 4, max: 128, step: '1' },
@@ -76,19 +76,25 @@ test('basin settings round-trip, reject inconsistent ranges, and restore invalid
   assert.equal(restored.basin_cell_size, defaults.basin_cell_size);
 });
 
-test('generator colors and Celsius/height data survive binary decoding', () => {
+// Protocol 7: biome 1 is a feature biome drawn as its ground, biome 0.
+const PALETTE = { own: Uint8Array.of(1, 0), textureOf: Uint16Array.of(0, 1), colors: Uint8Array.of(56, 71, 106, 10, 20, 30) };
+
+test('Celsius/height data, biome and ground survive binary decoding; flat colors follow the presentation', () => {
   const buffer = new ArrayBuffer(4 * SAMPLE_BYTES);
   const bytes = new Uint8Array(buffer);
   const view = new DataView(buffer);
   for (let i = 0; i < 4; i++) {
-    bytes.set([1, 56, 71, 106], i * SAMPLE_BYTES);
+    bytes[i * SAMPLE_BYTES] = 1;
     view.setFloat32(i * SAMPLE_BYTES + 4, 0.625, true);
     view.setFloat32(i * SAMPLE_BYTES + 8, -12.5, true);
-    view.setUint16(i * SAMPLE_BYTES + 12, 65535, true);
-    view.setUint16(i * SAMPLE_BYTES + 14, 42, true);
+    view.setUint16(i * SAMPLE_BYTES + 12, 1, true);
+    view.setUint16(i * SAMPLE_BYTES + 14, 0, true);
   }
-  assert.deepEqual(readSample(bytes, 0), { status: 1, color: '#38476a', height: 0.625, temperature: -12.5, biomeId: 65535, tileId: 42 });
-  assert.deepEqual([...decodePixels(buffer, 2, 'biomes', FLAT).slice(0, 4)], [56, 71, 106, 255]);
+  assert.deepEqual(readSample(bytes, 0), { status: 1, height: 0.625, temperature: -12.5, biomeId: 1, groundId: 0 });
+  assert.deepEqual([...decodePixels(buffer, 2, 'biomes', FLAT, 1, PALETTE).slice(0, 4)], [56, 71, 106, 255], 'drawn as its ground');
+  const own = { ...PALETTE, own: Uint8Array.of(1, 1) };
+  assert.deepEqual([...decodePixels(buffer, 2, 'biomes', FLAT, 1, own).slice(0, 4)], [10, 20, 30, 255], 'drawn with its own texture');
+  assert.deepEqual([...decodePixels(buffer, 2, 'biomes', FLAT).slice(0, 4)], [54, 43, 61, 255], 'no presentation yet');
 });
 
 test('unclassified cells stay visible and world padding stays transparent', () => {
@@ -242,25 +248,21 @@ test('feature temperature offsets survive URLs and support heating and cooling',
   assert.match(settingsError({ ...values, volcano_temperature_offset: 1001 }, featureControls), /Peak temperature offset/);
 });
 
-test('global tile IDs and colors decode independently of biome identity', () => {
-  const biomes = [{ name: 'volcano' }];
-  const palette = [{ name: 'ash', color: '#AD8060' }, { name: 'rock', color: '#5B4640' }];
+test('biome identity is independent of the ground drawn under it', () => {
+  const biomes = [{ name: 'plain' }, { name: 'crater' }];
   const bytes = new Uint8Array(2 * SAMPLE_BYTES);
   const view = new DataView(bytes.buffer);
-  bytes.set([1, 173, 128, 96], 0);
-  bytes.set([1, 91, 70, 64], SAMPLE_BYTES);
-  view.setUint16(SAMPLE_BYTES + 14, 1, true);
-  const first = readSample(bytes, 0);
-  const second = readSample(bytes, 1);
-  assert.equal(first.biomeId, second.biomeId);
-  assert.equal(first.tileId, 0);
-  assert.equal(second.tileId, 1);
-  assert.equal(tileForSample(palette, first), palette[0]);
-  assert.equal(tileForSample(palette, second), palette[1]);
-  assert.equal(first.color, palette[0].color.toLowerCase());
-  assert.equal(second.color, palette[1].color.toLowerCase());
-  assert.equal(biomeForSample(biomes, first), biomeForSample(biomes, second));
-  assert.equal(biomeDescription(biomes[0]), 'volcano');
+  bytes[0] = 1;
+  view.setUint16(12, 1, true);
+  view.setUint16(14, 0, true);
+  const sample = readSample(bytes, 0);
+  assert.equal(biomeForSample(biomes, sample), biomes[1]);
+  assert.deepEqual(sampleColor(PALETTE, sample.biomeId, sample.groundId), [56, 71, 106]);
+  assert.deepEqual(sampleColor(PALETTE, 0, 0), [56, 71, 106]);
+  assert.deepEqual(sampleColor(PALETTE, 7, 7), [54, 43, 61], 'unknown biomes use the unclassified color');
+  const tinted = { ...PALETTE, colors: Uint8Array.of(255, 255, 255, 0, 0, 0), tints: Uint8Array.of(161, 139, 104, 255, 255, 255) };
+  assert.deepEqual(sampleColor(tinted, 1, 0), [161, 139, 104], 'flat colors multiply the drawn biome tint');
+  assert.equal(biomeDescription(biomes[0]), 'plain');
 });
 
 test('tile chart intersects independent rules with biome and climate bounds', () => {
@@ -278,24 +280,13 @@ test('tile chart intersects independent rules with biome and climate bounds', ()
   ]);
 });
 
-test('biome identity survives an unmapped tile and never supplies palette IDs', () => {
-  const biomes = [{ name: 'terrain' }, { name: 'crater' }];
-  const palette = [{ name: 'rock', color: '#abcdef' }];
-  const bytes = new Uint8Array(2 * SAMPLE_BYTES);
-  const view = new DataView(bytes.buffer);
-  bytes.set([1, 171, 205, 239]);
-  view.setUint16(12, 1, true);
-  view.setUint16(14, 0, true);
+test('unclassified samples carry no biome or ground', () => {
+  const bytes = new Uint8Array(SAMPLE_BYTES);
+  new DataView(bytes.buffer).setUint16(12, 3, true);
   const sample = readSample(bytes, 0);
-  assert.equal(biomeForSample(biomes, sample), biomes[1]);
-  assert.equal(tileForSample(palette, sample), palette[0]);
-  bytes[SAMPLE_BYTES] = 2;
-  view.setUint16(SAMPLE_BYTES + 12, 1, true);
-  const unmapped = readSample(bytes, 1);
-  assert.equal(biomeForSample(biomes, unmapped), biomes[1]);
-  assert.equal(unmapped.tileId, null);
-  assert.equal(tileForSample(palette, unmapped), null);
-  assert.equal(tileForSample(palette, { status: 1, tileId: 65535 }), null);
+  assert.equal(sample.biomeId, null);
+  assert.equal(sample.groundId, null);
+  assert.equal(biomeForSample([{ name: 'a' }], sample), null);
 });
 
 test('display coefficients darken bowls, light north-west slopes, and default from the URL', () => {

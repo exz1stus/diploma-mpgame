@@ -7,7 +7,8 @@ use crate::{
     BasinGenerator, BiomeMap, BiomeRepository, BiomeStage, ClampHeightStage, ConfigError,
     ConfigFile, ElevationStage, FbmNoise, FeatureGenerator, FeatureKind, FeatureSpawns,
     FeatureStage, GenerationStage, NoiseSource, ObjectPlacer, ObjectRepository, ObjectsError,
-    TemperatureModel, TemperatureStage, WorldConfig, WorldGenerator, WorldGeography,
+    ScaledFeatures, TemperatureModel, TemperatureStage, WorldConfig, WorldGenerator,
+    WorldGeography,
 };
 
 const BASIN_SEED: u64 = 0x4352_4152;
@@ -25,17 +26,20 @@ pub struct TerrainSources {
 }
 
 impl TerrainSources {
+    /// The configured noise fields, scaled by `terrain_scale`.
     /// Panics on invalid noise parameters; [`WorldConfig::build`] validates them first.
     pub fn from_config(config: &WorldConfig) -> Self {
         let world = &config.world;
-        let mut basin_floor = world.elevation;
-        basin_floor.octaves = config.basins.smoothing_octaves.min(world.elevation.octaves);
+        let elevation = world.scaled_elevation();
         Self {
-            elevation: Box::new(FbmNoise::new(world.seed, world.elevation)),
-            basin_floor: Box::new(FbmNoise::new(world.seed, basin_floor)),
+            elevation: Box::new(FbmNoise::new(world.seed, elevation)),
+            basin_floor: Box::new(FbmNoise::new(
+                world.seed,
+                config.basins.floor_noise(elevation),
+            )),
             temperature_regions: Box::new(FbmNoise::new(
                 world.seed ^ REGION_SEED,
-                world.climate.region_noise,
+                world.scaled_region_noise(),
             )),
         }
     }
@@ -48,7 +52,8 @@ impl WorldConfig {
         self.build_with(TerrainSources::from_config(self))
     }
 
-    /// Like [`WorldConfig::build`], sampling the given noise fields.
+    /// Like [`WorldConfig::build`], sampling the given noise fields. Features are scaled by
+    /// `terrain_scale` here; the sources are used as given (see [`WorldSettings::scaled_elevation`]).
     pub fn build_with(&self, sources: TerrainSources) -> Result<WorldGenerator, ConfigError> {
         self.validate_features()?;
         let dimensions = self.world.dimensions();
@@ -94,6 +99,7 @@ impl WorldConfig {
                 FeatureKind::Basin,
                 seed ^ BASIN_SEED,
                 BasinGenerator::new(self.basins.clone(), sources.basin_floor),
+                self.world.terrain_scale,
                 chunk_size,
                 biomes,
             ));
@@ -103,6 +109,7 @@ impl WorldConfig {
                 FeatureKind::Crater,
                 seed ^ CRATER_SEED,
                 self.craters.clone(),
+                self.world.terrain_scale,
                 chunk_size,
                 biomes,
             ));
@@ -112,6 +119,7 @@ impl WorldConfig {
                 FeatureKind::Volcano,
                 seed ^ VOLCANO_SEED,
                 self.volcanoes.clone(),
+                self.world.terrain_scale,
                 chunk_size,
                 biomes,
             ));
@@ -145,14 +153,21 @@ impl WorldConfig {
 
     fn validate_noise(&self) -> Result<(), ConfigError> {
         self.world
-            .elevation
+            .scaled_elevation()
             .validate()
-            .and_then(|()| self.world.climate.region_noise.validate())
+            .and_then(|()| self.world.scaled_region_noise().validate())
             .map_err(|error| ConfigError::invalid(ConfigFile::World, error))
     }
 
     fn validate_features(&self) -> Result<(), ConfigError> {
         let invalid = |file| move |error| ConfigError::invalid(file, error);
+        let scale = self.world.terrain_scale;
+        if !(scale.is_finite() && scale > 0.0) {
+            return Err(ConfigError::invalid(
+                ConfigFile::World,
+                format!("terrain_scale must be positive, got {scale}"),
+            ));
+        }
         self.craters
             .validate()
             .map_err(invalid(ConfigFile::Craters))?;
@@ -197,10 +212,17 @@ fn feature_stage<G: FeatureGenerator + 'static>(
     kind: FeatureKind,
     seed: u64,
     generator: G,
+    scale: f64,
     chunk_size: u32,
     biomes: &BiomeRepository,
 ) -> Box<dyn GenerationStage> {
-    Box::new(FeatureStage::new(kind, seed, generator, chunk_size, biomes))
+    Box::new(FeatureStage::new(
+        kind,
+        seed,
+        ScaledFeatures::new(generator, scale),
+        chunk_size,
+        biomes,
+    ))
 }
 
 /// Spawn references are written in `biomes.ron`; kinds and sets in `objects.ron`.

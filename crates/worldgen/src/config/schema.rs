@@ -19,11 +19,29 @@ pub struct WorldSettings {
     pub seed: u64,
     pub world_size_chunks: u32,
     pub chunk_size: u32,
+    /// Horizontal size of the terrain: every noise pattern and terrain feature is this many
+    /// times larger (2 doubles them, 0.5 halves them). Heights and objects are unaffected.
+    #[serde(default = "unit_scale")]
+    pub terrain_scale: f64,
     pub elevation: NoiseConfig,
     pub climate: ClimateSettings,
 }
 
+fn unit_scale() -> f64 {
+    1.0
+}
+
 impl WorldSettings {
+    /// Elevation noise with `terrain_scale` applied.
+    pub fn scaled_elevation(&self) -> NoiseConfig {
+        self.elevation.scaled(self.terrain_scale)
+    }
+
+    /// Regional temperature noise with `terrain_scale` applied.
+    pub fn scaled_region_noise(&self) -> NoiseConfig {
+        self.climate.region_noise.scaled(self.terrain_scale)
+    }
+
     pub fn dimensions(&self) -> WorldGeneratorConfig {
         WorldGeneratorConfig {
             generator_version: self.generator_version,

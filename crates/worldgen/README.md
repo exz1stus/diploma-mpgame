@@ -19,7 +19,7 @@ The whole world is declared in [`config/`](config). Each file owns one concern:
 
 | File                     | Declares                                                               |
 | ------------------------ | ---------------------------------------------------------------------- |
-| `world.ron`              | generator version, seed, world/chunk size, elevation noise, climate     |
+| `world.ron`              | generator version, seed, world/chunk size, terrain scale, elevation noise, climate |
 | `biomes.ron`             | biomes (list order = `BiomeId`) and the objects each biome spawns       |
 | `biome_map.ron`          | terrain biome ranges: height × temperature, first match wins            |
 | `objects.ron`            | object kinds and footprints (order = `ObjectId`), shared spawn sets     |

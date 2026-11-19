@@ -5,6 +5,9 @@
     seed: 0,
     world_size_chunks: 250,
     chunk_size: 32,
+    // Horizontal terrain size: every noise and feature (cells, radii) is this many times
+    // larger. Heights, climate coefficients and objects are unaffected.
+    terrain_scale: 1.0,
     // fBm elevation, normalized to [0, 1] before terrain features.
     elevation: (frequency: 0.002, octaves: 10, lacunarity: 3.0, persistence: 0.5),
     // Daily-average temperature in °C.

@@ -1,6 +1,7 @@
 //! Tile visuals are composed by an ordered list of [`TileLayer`]s. Each layer owns one
-//! concern (texture, tint, relief, ...) and writes only its part of [`TileVisual`], so
-//! layers can be added, replaced or removed independently.
+//! concern and writes only its part of [`TileVisual`], so layers can be added, replaced or
+//! removed independently. The terrain shader blends each pixel from the visuals of the four
+//! nearest tiles (see `terrain.wgsl`).
 
 use bevy::prelude::*;
 use shared::world::{TileSample, WorldManifest};
@@ -9,31 +10,29 @@ use super::catalog::TileCatalog;
 use crate::game::world::ChunkTiles;
 
 /// Everything the terrain shader receives per tile.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TileVisual {
     /// Layer in the tile texture array.
     pub texture_layer: u32,
-    /// Multiplied with the texture color.
-    pub tint: LinearRgba,
-    /// Relief input for the shader; 0 means flat.
-    pub height: f32,
+    /// Overlay layer: drawn over neighbors with a lower one, blended with neighbors on the
+    /// same one.
+    pub overlay: u32,
+    /// sRGB color the ground is multiplied by; smoothed across tiles by the tile data.
+    pub tint: [u8; 3],
 }
 
 impl Default for TileVisual {
     fn default() -> Self {
         Self {
             texture_layer: 0,
-            tint: LinearRgba::WHITE,
-            height: 0.0,
+            overlay: 0,
+            tint: [255; 3],
         }
     }
 }
 
 /// What a layer may look at while styling one tile.
-#[allow(
-    dead_code,
-    reason = "read by tint and relief layers, which are not written yet"
-)]
+#[allow(dead_code, reason = "API for future tile layers")]
 pub struct TileContext<'a> {
     pub manifest: &'a WorldManifest,
     pub catalog: &'a TileCatalog,
@@ -43,10 +42,7 @@ pub struct TileContext<'a> {
     pub local: UVec2,
 }
 
-#[allow(
-    dead_code,
-    reason = "read by tint and relief layers, which are not written yet"
-)]
+#[allow(dead_code, reason = "API for future tile layers")]
 impl TileContext<'_> {
     /// A tile of the same chunk, if inside it.
     pub fn neighbor(&self, dx: i32, dy: i32) -> Option<TileSample> {
@@ -119,12 +115,14 @@ impl TileLayerAppExt for App {
 }
 
 /// Picks each tile's texture from its biome, or from its ground biome when the biome
-/// has no tiles of its own (see [`TileCatalog`]).
+/// has no tiles of its own (see [`TileCatalog`]), the texture's overlay layer, and the tint.
 pub struct TextureLayer;
 
 impl TileLayer for TextureLayer {
     fn apply(&self, sample: TileSample, context: &TileContext, visual: &mut TileVisual) {
         visual.texture_layer = context.catalog.layer(sample);
+        visual.overlay = context.catalog.overlay(visual.texture_layer);
+        visual.tint = context.catalog.tint(sample);
     }
 }
 
@@ -134,11 +132,16 @@ mod tests {
     use crate::world_presentation::catalog::{TextureCatalog, TextureEntry};
     use shared::world::BiomeId;
 
-    struct Darken;
-    impl TileLayer for Darken {
+    /// Raises tiles on the west edge and high tiles.
+    struct Raise;
+    impl TileLayer for Raise {
         fn apply(&self, sample: TileSample, context: &TileContext, visual: &mut TileVisual) {
             let edge = context.neighbor(-1, 0).is_none();
-            visual.tint = LinearRgba::gray(if edge { 0.5 } else { sample.height() });
+            visual.overlay += if edge {
+                5
+            } else {
+                sample.height().round() as u32
+            };
         }
     }
 
@@ -165,6 +168,8 @@ mod tests {
                 texture_of: vec![1, 0],
             },
             own_tiles: vec![true, true],
+            overlay: vec![0, 1],
+            tints: vec![[255; 3], [10, 20, 30]],
         }
     }
 
@@ -181,13 +186,15 @@ mod tests {
     fn layers_run_in_order_over_every_tile() {
         let mut layers = TileLayers::default();
         layers.push(TextureLayer);
-        layers.push(Darken);
+        layers.push(Raise);
         let visuals = layers.style_chunk(&chunk(), &manifest(), &catalog());
         let textures: Vec<_> = visuals.iter().map(|v| v.texture_layer).collect();
         assert_eq!(textures, [1, 0, 0, 1]);
-        let tints: Vec<_> = visuals.iter().map(|v| v.tint.red).collect();
-        assert_eq!(tints, [0.5, 1.0, 0.5, 1.0], "x = 0 has no west neighbor");
-        assert!(visuals.iter().all(|visual| visual.height == 0.0));
+        let overlays: Vec<_> = visuals.iter().map(|v| v.overlay).collect();
+        // Texture 1 is on layer 1; x = 0 has no west neighbor.
+        assert_eq!(overlays, [6, 1, 5, 2]);
+        let tints: Vec<_> = visuals.iter().map(|v| v.tint).collect();
+        assert_eq!(tints, [[255; 3], [10, 20, 30], [10, 20, 30], [255; 3]]);
     }
 
     #[test]

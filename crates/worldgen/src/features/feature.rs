@@ -23,6 +23,12 @@ pub trait TerrainFeature: Send + Sync {
     /// from the centre divided by the feature radius; outside, return `None`.
     /// Biomes and appearance are decided by later stages.
     fn apply(&self, pos: TilePos, tile: &mut TileDraft) -> Option<f64>;
+
+    /// The same feature with its horizontal geometry (centre, radius) `scale` times
+    /// larger. Heights stay, so the shape is preserved.
+    fn scaled(self, scale: f64) -> Self
+    where
+        Self: Sized;
 }
 
 pub trait FeatureGenerator: Send + Sync {
@@ -32,8 +38,8 @@ pub trait FeatureGenerator: Send + Sync {
         BiomeMapDefinition::default()
     }
 
-    /// Size of the spatial generation cells.
-    fn cell_size(&self) -> i64;
+    /// Size of the spatial generation cells, in tiles.
+    fn cell_size(&self) -> f64;
 
     /// Maximum possible influence radius of a feature.
     fn max_influence_radius(&self) -> f64;
@@ -45,6 +51,49 @@ pub trait FeatureGenerator: Send + Sync {
         cell_y: i64,
         rng: &mut impl rand::Rng,
     ) -> Vec<Self::Feature>;
+}
+
+/// A generator whose features are `scale` times larger, at proportionally spaced cells.
+/// The inner generator works in configured units, so everything it derives from sizes
+/// (e.g. crater depth from radius) is the same at every scale.
+pub struct ScaledFeatures<G> {
+    inner: G,
+    scale: f64,
+}
+
+impl<G: FeatureGenerator> ScaledFeatures<G> {
+    pub fn new(inner: G, scale: f64) -> Self {
+        Self { inner, scale }
+    }
+}
+
+impl<G: FeatureGenerator> FeatureGenerator for ScaledFeatures<G> {
+    type Feature = G::Feature;
+
+    fn biome_map(&self) -> BiomeMapDefinition {
+        self.inner.biome_map()
+    }
+
+    fn cell_size(&self) -> f64 {
+        self.inner.cell_size() * self.scale
+    }
+
+    fn max_influence_radius(&self) -> f64 {
+        self.inner.max_influence_radius() * self.scale
+    }
+
+    fn generate_cell(
+        &self,
+        cell_x: i64,
+        cell_y: i64,
+        rng: &mut impl rand::Rng,
+    ) -> Vec<Self::Feature> {
+        self.inner
+            .generate_cell(cell_x, cell_y, rng)
+            .into_iter()
+            .map(|feature| feature.scaled(self.scale))
+            .collect()
+    }
 }
 
 /// Generated features keyed by spatial cell coordinates.
@@ -82,11 +131,11 @@ impl<G: FeatureGenerator> FeatureLayer<G> {
         let size = self.generator.cell_size();
         let padding = self.generator.max_influence_radius();
 
-        let min_x = ((bounds.min_x - padding) / size as f64).floor() as i64;
-        let min_y = ((bounds.min_y - padding) / size as f64).floor() as i64;
+        let min_x = ((bounds.min_x - padding) / size).floor() as i64;
+        let min_y = ((bounds.min_y - padding) / size).floor() as i64;
 
-        let max_x = ((bounds.max_x + padding) / size as f64).floor() as i64;
-        let max_y = ((bounds.max_y + padding) / size as f64).floor() as i64;
+        let max_x = ((bounds.max_x + padding) / size).floor() as i64;
+        let max_y = ((bounds.max_y + padding) / size).floor() as i64;
 
         let mut result: Vec<G::Feature> = Vec::new();
 

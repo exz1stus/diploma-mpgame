@@ -3,7 +3,7 @@
 use bevy::prelude::*;
 use shared::world::{BiomeId, ObjectId, TileSample, WorldManifest};
 
-use super::config::TextureTable;
+use super::config::{TextureTable, TileTable};
 
 /// One texture of a texture set: its name and the color drawn while its file is missing.
 #[derive(Clone, Debug, PartialEq)]
@@ -57,33 +57,65 @@ pub struct TileCatalog {
     pub set: TextureCatalog,
     /// Per biome, in manifest ID order: whether it has its own tiles.
     pub own_tiles: Vec<bool>,
+    /// Overlay layer per texture, in texture order (see [`super::config::TileBlend`]).
+    pub overlay: Vec<u32>,
+    /// sRGB tint per biome, in manifest ID order.
+    pub tints: Vec<[u8; 3]>,
 }
 
 impl TileCatalog {
     /// `has_file` tells whether a texture file exists for a texture name.
     pub fn build(
         manifest: &WorldManifest,
-        table: &TextureTable,
+        tiles: &TileTable,
         has_file: impl Fn(&str) -> bool,
     ) -> Self {
+        let table = tiles.table();
         let names = || manifest.biomes.iter().map(String::as_str);
+        let set = TextureCatalog::build(names(), &table);
         Self {
-            set: TextureCatalog::build(names(), table),
+            overlay: set
+                .textures
+                .iter()
+                .map(|texture| tiles.layer(&texture.name))
+                .collect(),
             own_tiles: names()
                 .map(|name| table.lists(name) || has_file(table.texture_for(name)))
                 .collect(),
+            tints: names().map(|name| tiles.tint(name)).collect(),
+            set,
         }
     }
 
-    /// Texture-array layer of a tile: its biome's, or its ground's if the biome has no
-    /// tiles of its own. Unknown biomes use layer 0.
-    pub fn layer(&self, sample: TileSample) -> u32 {
-        let biome = if self.has_own_tiles(sample.biome) {
+    /// Overlay layer of a texture-array layer; unknown layers are on layer 0.
+    pub fn overlay(&self, texture: u32) -> u32 {
+        self.overlay.get(texture as usize).copied().unwrap_or(0)
+    }
+
+    /// The biome whose tiles and tint a tile shows: its own, or its ground's if the biome
+    /// has no tiles of its own.
+    fn drawn(&self, sample: TileSample) -> BiomeId {
+        if self.has_own_tiles(sample.biome) {
             sample.biome
         } else {
             sample.ground
-        };
-        self.texture_of.get(biome.index()).copied().unwrap_or(0)
+        }
+    }
+
+    /// Texture-array layer of a tile. Unknown biomes use layer 0.
+    pub fn layer(&self, sample: TileSample) -> u32 {
+        self.texture_of
+            .get(self.drawn(sample).index())
+            .copied()
+            .unwrap_or(0)
+    }
+
+    /// sRGB tint of a tile; white for unknown biomes.
+    pub fn tint(&self, sample: TileSample) -> [u8; 3] {
+        self.tints
+            .get(self.drawn(sample).index())
+            .copied()
+            .unwrap_or([255; 3])
     }
 
     fn has_own_tiles(&self, biome: BiomeId) -> bool {
@@ -129,7 +161,15 @@ mod tests {
         }
     }
 
-    fn table() -> TextureTable {
+    fn table() -> TileTable {
+        TileTable::new(
+            texture_table(),
+            [("basalt".into(), 2)].into(),
+            Default::default(),
+        )
+    }
+
+    fn texture_table() -> TextureTable {
         TextureTable {
             textures: [
                 ("volcano".into(), "basalt".into()),
@@ -147,13 +187,24 @@ mod tests {
 
     #[test]
     fn biomes_resolve_by_name_and_share_textures() {
-        let catalog = TileCatalog::build(&manifest(), &table(), |_| false);
+        let mut tiles = table();
+        tiles.tints = [("ash".into(), "#102030".into())].into();
+        let catalog = TileCatalog::build(&manifest(), &tiles, |_| false);
+        assert_eq!(catalog.tint(sample(2)), [0x10, 0x20, 0x30]);
+        assert_eq!(
+            catalog.tint(sample(0)),
+            [255; 3],
+            "unlisted biomes are white"
+        );
+        assert_eq!(catalog.tint(sample(99)), [255; 3]);
         let names: Vec<_> = catalog.textures.iter().map(|t| t.name.as_str()).collect();
         assert_eq!(names, ["plain", "basalt"]);
         assert_eq!(catalog.layer(sample(0)), 0);
         assert_eq!(catalog.layer(sample(1)), 1);
         assert_eq!(catalog.layer(sample(2)), 1);
         assert_eq!(catalog.layer(sample(99)), 0, "unknown biomes fall back");
+        assert_eq!((catalog.overlay(0), catalog.overlay(1)), (0, 2));
+        assert_eq!(catalog.overlay(7), 0);
         assert_eq!(
             catalog.textures[0].placeholder,
             Srgba::hex("#FF00FF").unwrap(),
@@ -163,8 +214,9 @@ mod tests {
 
     #[test]
     fn biomes_without_own_tiles_use_their_ground() {
-        let mut table = table();
-        table.textures.remove("ash");
+        let mut texture_table = texture_table();
+        texture_table.textures.remove("ash");
+        let table = TileTable::new(texture_table, Default::default(), Default::default());
         let catalog = TileCatalog::build(&manifest(), &table, |_| false);
         let on_plain = |biome| TileSample::on_ground(BiomeId(biome), BiomeId(0), 0.5);
         assert_eq!(catalog.layer(on_plain(1)), 1, "listed: its own texture");
@@ -183,7 +235,7 @@ mod tests {
 
     #[test]
     fn objects_resolve_by_kind_name() {
-        let catalog = ObjectCatalog::build(&manifest(), &table());
+        let catalog = ObjectCatalog::build(&manifest(), &texture_table());
         assert_eq!(catalog.texture(ObjectId(0)).unwrap().name, "rock");
         assert!(catalog.texture(ObjectId(1)).is_none());
     }

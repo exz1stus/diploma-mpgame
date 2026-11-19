@@ -7,7 +7,7 @@
 // density is the proposal probability per anchor tile, before footprint/overlap rejection.
 // Where a biome appears is decided by biome_map.ron (terrain) and features/*.ron (feature territories).
 (
-    defaults: (object_sets: ["common_rocks"]),
+    defaults: (object_sets: ["common_rocks", "pebbles"]),
     biomes: [
         (name: "permanent_polar_ice"),
         (name: "fractured_ice_basins"),
@@ -33,10 +33,10 @@
         (name: "ochre_dust_plains", objects: [
             (object: "tree", density: 0.005, temperature: (min: 2.0, max: 20.0)),
         ]),
-        (name: "weathered_basalt", object_sets: ["common_rocks", "iron_deposits"]),
+        (name: "weathered_basalt", object_sets: ["common_rocks", "pebbles", "iron_deposits"]),
         (name: "exposed_anorthosite"),
         (name: "dark_basalt_depressions"),
-        (name: "iron_rich_regolith", object_sets: ["common_rocks", "iron_deposits"]),
+        (name: "iron_rich_regolith", object_sets: ["common_rocks", "pebbles", "iron_deposits"]),
         (name: "rocky_crater_uplands"),
         (name: "sunlit_crater_floors"),
         (name: "copper_toned_scree"),
@@ -56,7 +56,7 @@
         (name: "basin_salt_flats"),
         (name: "weathered_basin"),
         (name: "polar_volcano"),
-        (name: "volcanic_highlands", object_sets: ["common_rocks", "iron_deposits"]),
+        (name: "volcanic_highlands", object_sets: ["common_rocks", "pebbles", "iron_deposits"]),
         (name: "frozen_volcanic_highlands"),
     ],
 )

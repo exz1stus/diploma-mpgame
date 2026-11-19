@@ -14,12 +14,8 @@ export function biomeAt(biomes, temperature, height) {
 }
 
 export function biomeForSample(biomes, sample) {
-  if (![1, 2].includes(sample?.status)) return null;
+  if (sample?.status !== 1) return null;
   return biomes[sample.biomeId] || null;
-}
-
-export function tileForSample(palette, sample) {
-  return sample?.status === 1 ? palette[sample.tileId] || null : null;
 }
 
 // Intersect independent tile mapping rules with a biome classification region.

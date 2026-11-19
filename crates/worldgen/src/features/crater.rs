@@ -16,6 +16,15 @@ pub struct Crater {
 }
 
 impl TerrainFeature for Crater {
+    fn scaled(self, scale: f64) -> Self {
+        Self {
+            x: self.x * scale,
+            y: self.y * scale,
+            radius: self.radius * scale,
+            ..self
+        }
+    }
+
     fn center(&self) -> (f64, f64) {
         (self.x, self.y)
     }
@@ -101,8 +110,8 @@ impl FeatureGenerator for CraterGenerator {
         self.biome_map.clone()
     }
 
-    fn cell_size(&self) -> i64 {
-        self.cell_size
+    fn cell_size(&self) -> f64 {
+        self.cell_size as f64
     }
 
     fn max_influence_radius(&self) -> f64 {

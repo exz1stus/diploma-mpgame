@@ -2207,6 +2207,7 @@ dependencies = [
  "bevy_egui",
  "bevy_renet",
  "egui_plot",
+ "naga",
  "postcard",
  "ron",
  "serde",

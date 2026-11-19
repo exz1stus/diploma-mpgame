@@ -1,4 +1,8 @@
+// Protocol 7 record: status u8 (0 unclassified, 1 classified, 255 outside the world),
+// 3 reserved bytes, height f32, temperature f32, biome u16, ground biome u16 (all LE).
+export const PROTOCOL = 7;
 export const SAMPLE_BYTES = 16;
+export const UNCLASSIFIED_RGB = [54, 43, 61];
 
 export const MAP_MODES = {
   biomes: { label: 'Biomes' },
@@ -12,7 +16,8 @@ export const MAP_MODES = {
   },
 };
 
-// View-only coefficients for the Biomes view (flat and textured). They never reach the generator.
+// View-only coefficients for the flat Biomes view (zoomed out or textures off). They never reach
+// the generator or the client; the textured view draws exactly what the client draws.
 // Height tint darkens ground below HEIGHT_REFERENCE and brightens ground above it, so crater and
 // basin bowls read as dark discs. Relief shades slopes lit from the north-west.
 export const HEIGHT_REFERENCE = 0.65;
@@ -54,14 +59,31 @@ function metricColor(value, mode) {
 export function readSample(bytes, index) {
   const offset = index * SAMPLE_BYTES;
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const classified = view.getUint8(offset) === 1;
   return {
     status: view.getUint8(offset),
-    color: `#${[1, 2, 3].map(channel => view.getUint8(offset + channel).toString(16).padStart(2, '0')).join('')}`,
     height: view.getFloat32(offset + 4, true),
     temperature: view.getFloat32(offset + 8, true),
-    biomeId: [1, 2].includes(view.getUint8(offset)) ? view.getUint16(offset + 12, true) : null,
-    tileId: view.getUint8(offset) === 1 ? view.getUint16(offset + 14, true) : null,
+    biomeId: classified ? view.getUint16(offset + 12, true) : null,
+    groundId: classified ? view.getUint16(offset + 14, true) : null,
   };
+}
+
+const linear = value => { const c = value / 255; return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; };
+const srgb = value => Math.round(Math.min(1, Math.max(0, value <= 0.0031308 ? value * 12.92 : 1.055 * value ** (1 / 2.4) - 0.055)) * 255);
+
+// Flat color of a tile: its drawn texture's average color times the drawn biome's tint.
+// palette: { own: Uint8Array per biome (1 = own tiles), textureOf: Uint16Array per biome,
+// colors: Uint8Array RGB per texture, tints: Uint8Array RGB per biome (optional, white) }.
+export function sampleColor(palette, biome, ground) {
+  const id = palette.own[biome] ? biome : ground;
+  const texture = palette.textureOf[id];
+  if (texture === undefined) return UNCLASSIFIED_RGB;
+  return [0, 1, 2].map(c => {
+    const color = palette.colors[texture * 3 + c];
+    const tint = palette.tints ? palette.tints[id * 3 + c] : 255;
+    return tint === 255 ? color : srgb(linear(color) * linear(tint));
+  });
 }
 
 // stride: tiles between neighboring samples (2^LOD), so slopes stay per tile at every zoom.
@@ -83,7 +105,7 @@ function sampleSlope(view, bytes, size, index) {
     + axis(y > 0 ? index - size : null, y < size - 1 ? index + size : null);
 }
 
-export function decodePixels(buffer, size, mode = 'biomes', display = DEFAULT_DISPLAY, stride = 1) {
+export function decodePixels(buffer, size, mode = 'biomes', display = DEFAULT_DISPLAY, stride = 1, palette = null) {
   if (buffer.byteLength !== size * size * SAMPLE_BYTES) throw new Error('Incomplete chunk data');
   const bytes = new Uint8Array(buffer);
   const pixels = new Uint8ClampedArray(size * size * 4);
@@ -96,11 +118,12 @@ export function decodePixels(buffer, size, mode = 'biomes', display = DEFAULT_DI
     if (mode !== 'biomes') {
       const value = view.getFloat32(offset + (mode === 'height' ? 4 : 8), true);
       pixels.set(metricColor(value, MAP_MODES[mode]), pixel);
-    } else if (bytes[offset] === 1) {
+    } else if (bytes[offset] === 1 && palette) {
       const factor = displayFactor(view.getFloat32(offset + 4, true), sampleSlope(view, bytes, size, i) / stride, display);
-      pixels[pixel] = bytes[offset + 1] * factor;
-      pixels[pixel + 1] = bytes[offset + 2] * factor;
-      pixels[pixel + 2] = bytes[offset + 3] * factor;
+      const rgb = sampleColor(palette, view.getUint16(offset + 12, true), view.getUint16(offset + 14, true));
+      pixels[pixel] = rgb[0] * factor;
+      pixels[pixel + 1] = rgb[1] * factor;
+      pixels[pixel + 2] = rgb[2] * factor;
     } else {
       pixels[pixel] = 54; pixels[pixel + 1] = 43; pixels[pixel + 2] = 61;
     }

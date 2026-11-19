@@ -8,9 +8,9 @@ use std::{
 };
 
 use worldgen::{
-    BasinSettings, BiomeId, BiomeMap, BiomeMapDefinition, BiomeRepository, CraterGenerator,
-    FbmNoise, NoiseConfig, NoiseSource, PlanetParams, Range, TemperatureCoefficients,
-    TerrainSources, TilePos, VolcanoGenerator, WorldConfig, WorldGenerator, WorldGeneratorConfig,
+    BasinSettings, BiomeMap, BiomeMapDefinition, BiomeRepository, CraterGenerator, FbmNoise,
+    NoiseConfig, NoiseSource, PlanetParams, TemperatureCoefficients, TerrainSources, TilePos,
+    VolcanoGenerator, WorldConfig, WorldGenerator, WorldGeneratorConfig,
 };
 
 #[derive(serde::Serialize)]
@@ -63,6 +63,15 @@ fn controls() -> Vec<Control> {
         4.0,
         128.0,
         "1",
+    );
+    add(
+        "terrain_scale",
+        "Terrain scale (noises and features)",
+        "World",
+        Some(config.world.terrain_scale),
+        0.05,
+        20.0,
+        "any",
     );
     add(
         "frequency",
@@ -519,6 +528,7 @@ fn apply_world_controls(config: &mut WorldConfig, values: &HashMap<&str, f64>) {
     let world = &mut config.world;
     world.seed = values["seed"] as u64;
     world.chunk_size = values["size"] as u32;
+    world.terrain_scale = values["terrain_scale"];
     world.elevation = noise_controls(values, "elevation");
     world.climate.region_noise = noise_controls(values, "region");
     world.climate.coefficients = TemperatureCoefficients {
@@ -617,20 +627,16 @@ fn preview_generator(settings: &PreviewSettings) -> WorldGenerator {
         source: FbmNoise::new(settings.elevation_seed, config),
         frequency: settings.frequency,
     };
-    let mut basin_floor = world.elevation;
-    basin_floor.octaves = settings
-        .world
-        .basins
-        .smoothing_octaves
-        .min(world.elevation.octaves);
+    // `build_with` scales the features; the noise sources get `terrain_scale` here.
+    let elevation = world.scaled_elevation();
     settings
         .world
         .build_with(TerrainSources {
-            elevation: Box::new(scaled(world.elevation)),
-            basin_floor: Box::new(scaled(basin_floor)),
+            elevation: Box::new(scaled(elevation)),
+            basin_floor: Box::new(scaled(settings.world.basins.floor_noise(elevation))),
             temperature_regions: Box::new(FbmNoise::new(
                 settings.region_seed,
-                world.climate.region_noise,
+                world.scaled_region_noise(),
             )),
         })
         .expect("validated preview controls produce a valid world config")
@@ -776,7 +782,6 @@ fn metadata(query: &str, build: u128) -> Result<String, String> {
     let biome_map = biome_map
         .resolve(&biomes)
         .map_err(|error| format!("{biome_file}: {error}"))?;
-    let colors = biome_colors(&biomes)?;
     let map_rules = |map: &BiomeMap| -> Vec<serde_json::Value> {
         map.rules()
             .iter()
@@ -800,11 +805,10 @@ fn metadata(query: &str, build: u128) -> Result<String, String> {
         feature_maps.insert(name.into(), serde_json::json!(map_rules(&map)));
     }
     Ok(serde_json::json!({
-        "build": build.to_string(), "protocol": 6,
+        "build": build.to_string(), "protocol": PROTOCOL,
         "world": { "width": side, "height": side }, "controls": controls(),
         "biome_files": biome_files()?, "biome_file": biome_file, "biomes": biomes.biomes(),
         "biome_rules": map_rules(&biome_map), "feature_biome_maps": feature_maps,
-        "tile_palette": biome_palette(&biomes, &colors), "tile_rules": biome_tile_rules(&biomes),
         "object_types": bundled.objects.kinds,
     })
     .to_string())
@@ -820,120 +824,6 @@ fn biome_map_path() -> std::path::PathBuf {
 
 fn biome_files() -> Result<Vec<String>, String> {
     Ok(vec![DEFAULT_BIOME_FILE.to_owned()])
-}
-
-/// Flat preview colors: the client's placeholder colors for each biome's texture.
-#[derive(serde::Deserialize)]
-struct TilePresentation {
-    #[serde(default)]
-    textures: HashMap<String, String>,
-    #[serde(default)]
-    placeholder_colors: HashMap<String, String>,
-    default_placeholder: String,
-}
-
-fn client_assets() -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../client/assets")
-}
-
-fn presentation_path() -> std::path::PathBuf {
-    client_assets().join("world/tiles.ron")
-}
-
-/// Flat preview look of each biome, from the client's tile presentation.
-struct BiomeLooks {
-    /// RGB per biome ID: the client's placeholder color of the biome's texture.
-    colors: Vec<[u8; 3]>,
-    /// Per biome ID: whether the biome has tiles of its own, i.e. `tiles.ron` lists it or
-    /// its texture file exists. Biomes without draw the ground biome's tiles, as in the client.
-    own_tiles: Vec<bool>,
-}
-
-impl BiomeLooks {
-    fn load(biomes: &BiomeRepository) -> Result<Self, String> {
-        let path = presentation_path();
-        let text = std::fs::read_to_string(&path)
-            .map_err(|error| format!("Cannot read {}: {error}", path.display()))?;
-        let presentation: TilePresentation =
-            ron::from_str(&text).map_err(|error| format!("{}: {error}", path.display()))?;
-        let textures: Vec<&str> = biomes
-            .biomes()
-            .iter()
-            .map(|biome| presentation.texture_for(&biome.name))
-            .collect();
-        Ok(Self {
-            colors: textures
-                .iter()
-                .map(|texture| color_rgb(presentation.placeholder(texture)))
-                .collect::<Result<_, _>>()?,
-            own_tiles: biomes
-                .biomes()
-                .iter()
-                .zip(&textures)
-                .map(|(biome, texture)| {
-                    presentation.lists(&biome.name) || tile_texture_exists(texture)
-                })
-                .collect(),
-        })
-    }
-
-    /// The biome whose tiles a tile shows: its own, or its ground's.
-    fn drawn(&self, biome: BiomeId, ground: BiomeId) -> BiomeId {
-        if self.own_tiles.get(biome.index()).copied().unwrap_or(false) {
-            biome
-        } else {
-            ground
-        }
-    }
-}
-
-impl TilePresentation {
-    fn texture_for<'a>(&'a self, name: &'a str) -> &'a str {
-        self.textures.get(name).map_or(name, String::as_str)
-    }
-
-    fn placeholder(&self, texture: &str) -> &str {
-        self.placeholder_colors
-            .get(texture)
-            .unwrap_or(&self.default_placeholder)
-    }
-
-    fn lists(&self, name: &str) -> bool {
-        self.textures.contains_key(name)
-            || self.placeholder_colors.contains_key(self.texture_for(name))
-    }
-}
-
-fn tile_texture_exists(texture: &str) -> bool {
-    client_assets()
-        .join(format!("textures/tiles/{texture}.png"))
-        .is_file()
-}
-
-/// RGB per biome ID.
-fn biome_colors(biomes: &BiomeRepository) -> Result<Vec<[u8; 3]>, String> {
-    Ok(BiomeLooks::load(biomes)?.colors)
-}
-
-/// In protocol 6 terms, every biome is its own "tile": palette entry `i` is biome `i`.
-fn biome_palette(biomes: &BiomeRepository, colors: &[[u8; 3]]) -> Vec<serde_json::Value> {
-    biomes
-        .biomes()
-        .iter()
-        .zip(colors)
-        .map(|(biome, [r, g, b])| {
-            serde_json::json!({ "name": biome.name, "color": format!("#{r:02X}{g:02X}{b:02X}") })
-        })
-        .collect()
-}
-
-fn biome_tile_rules(biomes: &BiomeRepository) -> Vec<serde_json::Value> {
-    (0..biomes.biomes().len())
-        .map(|id| {
-            serde_json::json!({ "tile": id, "biome": id,
-            "height": Range::full_height(), "temperature": Range::unbounded() })
-        })
-        .collect()
 }
 
 fn decode_query_value(value: &str) -> Result<String, String> {
@@ -980,33 +870,13 @@ fn selected_biomes(
     Ok((filename, definition))
 }
 
-fn color_rgb(color: &str) -> Result<[u8; 3], String> {
-    let hex = color
-        .strip_prefix('#')
-        .ok_or_else(|| format!("Invalid tile color: {color}"))?;
-    let expanded;
-    let hex = if hex.len() == 3 && hex.is_ascii() {
-        expanded = hex.chars().flat_map(|c| [c, c]).collect::<String>();
-        expanded.as_str()
-    } else {
-        hex
-    };
-    if hex.len() != 6 || !hex.is_ascii() {
-        return Err(format!("Expected #RGB or #RRGGBB tile color, got {color}"));
-    }
-    let mut rgb = [0; 3];
-    for (index, channel) in rgb.iter_mut().enumerate() {
-        *channel = u8::from_str_radix(&hex[index * 2..index * 2 + 2], 16)
-            .map_err(|_| format!("Invalid tile color: {color}"))?;
-    }
-    Ok(rgb)
-}
+/// Wire protocol version reported by `/api/meta`; bump it with the record layout.
+const PROTOCOL: u32 = 7;
 
-// Wire record: status u8 (0=unclassified, 1=colored biome, 255=outside), RGB u8[3],
-// normalized height f32 LE, Celsius temperature f32 LE, biome ID u16 LE, tile ID u16 LE.
-// Appearance belongs to the client: the tile ID is the biome whose tiles the client draws
-// (the biome, or its ground biome if it has no tiles of its own) and the color is that
-// biome's placeholder color in `crates/client/assets/world/tiles.ron`.
+// Wire record: status u8 (0 = unclassified, 1 = classified, 255 = outside the world),
+// 3 reserved zero bytes, normalized height f32 LE, Celsius temperature f32 LE, biome ID u16 LE,
+// ground biome ID u16 LE. Appearance belongs to the client: the frontend resolves textures
+// from the biome and ground IDs with its editable copy of the client presentation files.
 fn region_bytes(query: &str) -> Result<Vec<u8>, String> {
     let params = params(query);
     let min_x: i32 = parse(&params, "min_x")?;
@@ -1034,7 +904,6 @@ fn region_bytes(query: &str) -> Result<Vec<u8>, String> {
         return Err("Region lies outside the world".into());
     }
     let generator = preview_generator(&settings);
-    let looks = BiomeLooks::load(generator.biomes())?;
     let offset = if lod == 0 { 0 } else { stride / 2 };
     let mut output = Vec::with_capacity(tile_count as usize * SAMPLE_BYTES);
     for cy in min_y..=max_y {
@@ -1055,23 +924,13 @@ fn region_bytes(query: &str) -> Result<Vec<u8>, String> {
                         y: (base_y + offset).min(side - 1) as i64,
                     };
                     let tile = generator.draft_at(pos);
-                    let drawn = tile
-                        .biome
-                        .map(|biome| looks.drawn(biome, tile.ground.unwrap_or(biome)));
-                    let color = drawn.and_then(|biome| looks.colors.get(biome.index()));
-                    match color {
-                        Some(rgb) => {
-                            output.push(1);
-                            output.extend_from_slice(rgb);
-                        }
-                        None => output.extend_from_slice(&[0; 4]),
-                    }
+                    output.extend_from_slice(&[u8::from(tile.biome.is_some()), 0, 0, 0]);
                     let biome = tile.biome.map_or(0, |id| id.0);
+                    let ground = tile.ground.map_or(biome, |id| id.0);
                     output.extend_from_slice(&(tile.height as f32).to_le_bytes());
                     output.extend_from_slice(&(tile.temperature as f32).to_le_bytes());
                     output.extend_from_slice(&biome.to_le_bytes());
-                    // The "tile" of a sample is the biome it is drawn as (see `biome_palette`).
-                    output.extend_from_slice(&drawn.map_or(0, |id| id.0).to_le_bytes());
+                    output.extend_from_slice(&ground.to_le_bytes());
                 }
             }
         }
@@ -1104,6 +963,10 @@ mod tests {
             assert_eq!(record[0], 1);
             assert_eq!(
                 tile.biome.0,
+                u16::from_le_bytes(record[12..14].try_into().unwrap())
+            );
+            assert_eq!(
+                tile.ground.0,
                 u16::from_le_bytes(record[14..16].try_into().unwrap())
             );
             let height = f32::from_le_bytes(record[4..8].try_into().unwrap());
@@ -1139,7 +1002,6 @@ mod tests {
 
     #[test]
     fn crater_and_basin_territories_report_their_biome_and_the_ground_tiles() {
-        let colors = biome_colors(&bundled_biomes()).unwrap();
         for query in [
             "min_x=0&max_x=0&min_y=0&max_y=0&lod=7&size=16&seed=42&crater_density=4&basin_probability=0&volcano_probability=0",
             BASIN_QUERY,
@@ -1155,12 +1017,9 @@ mod tests {
                 if biome >= 32 {
                     marked += 1;
                 }
-                let tile = u16::from_le_bytes(record[14..16].try_into().unwrap());
-                assert!(
-                    tile < 32,
-                    "crater and basin biomes are drawn with terrain tiles"
-                );
-                assert_eq!(record[1..4], colors[usize::from(tile)]);
+                let ground = u16::from_le_bytes(record[14..16].try_into().unwrap());
+                assert!(ground < 32, "crater and basin ground is a terrain biome");
+                assert_eq!(record[1..4], [0, 0, 0]);
             }
             assert!(
                 marked > 0,
@@ -1469,23 +1328,34 @@ mod tests {
             f32::from_le_bytes(bytes[8..12].try_into().unwrap()),
             tile.temperature as f32
         );
-        let looks = BiomeLooks::load(generator.biomes()).unwrap();
         match tile.biome {
             Some(biome) => {
-                let drawn = looks.drawn(biome, tile.ground.unwrap_or(biome));
                 assert_eq!(bytes[0], 1);
-                assert_eq!(bytes[1..4], looks.colors[drawn.index()]);
+                assert_eq!(bytes[1..4], [0, 0, 0]);
                 assert_eq!(
                     u16::from_le_bytes(bytes[12..14].try_into().unwrap()),
                     biome.0
                 );
                 assert_eq!(
                     u16::from_le_bytes(bytes[14..16].try_into().unwrap()),
-                    drawn.0
+                    tile.ground.unwrap_or(biome).0
                 );
             }
             None => assert_eq!(bytes[0], 0),
         }
+    }
+
+    #[test]
+    fn terrain_scale_control_reaches_the_generator() {
+        let query = "min_x=0&max_x=0&min_y=0&max_y=0&lod=0&size=4&seed=42";
+        let scaled_query = format!("{query}&terrain_scale=2");
+        let settings = PreviewSettings::from_params(&params(&scaled_query)).unwrap();
+        assert_eq!(settings.world.world.terrain_scale, 2.0);
+        assert_ne!(
+            region_bytes(query).unwrap(),
+            region_bytes(&scaled_query).unwrap()
+        );
+        assert!(region_bytes(&format!("{query}&terrain_scale=0")).is_err());
     }
 
     #[test]
@@ -1572,19 +1442,11 @@ mod tests {
     }
 
     #[test]
-    fn color_strings_are_parsed_without_changing_the_palette() {
-        assert_eq!(color_rgb("#38476a").unwrap(), [56, 71, 106]);
-        assert_eq!(color_rgb("#abc").unwrap(), [170, 187, 204]);
-        assert!(color_rgb("#zzzzzz").is_err());
-        assert!(color_rgb("#ééé").is_err());
-    }
-
-    #[test]
-    fn selected_file_supplies_biomes_and_each_biome_is_a_colored_tile() {
+    fn selected_file_supplies_biomes_and_object_types() {
         let default_meta: serde_json::Value =
             serde_json::from_str(&metadata("", 123).unwrap()).unwrap();
         assert_eq!(default_meta["biome_file"], "default.ron");
-        assert_eq!(default_meta["protocol"], 6);
+        assert_eq!(default_meta["protocol"], PROTOCOL);
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&metadata("biome=biomes.ron", 123).unwrap())
                 .unwrap()["biome_file"],
@@ -1632,24 +1494,10 @@ mod tests {
                 && biome.get("temperature").is_none()
                 && biome.get("palette").is_none()
         ));
-        let colors = biome_colors(generator.biomes()).unwrap();
-        let palette = meta["tile_palette"].as_array().unwrap();
-        assert_eq!(palette.len(), generator.biomes().biomes().len());
-        for ((entry, biome), rgb) in palette.iter().zip(generator.biomes().biomes()).zip(&colors) {
-            assert_eq!(entry["name"], biome.name);
-            assert_eq!(color_rgb(entry["color"].as_str().unwrap()).unwrap(), *rgb);
-        }
+        assert!(meta.get("tile_palette").is_none() && meta.get("tile_rules").is_none());
         assert_eq!(
             meta["object_types"],
             serde_json::to_value(generator.object_placer().objects().objects()).unwrap()
-        );
-        let rules = meta["tile_rules"].as_array().unwrap();
-        assert_eq!(rules.len(), palette.len());
-        assert!(
-            rules
-                .iter()
-                .enumerate()
-                .all(|(id, rule)| rule["tile"] == id && rule["biome"] == id)
         );
         assert_eq!(meta["biome_rules"].as_array().unwrap().len(), 32);
         for name in ["Basins", "Craters", "Volcanoes"] {

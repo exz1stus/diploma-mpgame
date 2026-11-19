@@ -23,6 +23,14 @@ pub struct NoiseConfig {
 }
 
 impl NoiseConfig {
+    /// The same noise with its patterns `scale` times larger.
+    pub fn scaled(self, scale: f64) -> Self {
+        Self {
+            frequency: self.frequency / scale,
+            ..self
+        }
+    }
+
     pub(crate) fn validate(&self) -> Result<(), String> {
         let valid = self.frequency.is_finite()
             && self.frequency > 0.0

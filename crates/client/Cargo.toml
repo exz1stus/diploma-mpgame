@@ -14,5 +14,9 @@ ron = "0.12"
 avian2d.workspace = true
 shared = { path = "../shared" }
 
+[dev-dependencies]
+# Validates terrain.wgsl in tests; the same naga version Bevy uses.
+naga = { version = "29", features = ["wgsl-in"] }
+
 [lints]
 workspace = true

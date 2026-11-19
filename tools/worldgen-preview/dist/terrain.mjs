@@ -1,239 +1,254 @@
-import { DEFAULT_DISPLAY, SAMPLE_BYTES, displayFactor } from './protocol.mjs';
-import { PEBBLE_CELLS, SOURCE_TILE_PX, SURFACE, SURFACE_TEXTURES, TEXTURE_PX, pebbleChance, surfaceFor } from './sprites.mjs';
+// Client ground renderer, ported from crates/client/src/world_presentation/terrain.wgsl and
+// chunk_mesh.rs. Keep them in sync: the preview must draw exactly what the client draws.
+//
+// Per pixel, from the four nearest tile centers:
+// - height: the highest overlay layer whose coverage (bilinear weight of its tiles and higher
+//   ones, plus edge noise) exceeds 0.5 - overlay_reach wins, so higher ground overlays lower
+//   ground with a crisp, irregular edge. Lower ground next to such an edge is darkened for a
+//   few pixels (ambient occlusion), so steps read as height;
+// - textures of the winning layer blend bilinearly (smooth_width wide);
+// - temperature: the ground is multiplied by a tint. Each tile's tint is its biome's color
+//   averaged over a (2r + 1)² box of tiles (tint_radius r), and pixels interpolate those
+//   bilinearly, so biome colors change in very smooth gradients, as in Minecraft.
+// Positions snap to the texture pixel grid.
 
-export const UNCLASSIFIED_TINT = [54, 43, 61];
-const EDGE_NOISE = 0.35;
-// Sampling positions are displaced by up to WARP tiles, so tile-aligned biome borders become
-// organic curves. MARGIN covers the displaced bilinear footprint plus the central height
-// differences used for relief shading, so neighboring chunk images meet without seams.
-const WARP = 0.45;
-export const MARGIN = 3;
+export const DEFAULT_BLEND = Object.freeze({
+  pixels_per_tile: 16, smooth_width: 1, overlay_reach: 0.15, edge_noise: 0.35, noise_scale: 0.5,
+  ao_strength: 0.35, ao_width: 3, tint_radius: 5,
+});
 
-// Pixels per tile in composed chunk images. Larger chunks halve it to bound bitmap memory.
-export function terrainTilePx(size) {
-  return size <= 64 ? SOURCE_TILE_PX : SOURCE_TILE_PX / 2;
+export const MAX_TINT_RADIUS = 12;
+
+export const BLEND_CONTROLS = [
+  { key: 'pixels_per_tile', label: 'Texture pixels per tile', min: 1, max: 256, step: 1 },
+  { key: 'smooth_width', label: 'Same-layer blend width (tiles)', min: 0, max: 1, step: 0.05 },
+  { key: 'overlay_reach', label: 'Overlay reach (tiles)', min: 0, max: 0.5, step: 0.01 },
+  { key: 'edge_noise', label: 'Overlay edge noise', min: 0, max: 1, step: 0.01 },
+  { key: 'noise_scale', label: 'Edge noise scale (tiles)', min: 0.05, max: 64, step: 0.05 },
+  { key: 'ao_strength', label: 'Height shadow strength', min: 0, max: 1, step: 0.05 },
+  { key: 'ao_width', label: 'Height shadow width (pixels)', min: 0, max: 16, step: 1 },
+  { key: 'tint_radius', label: 'Tint smoothing radius (tiles)', min: 0, max: MAX_TINT_RADIUS, step: 1 },
+];
+
+// Same clamping as TileBlend::sanitized in the client.
+export function sanitizeBlend(blend = {}) {
+  const value = (key, min, max) => {
+    const raw = Number(blend[key]);
+    return Number.isFinite(raw) ? Math.min(max, Math.max(min, raw)) : DEFAULT_BLEND[key];
+  };
+  return {
+    pixels_per_tile: Math.round(value('pixels_per_tile', 1, 256)),
+    smooth_width: value('smooth_width', 0, 1),
+    overlay_reach: value('overlay_reach', 0, 0.5),
+    edge_noise: value('edge_noise', 0, 1),
+    noise_scale: value('noise_scale', 0.05, 64),
+    ao_strength: value('ao_strength', 0, 1),
+    ao_width: Math.round(value('ao_width', 0, 16)),
+    tint_radius: Math.round(value('tint_radius', 0, MAX_TINT_RADIUS)),
+  };
 }
 
-export function textureStats(atlas) {
-  const stats = SURFACE_TEXTURES.map(({ origin: [ox, oy] }) => {
-    const mean = [0, 0, 0];
-    for (let y = 0; y < TEXTURE_PX; y++) for (let x = 0; x < TEXTURE_PX; x++) {
-      const offset = ((oy + y) * atlas.width + ox + x) * 4;
-      for (let c = 0; c < 3; c++) mean[c] += atlas.data[offset + c];
-    }
-    return mean.map(value => value / TEXTURE_PX ** 2);
-  });
-  const gray = SURFACE_TEXTURES.map((texture, i) => texture.tint === 'luminance' ? stats[i][0] : null).filter(v => v !== null);
-  const grayMean = gray.reduce((sum, value) => sum + value, 0) / gray.length;
-  // Darker gray variants stay slightly darker after tinting, keeping their character.
-  const surfaces = stats.map((mean, i) => ({ mean, brightness: SURFACE_TEXTURES[i].tint === 'luminance' ? Math.sqrt(mean[0] / grayMean) : 1 }));
-  let pebbleSum = 0;
-  let pebbleCount = 0;
-  for (const [ox, oy] of PEBBLE_CELLS) for (let y = 0; y < TEXTURE_PX; y++) for (let x = 0; x < TEXTURE_PX; x++) {
-    const offset = ((oy + y) * atlas.width + ox + x) * 4;
-    if (atlas.data[offset + 3] === 255) { pebbleSum += atlas.data[offset]; pebbleCount++; }
-  }
-  surfaces.pebbleMean = pebbleSum / Math.max(1, pebbleCount);
-  return surfaces;
-}
-
-// neighbors: 9 sample buffers in row-major order around the chunk (index 4 is the chunk itself).
-// Missing neighbors repeat the chunk edge; outside-world padding stays transparent.
-export function buildGrid(neighbors, size, tiles) {
-  const span = size + 2 * MARGIN;
-  const surface = new Int8Array(span * span).fill(-1);
-  const tint = new Float32Array(span * span * 3);
-  const height = new Float32Array(span * span).fill(NaN);
-  for (let gy = 0; gy < span; gy++) for (let gx = 0; gx < span; gx++) {
-    const y = gy - MARGIN;
-    const x = gx - MARGIN;
-    const ny = y < 0 ? 0 : y >= size ? 2 : 1;
-    const nx = x < 0 ? 0 : x >= size ? 2 : 1;
-    let bytes = neighbors[ny * 3 + nx];
-    let localX = (x + size) % size;
-    let localY = (y + size) % size;
-    if (!bytes) { bytes = neighbors[4]; localX = Math.min(size - 1, Math.max(0, x)); localY = Math.min(size - 1, Math.max(0, y)); }
-    const offset = (localY * size + localX) * SAMPLE_BYTES;
-    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-    const status = bytes[offset];
-    if (status === 255) continue;
-    const tile = status === 1 ? tiles[view.getUint16(offset + 14, true)] : null;
-    const color = tile ? tile.tint : UNCLASSIFIED_TINT;
-    const value = view.getFloat32(offset + 4, true);
-    const temperature = view.getFloat32(offset + 8, true);
-    const cell = gy * span + gx;
-    height[cell] = Number.isFinite(value) ? value : 0.5;
-    surface[cell] = surfaceFor(!!tile?.basalt, height[cell], Number.isFinite(temperature) ? temperature : 0);
-    tint.set(color, cell * 3);
-  }
-  // Per-tile slopes (central differences), interpolated per pixel for smooth relief shading.
-  const slope = new Float32Array(span * span);
-  const at = (cell, fallback) => Number.isNaN(height[cell]) ? fallback : height[cell];
-  for (let gy = 1; gy < span - 1; gy++) for (let gx = 1; gx < span - 1; gx++) {
-    const cell = gy * span + gx;
-    const h = height[cell];
-    if (Number.isNaN(h)) continue;
-    slope[cell] = (at(cell + 1, h) - at(cell - 1, h) + at(cell + span, h) - at(cell - span, h)) / 2;
-  }
-  return { surface, tint, height, slope };
-}
-
-function lattice(x, y, seed) {
+export function lattice(x, y, seed) {
   let h = Math.imul(x, 0x27d4eb2d) ^ Math.imul(y, 0x165667b1) ^ Math.imul(seed + 1, 0x9e3779b1);
   h = Math.imul(h ^ (h >>> 15), 0x85ebca6b);
   h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35);
   return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
 }
 
-function valueNoise(x, y, cell, seed) {
-  const fx = x / cell;
-  const fy = y / cell;
-  const ix = Math.floor(fx);
-  const iy = Math.floor(fy);
-  let u = fx - ix;
-  let v = fy - iy;
+function valueNoise(px, py, seed) {
+  const cx = Math.floor(px);
+  const cy = Math.floor(py);
+  let u = px - cx;
+  let v = py - cy;
   u = u * u * (3 - 2 * u);
   v = v * v * (3 - 2 * v);
-  const top = lattice(ix, iy, seed) * (1 - u) + lattice(ix + 1, iy, seed) * u;
-  const bottom = lattice(ix, iy + 1, seed) * (1 - u) + lattice(ix + 1, iy + 1, seed) * u;
-  return top * (1 - v) + bottom * v;
+  const bottom = lattice(cx, cy, seed) + (lattice(cx + 1, cy, seed) - lattice(cx, cy, seed)) * u;
+  const top = lattice(cx, cy + 1, seed) + (lattice(cx + 1, cy + 1, seed) - lattice(cx, cy + 1, seed)) * u;
+  return bottom + (top - bottom) * v;
 }
 
-// Global source-pixel coordinates keep edge noise continuous across chunk images.
-export function edgeNoise(x, y, surface) {
-  return valueNoise(x, y, 7, surface) * .65 + valueNoise(x, y, 3, surface + 17) * .35 - .5;
+// In [-0.5, 0.5], continuous in global tile coordinates.
+export function edgeNoise(px, py, scale) {
+  return valueNoise(px / scale, py / scale, 0) * 0.65 + valueNoise(px * 2 / scale, py * 2 / scale, 1) * 0.35 - 0.5;
 }
 
-export function warpOffset(x, y, seed) {
-  return ((valueNoise(x, y, 22, seed) - .5) * 2 + (valueNoise(x, y, 6, seed + 1) - .5) * .5) * WARP;
+function smoothAxis(f, width) {
+  return width <= 0 ? (f >= 0.5 ? 1 : 0) : Math.min(1, Math.max(0, (f - 0.5) / width + 0.5));
 }
 
-// Pebble cells sit in 32 px blocks with a random offset, flip, and variant per block. A pixel
-// can be covered by its own block or the blocks above/left of it. Returns the atlas offset of
-// the covering opaque pebble pixel, or -1.
-function pebbleAt(atlas, x, y, chance) {
-  if (chance <= 0) return -1;
-  const bx = Math.floor(x / TEXTURE_PX);
-  const by = Math.floor(y / TEXTURE_PX);
-  for (let dy = 0; dy >= -1; dy--) for (let dx = 0; dx >= -1; dx--) {
-    const cx = bx + dx;
-    const cy = by + dy;
-    if (lattice(cx, cy, 211) >= chance) continue;
-    const bits = (lattice(cx, cy, 223) * 4294967296) >>> 0;
-    let lx = x - cx * TEXTURE_PX - (bits & 15);
-    let ly = y - cy * TEXTURE_PX - ((bits >>> 4) & 15);
-    if (lx < 0 || ly < 0 || lx >= TEXTURE_PX || ly >= TEXTURE_PX) continue;
-    if (bits & 256) lx = TEXTURE_PX - 1 - lx;
-    const [ox, oy] = PEBBLE_CELLS[(bits >>> 9) % PEBBLE_CELLS.length];
-    const offset = ((oy + ly) * atlas.width + ox + lx) * 4;
-    if (atlas.data[offset + 3] > 0) return offset;
+export function srgbToLinear(c) {
+  return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+}
+
+const TO_LINEAR = Float32Array.from({ length: 256 }, (_, i) => srgbToLinear(i / 255));
+
+function toSrgb(linear) {
+  const c = linear <= 0.0031308 ? linear * 12.92 : 1.055 * linear ** (1 / 2.4) - 0.055;
+  return Math.round(Math.min(1, Math.max(0, c)) * 255);
+}
+
+// Side of a chunk's tile data grid: one-tile border from the neighbors, as in the client.
+export function dataSide(size) { return size + 2; }
+
+// Tile data for one chunk, like chunk_mesh::tile_data in the client. `tileAt(x, y)` gives
+// [textureLayer, overlayLayer, r, g, b] (r, g, b: the biome tint) for chunk-local tiles up to
+// one chunk away, or null for tiles of missing neighbors, which repeat the chunk's nearest own
+// tile. Returns per data cell (tiles -1..=size): texture layer, overlay layer, and the tint
+// averaged over the (2r + 1)² box around the tile, rounded to the nearest integer.
+export function buildTileData(size, tileAt, tintRadius = 0) {
+  const radius = Math.max(0, Math.min(size - 1, Math.round(tintRadius)));
+  const side = dataSide(size);
+  const tile = (x, y) => {
+    const inside = x >= 0 && y >= 0 && x < size && y < size;
+    return (!inside && tileAt(x, y)) || tileAt(Math.min(size - 1, Math.max(0, x)), Math.min(size - 1, Math.max(0, y))) || [0, 0, 255, 255, 255];
+  };
+  const layer = new Uint8Array(side * side);
+  const level = new Uint8Array(side * side);
+  const tint = new Uint8Array(side * side * 3);
+  // Exact integer box sums: horizontal over the rows the vertical pass needs, then vertical.
+  const span = side + 2 * radius;
+  const rows = new Uint32Array(span * side * 3);
+  for (let ry = 0; ry < span; ry++) {
+    const y = ry - 1 - radius;
+    for (let cx = 0; cx < side; cx++) {
+      const x = cx - 1;
+      let r = 0; let g = 0; let b = 0;
+      for (let dx = -radius; dx <= radius; dx++) {
+        const value = tile(x + dx, y);
+        r += value[2]; g += value[3]; b += value[4];
+      }
+      rows.set([r, g, b], (ry * side + cx) * 3);
+    }
   }
-  return -1;
-}
-
-function axis(size, tilePx, origin) {
-  const count = size * tilePx;
-  const position = new Float32Array(count);
-  const texel = new Int32Array(count);
-  const local = new Int32Array(count);
-  for (let p = 0; p < count; p++) {
-    const tile = Math.floor(p / tilePx);
-    position[p] = tile + (p - tile * tilePx + .5) / tilePx - .5;
-    texel[p] = Math.floor((origin * tilePx + p) * SOURCE_TILE_PX / tilePx);
-    local[p] = tile;
+  const count = (2 * radius + 1) ** 2;
+  for (let cy = 0; cy < side; cy++) for (let cx = 0; cx < side; cx++) {
+    const value = tile(cx - 1, cy - 1);
+    const index = cy * side + cx;
+    layer[index] = Math.min(255, value[0]);
+    level[index] = Math.min(255, value[1]);
+    for (let c = 0; c < 3; c++) {
+      let sum = 0;
+      for (let dy = 0; dy <= 2 * radius; dy++) sum += rows[((cy + dy) * side + cx) * 3 + c];
+      tint[index * 3 + c] = Math.floor((sum + (count >> 1)) / count);
+    }
   }
-  return { position, texel, local };
+  return { layer, level, tint };
 }
 
-// Bilinear weights over the four nearest (warped) tile centers give smooth tint gradients.
-// Materials switch per pixel where weight plus edge noise is largest, giving pixel-art borders.
-export function composeTerrain({ grid, size, tilePx, chunkX, chunkY, atlas, stats, display = DEFAULT_DISPLAY }) {
-  const span = size + 2 * MARGIN;
-  const width = size * tilePx;
+// Pixels per tile of a composed chunk image: the texture resolution, capped so an image
+// stays at most 1024 px wide. Lower resolutions sample the texture like GPU minification.
+export function imagePixelsPerTile(size, blend) {
+  return Math.max(1, Math.min(sanitizeBlend(blend).pixels_per_tile, Math.floor(1024 / size)));
+}
+
+// textures: { width, height, layers: [Uint8Array RGBA] }. Rows of the returned RGBA image
+// run from the chunk's bottom (row 0 = local y 0), matching the preview's y-up drawing.
+// `hidden(x, y)` marks chunk tiles outside the world; they stay transparent.
+export function composeChunk({ size, originX, originY, data, textures, blend, hidden = () => false }) {
+  const settings = sanitizeBlend(blend);
+  const { pixels_per_tile: ppt, smooth_width: smoothWidth, overlay_reach: reach, edge_noise: amplitude, noise_scale: scale } = settings;
+  const { ao_strength: aoStrength, ao_width: aoWidth } = settings;
+  const outPx = imagePixelsPerTile(size, blend);
+  const width = size * outPx;
+  const side = dataSide(size);
+  const { width: tw, height: th, layers } = textures;
   const pixels = new Uint8ClampedArray(width * width * 4);
-  const xs = axis(size, tilePx, chunkX * size);
-  const ys = axis(size, tilePx, chunkY * size);
-  const { surface, tint, height, slope } = grid;
-  const cells = new Int32Array(4);
-  const weights = new Float32Array(4);
-  const candidates = new Int8Array(4);
-  const totals = new Float32Array(4);
+  const layerOf = new Int32Array(4);
+  const levelOf = new Int32Array(4);
+  const cell = new Int32Array(4);
+  const coverage = new Float64Array(4);
+  const fade = new Float64Array(4);
   for (let py = 0; py < width; py++) {
-    const centerRow = (ys.local[py] + MARGIN) * span;
-    const texelY = ys.texel[py];
+    const localTileY = Math.floor(py / outPx);
+    const texelY = Math.floor((originY + (py + 0.5) / outPx) * ppt);
+    const pointY = (texelY + 0.5) / ppt;
+    const qy = pointY - 0.5;
+    const baseY = Math.floor(qy);
+    const fy = qy - baseY;
+    const rowY = th - 1 - (((texelY % th) + th) % th);
+    const cornerY = baseY - originY + 1;
+    const fadeY = smoothAxis(fy, smoothWidth);
     for (let px = 0; px < width; px++) {
-      if (surface[centerRow + xs.local[px] + MARGIN] < 0) continue;
-      const texelX = xs.texel[px];
-      const u = xs.position[px] + warpOffset(texelX, texelY, 41);
-      const v = ys.position[py] + warpOffset(texelX, texelY, 73);
-      const fx = Math.floor(u);
-      const fy = Math.floor(v);
-      const wx = u - fx;
-      const wy = v - fy;
-      const base = (fy + MARGIN) * span + fx + MARGIN;
-      cells[0] = base; cells[1] = base + 1; cells[2] = base + span; cells[3] = base + span + 1;
-      weights[0] = (1 - wx) * (1 - wy); weights[1] = wx * (1 - wy); weights[2] = (1 - wx) * wy; weights[3] = wx * wy;
-      let sum = 0; let r = 0; let g = 0; let b = 0; let h = 0; let light = 0; let chosen = -1; let mixed = false;
+      if (hidden(Math.floor(px / outPx), localTileY)) continue;
+      const texelX = Math.floor((originX + (px + 0.5) / outPx) * ppt);
+      const pointX = (texelX + 0.5) / ppt;
+      const qx = pointX - 0.5;
+      const baseX = Math.floor(qx);
+      const fx = qx - baseX;
+      const cornerX = baseX - originX + 1;
       for (let i = 0; i < 4; i++) {
-        const s = surface[cells[i]];
-        if (s < 0) { weights[i] = 0; continue; }
-        const w = weights[i];
-        sum += w; r += tint[cells[i] * 3] * w; g += tint[cells[i] * 3 + 1] * w; b += tint[cells[i] * 3 + 2] * w;
-        h += height[cells[i]] * w; light += slope[cells[i]] * w;
-        if (chosen < 0) chosen = s; else if (s !== chosen) mixed = true;
+        const x = Math.min(side - 1, Math.max(0, cornerX + (i & 1)));
+        const y = Math.min(side - 1, Math.max(0, cornerY + (i >> 1)));
+        cell[i] = y * side + x;
+        layerOf[i] = data.layer[cell[i]];
+        levelOf[i] = data.level[cell[i]];
       }
-      if (sum === 0) {
-        // Warped samples can land entirely in outside-world padding; use the tile itself.
-        const cell = centerRow + xs.local[px] + MARGIN;
-        cells[0] = cell; weights[0] = sum = 1; weights[1] = weights[2] = weights[3] = 0;
-        chosen = surface[cell]; mixed = false;
-        r = tint[cell * 3]; g = tint[cell * 3 + 1]; b = tint[cell * 3 + 2];
-        h = height[cell]; light = slope[cell];
-      }
-      r /= sum; g /= sum; b /= sum; h /= sum;
-      light = displayFactor(h, light / sum, display);
-      if (mixed) {
-        let count = 0;
+      coverage[0] = (1 - fx) * (1 - fy); coverage[1] = fx * (1 - fy); coverage[2] = (1 - fx) * fy; coverage[3] = fx * fy;
+      const fadeX = smoothAxis(fx, smoothWidth);
+      fade[0] = (1 - fadeX) * (1 - fadeY); fade[1] = fadeX * (1 - fadeY); fade[2] = (1 - fadeX) * fadeY; fade[3] = fadeX * fadeY;
+
+      // Height: the highest covering layer, and how close the nearest higher edge is.
+      let chosen = Math.min(levelOf[0], levelOf[1], levelOf[2], levelOf[3]);
+      let gap = Infinity;
+      if (levelOf[0] !== chosen || levelOf[1] !== chosen || levelOf[2] !== chosen || levelOf[3] !== chosen) {
+        const threshold = 0.5 - reach - amplitude * edgeNoise(pointX, pointY, scale);
         for (let i = 0; i < 4; i++) {
-          if (weights[i] === 0) continue;
-          const s = surface[cells[i]];
-          let slot = 0;
-          while (slot < count && candidates[slot] !== s) slot++;
-          if (slot === count) { candidates[count] = s; totals[count++] = 0; }
-          totals[slot] += weights[i] / sum;
+          const level = levelOf[i];
+          if (level <= chosen) continue;
+          let covered = 0;
+          for (let j = 0; j < 4; j++) if (levelOf[j] >= level) covered += coverage[j];
+          if (covered > threshold) chosen = level;
         }
-        let best = -Infinity;
-        for (let i = 0; i < count; i++) {
-          const score = totals[i] + EDGE_NOISE * edgeNoise(texelX, texelY, candidates[i]);
-          if (score > best) { best = score; chosen = candidates[i]; }
+        for (let i = 0; i < 4; i++) {
+          if (levelOf[i] <= chosen) continue;
+          let covered = 0;
+          for (let j = 0; j < 4; j++) if (levelOf[j] >= levelOf[i]) covered += coverage[j];
+          gap = Math.min(gap, threshold - covered);
         }
       }
-      const texture = SURFACE_TEXTURES[chosen];
-      const { mean, brightness } = stats[chosen];
-      const source = ((texture.origin[1] + (texelY & (TEXTURE_PX - 1))) * atlas.width + texture.origin[0] + (texelX & (TEXTURE_PX - 1))) * 4;
-      const out = (py * width + px) * 4;
-      let red; let green; let blue;
-      if (texture.tint === 'luminance') {
-        const k = atlas.data[source] / mean[0] * brightness;
-        red = r * k; green = g * k; blue = b * k;
+
+      // Textures of the chosen layer, blended bilinearly.
+      const source = (rowY * tw + (((texelX % tw) + tw) % tw)) * 4;
+      let total = 0;
+      let r = 0; let g = 0; let b = 0;
+      let fallback = 0;
+      let strongest = -1;
+      for (let i = 0; i < 4; i++) {
+        if (levelOf[i] !== chosen) continue;
+        if (coverage[i] > strongest) { strongest = coverage[i]; fallback = i; }
+        if (fade[i] <= 0) continue;
+        const texel = layers[layerOf[i]] ?? layers[0];
+        r += TO_LINEAR[texel[source]] * fade[i];
+        g += TO_LINEAR[texel[source + 1]] * fade[i];
+        b += TO_LINEAR[texel[source + 2]] * fade[i];
+        total += fade[i];
+      }
+      if (total <= 0) {
+        const texel = layers[layerOf[fallback]] ?? layers[0];
+        r = TO_LINEAR[texel[source]]; g = TO_LINEAR[texel[source + 1]]; b = TO_LINEAR[texel[source + 2]];
       } else {
-        const s = texture.strength;
-        red = atlas.data[source] * (1 + s * (r / mean[0] - 1));
-        green = atlas.data[source + 1] * (1 + s * (g / mean[1] - 1));
-        blue = atlas.data[source + 2] * (1 + s * (b / mean[2] - 1));
+        r /= total; g /= total; b /= total;
       }
-      if (chosen !== SURFACE.ICE && chosen !== SURFACE.SNOW) {
-        // Pebbles are gray art tinted like the ground; their outlines keep them readable.
-        const pebble = pebbleAt(atlas, texelX, texelY, pebbleChance(h));
-        if (pebble >= 0) {
-          const alpha = atlas.data[pebble + 3] / 255;
-          const k = atlas.data[pebble] / stats.pebbleMean * .85;
-          red += (r * k - red) * alpha; green += (g * k - green) * alpha; blue += (b * k - blue) * alpha;
-        }
+
+      // Temperature tint: the smoothed tile tints, interpolated bilinearly.
+      let tr = 0; let tg = 0; let tb = 0;
+      for (let i = 0; i < 4; i++) {
+        tr += data.tint[cell[i] * 3] * coverage[i];
+        tg += data.tint[cell[i] * 3 + 1] * coverage[i];
+        tb += data.tint[cell[i] * 3 + 2] * coverage[i];
       }
-      pixels[out] = red * light; pixels[out + 1] = green * light; pixels[out + 2] = blue * light;
+      let light = 1;
+      if (gap < Infinity && aoWidth > 0) {
+        // Ambient occlusion in whole-pixel steps: one step per pixel toward the higher edge.
+        const steps = Math.ceil(aoWidth - gap * ppt);
+        if (steps > 0) light = 1 - aoStrength * Math.min(aoWidth, steps) / aoWidth;
+      }
+      const out = (py * width + px) * 4;
+      pixels[out] = toSrgb(r * srgbToLinear(tr / 255) * light);
+      pixels[out + 1] = toSrgb(g * srgbToLinear(tg / 255) * light);
+      pixels[out + 2] = toSrgb(b * srgbToLinear(tb / 255) * light);
       pixels[out + 3] = 255;
     }
   }
-  return pixels;
+  return { pixels, width };
 }

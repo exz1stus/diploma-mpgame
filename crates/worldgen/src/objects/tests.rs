@@ -382,7 +382,7 @@ fn bundled_definitions_resolve_and_appending_preserves_object_ids() {
     let config = crate::WorldConfig::bundled();
     let biomes = BiomeRepository::parse();
     let placer = ObjectPlacer::from_config(&config.biomes, &config.objects, &[], &biomes).unwrap();
-    assert_eq!(placer.objects().objects().len(), 4);
+    assert_eq!(placer.objects().objects().len(), 5);
     let original = repository();
     let mut definitions = original.objects().to_vec();
     definitions.push(ObjectDefinition {

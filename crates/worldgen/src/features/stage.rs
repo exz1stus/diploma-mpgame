@@ -95,6 +95,10 @@ mod tests {
     struct BorderFeature;
 
     impl TerrainFeature for BorderFeature {
+        fn scaled(self, _scale: f64) -> Self {
+            self
+        }
+
         fn center(&self) -> (f64, f64) {
             (15.0, 8.0)
         }
@@ -122,8 +126,8 @@ mod tests {
             self.biome_map.clone()
         }
 
-        fn cell_size(&self) -> i64 {
-            16
+        fn cell_size(&self) -> f64 {
+            16.0
         }
 
         fn max_influence_radius(&self) -> f64 {
