@@ -3,7 +3,10 @@
 use bevy::prelude::*;
 use shared::world::{BiomeId, ObjectId, TileSample, WorldManifest};
 
-use super::config::{TextureTable, TileTable};
+use super::{
+    config::{ObjectStyle, ObjectStyles, TextureTable, TileTable},
+    placement::fnv1a,
+};
 
 /// One texture of a texture set: its name and the color drawn while its file is missing.
 #[derive(Clone, Debug, PartialEq)]
@@ -123,21 +126,76 @@ impl TileCatalog {
     }
 }
 
-/// Object textures per object kind of the streamed world.
-#[derive(Resource, Clone, Debug, Default, Deref)]
-pub struct ObjectCatalog(pub TextureCatalog);
+/// How one object kind of the streamed world is drawn.
+#[derive(Clone, Debug, PartialEq)]
+pub struct KindVisual {
+    pub name: String,
+    pub style: ObjectStyle,
+    pub placeholder: Srgba,
+    /// Hash salt of the kind ([`fnv1a`] of its name), so kinds on one tile differ.
+    pub salt: u32,
+}
+
+impl KindVisual {
+    pub fn sprite(&self, surface: Option<&str>) -> &str {
+        self.style.sprite_for(&self.name, surface)
+    }
+}
+
+/// Object styles per kind and surfaces per biome of the streamed world, in manifest ID order.
+#[derive(Resource, Clone, Debug, Default)]
+pub struct ObjectCatalog {
+    kinds: Vec<KindVisual>,
+    surfaces: Vec<Option<String>>,
+    tints: Vec<Option<[u8; 3]>>,
+}
 
 impl ObjectCatalog {
-    pub fn build(manifest: &WorldManifest, table: &TextureTable) -> Self {
-        Self(TextureCatalog::build(
-            manifest.objects.iter().map(|kind| kind.name.as_str()),
-            table,
-        ))
+    pub fn build(manifest: &WorldManifest, styles: &ObjectStyles) -> Self {
+        let kinds = manifest
+            .objects
+            .iter()
+            .map(|kind| {
+                let style = styles.style(&kind.name);
+                KindVisual {
+                    placeholder: styles.placeholder(&style),
+                    salt: fnv1a(&kind.name),
+                    name: kind.name.clone(),
+                    style,
+                }
+            })
+            .collect();
+        let surfaces = manifest
+            .biomes
+            .iter()
+            .map(|biome| styles.surfaces.get(biome).cloned())
+            .collect();
+        let tints = manifest
+            .biomes
+            .iter()
+            .map(|biome| styles.tint(biome))
+            .collect();
+        Self {
+            kinds,
+            surfaces,
+            tints,
+        }
     }
 
-    pub fn texture(&self, kind: ObjectId) -> Option<&TextureEntry> {
-        let index = *self.texture_of.get(usize::from(kind.0))?;
-        self.textures.get(index as usize)
+    pub fn kind(&self, kind: ObjectId) -> Option<&KindVisual> {
+        self.kinds.get(usize::from(kind.0))
+    }
+
+    /// The surface a tile shows objects on: its biome's, else its ground biome's.
+    pub fn surface(&self, sample: TileSample) -> Option<&str> {
+        let of = |biome: BiomeId| self.surfaces.get(biome.index())?.as_deref();
+        of(sample.biome).or_else(|| of(sample.ground))
+    }
+
+    /// The object tint of a tile: its biome's, else its ground biome's; `None` is white.
+    pub fn tint(&self, sample: TileSample) -> Option<[u8; 3]> {
+        let of = |biome: BiomeId| *self.tints.get(biome.index())?;
+        of(sample.biome).or_else(|| of(sample.ground))
     }
 }
 
@@ -234,9 +292,34 @@ mod tests {
     }
 
     #[test]
-    fn objects_resolve_by_kind_name() {
-        let catalog = ObjectCatalog::build(&manifest(), &texture_table());
-        assert_eq!(catalog.texture(ObjectId(0)).unwrap().name, "rock");
-        assert!(catalog.texture(ObjectId(1)).is_none());
+    fn objects_resolve_styles_by_kind_and_surfaces_by_biome() {
+        let styles: ObjectStyles = ron::from_str(
+            r##"(default_placeholder: "#000000",
+                surfaces: {"plain": "regolith", "volcano": "basalt"}, tints: {"plain": "#102030"},
+                kinds: {"rock": (sprites: {"basalt": "basalt_stone"}, flip: true)})"##,
+        )
+        .unwrap();
+        let catalog = ObjectCatalog::build(&manifest(), &styles);
+        let rock = catalog.kind(ObjectId(0)).unwrap();
+        assert!(rock.style.flip);
+        assert_eq!(rock.salt, fnv1a("rock"));
+        assert!(catalog.kind(ObjectId(1)).is_none());
+
+        let on = |biome, ground| TileSample::on_ground(BiomeId(biome), BiomeId(ground), 0.5);
+        assert_eq!(catalog.surface(on(1, 0)), Some("basalt"));
+        assert_eq!(
+            catalog.surface(on(2, 0)),
+            Some("regolith"),
+            "ash uses its ground"
+        );
+        assert_eq!(catalog.surface(on(2, 2)), None);
+        assert_eq!(rock.sprite(catalog.surface(on(1, 0))), "basalt_stone");
+        assert_eq!(rock.sprite(catalog.surface(on(0, 0))), "rock");
+        assert_eq!(
+            catalog.tint(on(2, 0)),
+            Some([0x10, 0x20, 0x30]),
+            "ash takes its ground's tint"
+        );
+        assert_eq!(catalog.tint(on(1, 1)), None, "unlisted biomes stay white");
     }
 }

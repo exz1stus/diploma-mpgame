@@ -10,16 +10,16 @@ use super::{
     catalog::{EntityVisual, EntityVisuals},
     motion::{InterpolationDebug, LocalVisualPosition},
 };
-use crate::{
-    assets::{AssetRoot, texture_file_exists, texture_path},
-    render_layers,
-};
+use crate::assets::{AssetRoot, texture_file_exists, texture_path};
 
 const ENTITY_FOLDER: &str = "entities";
 
 /// The visual child of a networked entity.
 #[derive(Component)]
-pub struct Visual;
+pub struct Visual {
+    /// Distance from the entity's position down to its foot, which sets its draw order.
+    pub foot_offset: f32,
+}
 
 /// Texture and placeholder mesh per kind, loaded when the first entity of that kind arrives.
 #[derive(Resource, Default)]
@@ -58,9 +58,11 @@ pub fn spawn_entity_visuals(
             LocalVisualPosition::default(),
         ));
         let mut child = commands.spawn((
-            Visual,
+            Visual {
+                foot_offset: visual.size / 2.0,
+            },
             ChildOf(entity),
-            Transform::from_xyz(0.0, 0.0, render_layers::ENTITIES),
+            Transform::default(),
         ));
         match assets.texture {
             Some(image) => child.insert(Sprite {

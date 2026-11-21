@@ -184,15 +184,6 @@ impl ObjectCollider {
         }
     }
 
-    pub fn circle(radius_tiles: f32) -> Self {
-        Self {
-            shape: ColliderShape::Circle {
-                radius: radius_tiles,
-            },
-            body: ObjectBody::Static,
-        }
-    }
-
     fn collider(&self, placed: &PlacedObject) -> Collider {
         match self.shape {
             ColliderShape::Footprint => Collider::rectangle(
@@ -252,8 +243,4 @@ pub(crate) fn default_kinds(app: &mut App) {
             object.insert(ObjectCollider::footprint());
         });
     }
-    // Only the trunk blocks movement.
-    app.object_kind("tree", |_, object| {
-        object.insert(ObjectCollider::circle(0.2));
-    });
 }

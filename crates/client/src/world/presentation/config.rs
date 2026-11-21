@@ -8,14 +8,16 @@
 use std::{collections::HashMap, path::Path};
 
 use bevy::{
-    color::{ColorToPacked, Srgba},
+    color::{Color, ColorToPacked, Srgba},
     log::warn,
     prelude::Resource,
 };
 use serde::Deserialize;
 
+use super::atlas::{Atlas, PixelRect};
 use crate::assets::read_table;
 
+const BUNDLED_ATLAS: &str = include_str!("../../../assets/world/atlas.ron");
 const BUNDLED_TILES: &str = include_str!("../../../assets/world/tiles.ron");
 const BUNDLED_OBJECTS: &str = include_str!("../../../assets/world/objects.ron");
 
@@ -147,6 +149,13 @@ pub struct TileTable {
     #[serde(default)]
     placeholder_colors: HashMap<String, String>,
     default_placeholder: String,
+    /// Texture name → atlas tile region; unlisted textures use the region of their own name.
+    #[serde(default)]
+    pub regions: HashMap<String, String>,
+    /// Makes tile art neutral in its texture's placeholder color, keeping only its light and
+    /// shade, so tints alone color the ground.
+    #[serde(default)]
+    pub recolor: bool,
     /// Texture name → overlay layer; unlisted textures are on layer 0.
     #[serde(default)]
     pub layers: HashMap<String, u32>,
@@ -164,6 +173,8 @@ impl TileTable {
             textures: table.textures,
             placeholder_colors: table.placeholder_colors,
             default_placeholder: table.default_placeholder,
+            regions: HashMap::new(),
+            recolor: false,
             layers,
             tints: HashMap::new(),
             blend,
@@ -176,6 +187,10 @@ impl TileTable {
             placeholder_colors: self.placeholder_colors.clone(),
             default_placeholder: self.default_placeholder.clone(),
         }
+    }
+
+    pub fn region_for<'a>(&'a self, texture: &'a str) -> &'a str {
+        self.regions.get(texture).map_or(texture, String::as_str)
     }
 
     pub fn layer(&self, texture: &str) -> u32 {
@@ -196,18 +211,168 @@ impl TileTable {
     }
 }
 
+/// Draw order of an object kind.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+pub enum ObjectLayer {
+    /// Sorted with other objects and entities by foot position.
+    #[default]
+    Sorted,
+    /// Flat on the ground, under everything that stands (pebbles, cracks).
+    Ground,
+}
+
+/// How one object kind is drawn (`objects.ron` `kinds`).
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct ObjectStyle {
+    /// Atlas sprite used where no surface-specific one is listed; defaults to the kind name.
+    pub sprite: Option<String>,
+    /// Surface name → atlas sprite, for kinds whose art follows the ground they stand on.
+    pub sprites: HashMap<String, String>,
+    /// Largest nudge of the foot off center, in tiles (0 to 0.5).
+    pub jitter: f32,
+    /// Mirror half of the objects.
+    pub flip: bool,
+    /// Scale range, picked per object.
+    pub scale: (f32, f32),
+    pub layer: ObjectLayer,
+    /// Take the object colors (`ObjectStyles` `recolor` and `tints`); false keeps the art's own
+    /// colors, for kinds that should stand out, like crystals.
+    pub tinted: bool,
+    /// `#RRGGBB` the art is multiplied by.
+    pub tint: Option<String>,
+    /// `#RRGGBB` rectangle drawn while the kind has no sprite.
+    pub placeholder: Option<String>,
+}
+
+impl Default for ObjectStyle {
+    fn default() -> Self {
+        Self {
+            sprite: None,
+            sprites: HashMap::new(),
+            jitter: 0.0,
+            flip: false,
+            scale: (1.0, 1.0),
+            layer: ObjectLayer::Sorted,
+            tinted: true,
+            tint: None,
+            placeholder: None,
+        }
+    }
+}
+
+impl ObjectStyle {
+    pub fn jitter(&self) -> f32 {
+        if self.jitter.is_finite() {
+            self.jitter.clamp(0.0, 0.5)
+        } else {
+            0.0
+        }
+    }
+
+    /// `(min, max)`, both in 0.1..=10 and ordered.
+    pub fn scale_range(&self) -> (f32, f32) {
+        let clamp = |value: f32| {
+            if value.is_finite() {
+                value.clamp(0.1, 10.0)
+            } else {
+                1.0
+            }
+        };
+        let (a, b) = (clamp(self.scale.0), clamp(self.scale.1));
+        (a.min(b), a.max(b))
+    }
+
+    /// The atlas sprite for a kind standing on `surface`.
+    pub fn sprite_for<'a>(&'a self, kind: &'a str, surface: Option<&str>) -> &'a str {
+        surface
+            .and_then(|surface| self.sprites.get(surface))
+            .or(self.sprite.as_ref())
+            .map_or(kind, String::as_str)
+    }
+
+    pub fn tint(&self) -> Color {
+        self.tint
+            .as_deref()
+            .map_or(Color::WHITE, |hex| parse_color(hex, "tint").into())
+    }
+}
+
+/// `objects.ron`: how object kinds are drawn, and which surface each biome is.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ObjectStyles {
+    pub default_placeholder: String,
+    /// `#RRGGBB`: make the art of tinted kinds neutral in this color (light and shade only)
+    /// before tints.
+    #[serde(default)]
+    pub recolor: Option<String>,
+    /// Biome name → `#RRGGBB` the art of tinted kinds standing there is multiplied by. Apart
+    /// from the ground's tints so objects stand out; feature biomes without an entry use their
+    /// ground biome's, others stay white.
+    #[serde(default)]
+    pub tints: HashMap<String, String>,
+    /// Biome name → surface name (`regolith`, `basalt`, ...), for `ObjectStyle::sprites`.
+    #[serde(default)]
+    pub surfaces: HashMap<String, String>,
+    #[serde(default)]
+    pub kinds: HashMap<String, ObjectStyle>,
+}
+
+impl ObjectStyles {
+    pub fn style(&self, kind: &str) -> ObjectStyle {
+        self.kinds.get(kind).cloned().unwrap_or_default()
+    }
+
+    pub fn recolor(&self) -> Option<Srgba> {
+        self.recolor
+            .as_deref()
+            .map(|hex| parse_color(hex, "recolor"))
+    }
+
+    /// sRGB object tint of a biome, if listed.
+    pub fn tint(&self, biome: &str) -> Option<[u8; 3]> {
+        let [r, g, b, _] = parse_color(self.tints.get(biome)?, "object tint").to_u8_array();
+        Some([r, g, b])
+    }
+
+    pub fn placeholder(&self, style: &ObjectStyle) -> Srgba {
+        parse_color(
+            style
+                .placeholder
+                .as_ref()
+                .unwrap_or(&self.default_placeholder),
+            "placeholder",
+        )
+    }
+}
+
+fn parse_color(hex: &str, what: &str) -> Srgba {
+    Srgba::hex(hex).unwrap_or_else(|_| {
+        warn!("invalid {what} color {hex:?}");
+        Srgba::rgb(1.0, 0.0, 1.0)
+    })
+}
+
 #[derive(Resource, Clone, Debug)]
 pub struct PresentationConfig {
+    pub atlas: Atlas,
     pub tiles: TileTable,
-    pub objects: TextureTable,
+    pub objects: ObjectStyles,
 }
 
 impl PresentationConfig {
     pub fn load(assets: &Path) -> Self {
         Self {
+            atlas: read_table(&assets.join("world/atlas.ron"), BUNDLED_ATLAS),
             tiles: read_table(&assets.join("world/tiles.ron"), BUNDLED_TILES),
             objects: read_table(&assets.join("world/objects.ron"), BUNDLED_OBJECTS),
         }
+    }
+
+    /// Atlas tile region a tile texture is drawn with, if the atlas has it.
+    pub fn tile_region(&self, texture: &str) -> Option<PixelRect> {
+        self.atlas.tile(self.tiles.region_for(texture))
     }
 }
 
@@ -218,12 +383,10 @@ mod tests {
     #[test]
     fn bundled_tables_parse_and_names_default_to_themselves() {
         let tiles: TileTable = ron::from_str(BUNDLED_TILES).unwrap();
-        let objects: TextureTable = ron::from_str(BUNDLED_OBJECTS).unwrap();
-        for table in [tiles.table(), objects] {
-            assert!(Srgba::hex(&table.default_placeholder).is_ok());
-            for color in table.placeholder_colors.values() {
-                assert!(Srgba::hex(color).is_ok(), "{color}");
-            }
+        let table = tiles.table();
+        assert!(Srgba::hex(&table.default_placeholder).is_ok());
+        for color in table.placeholder_colors.values() {
+            assert!(Srgba::hex(color).is_ok(), "{color}");
         }
         assert_eq!(tiles.blend, tiles.blend.sanitized());
         let table = TextureTable {
@@ -235,6 +398,97 @@ mod tests {
         assert_eq!(table.texture_for("crater"), "crater");
         assert_eq!(table.placeholder("basalt"), Srgba::hex("#102030").unwrap());
         assert_eq!(table.placeholder("crater"), Srgba::WHITE);
+    }
+
+    #[test]
+    fn bundled_tile_regions_exist_in_the_atlas() {
+        let config = PresentationConfig {
+            atlas: ron::from_str(BUNDLED_ATLAS).unwrap(),
+            tiles: ron::from_str(BUNDLED_TILES).unwrap(),
+            objects: ron::from_str(BUNDLED_OBJECTS).unwrap(),
+        };
+        for (texture, region) in &config.tiles.regions {
+            assert!(
+                config.tile_region(texture).is_some(),
+                "{texture} -> {region}"
+            );
+        }
+        assert!(config.tile_region("no_such_texture").is_none());
+    }
+
+    #[test]
+    fn bundled_object_styles_use_atlas_sprites_and_known_surfaces() {
+        let atlas: Atlas = ron::from_str(BUNDLED_ATLAS).unwrap();
+        let objects: ObjectStyles = ron::from_str(BUNDLED_OBJECTS).unwrap();
+        let surfaces: Vec<&String> = objects.surfaces.values().collect();
+        for (kind, style) in &objects.kinds {
+            for (surface, sprite) in &style.sprites {
+                assert!(
+                    surfaces.contains(&surface),
+                    "{kind}: unknown surface {surface}"
+                );
+                assert!(
+                    atlas.sprite(sprite).is_some(),
+                    "{kind}: missing sprite {sprite}"
+                );
+            }
+            if let Some(sprite) = &style.sprite {
+                assert!(
+                    atlas.sprite(sprite).is_some(),
+                    "{kind}: missing sprite {sprite}"
+                );
+            }
+            assert!(Srgba::hex(objects.placeholder(style).to_hex()).is_ok());
+        }
+    }
+
+    /// Presentation presets (`assets/world/presets/<name>/`, compared in the worldgen preview)
+    /// use the client's formats; a preset's own regions and sprites exist in its own atlas.
+    #[test]
+    fn presentation_presets_parse_and_resolve_against_their_atlas() {
+        let world = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/world");
+        let read = |dir: &Path, name: &str| std::fs::read_to_string(dir.join(name)).ok();
+        for entry in std::fs::read_dir(world.join("presets")).unwrap() {
+            let dir = entry.unwrap().path();
+            let tiles: Option<TileTable> =
+                read(&dir, "tiles.ron").map(|text| ron::from_str(&text).unwrap());
+            let objects: Option<ObjectStyles> = read(&dir, "objects.ron")
+                .filter(|text| text.contains("kinds"))
+                .map(|text| ron::from_str(&text).unwrap());
+            let Some(atlas) = read(&dir, "atlas.ron") else {
+                continue;
+            };
+            let atlas: Atlas = ron::from_str(&atlas).unwrap();
+            for (texture, region) in tiles.iter().flat_map(|tiles| &tiles.regions) {
+                assert!(
+                    atlas.tile(region).is_some(),
+                    "{dir:?}: {texture} -> {region}"
+                );
+            }
+            for style in objects.iter().flat_map(|objects| objects.kinds.values()) {
+                for sprite in style.sprite.iter().chain(style.sprites.values()) {
+                    assert!(atlas.sprite(sprite).is_some(), "{dir:?}: {sprite}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn object_styles_default_and_resolve_sprites_by_surface() {
+        let style: ObjectStyle = ron::from_str(
+            r#"(sprites: {"basalt": "basalt_spire"}, jitter: 3.0, scale: (2.0, 0.5))"#,
+        )
+        .unwrap();
+        assert_eq!(style.sprite_for("rock", Some("basalt")), "basalt_spire");
+        assert_eq!(style.sprite_for("rock", Some("ice")), "rock");
+        assert_eq!(style.sprite_for("rock", None), "rock");
+        assert_eq!(style.jitter(), 0.5);
+        assert_eq!(style.scale_range(), (0.5, 2.0));
+        assert_eq!(ObjectStyle::default().layer, ObjectLayer::Sorted);
+        assert!(
+            ObjectStyle::default().tinted,
+            "kinds take object colors unless opted out"
+        );
     }
 
     #[test]

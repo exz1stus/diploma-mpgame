@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildTileData, composeChunk, edgeNoise, lattice, sanitizeBlend } from './dist/terrain.mjs';
 import {
-  bakeObjectTexture, bandedPresentation, defaultLayers, rampTint, hexRgb, planetPresentation, PLANET_PALETTE, defaultTileSource, drawnTexture, objectsRon, parseRon,
-  stackLayers, tileCatalog, tilesRon,
+  bandedPresentation, cropRegion, defaultLayers, rampTint, hexRgb, migrateObjects, planetPresentation, PLANET_PALETTE, drawnTexture, objectsRon, parseRon,
+  readAtlas, recolorImage, stackLayers, tileCatalog, tileRegion, tilesRon,
 } from './dist/presentation.mjs';
 
 // No edge noise, no height shadow, no tint smoothing.
@@ -205,9 +205,6 @@ test('legacy colored biomes become neutral height-band textures with ramp tints'
   assert.equal(tiles.tints.dust, rampTint(10, 0.25), 'tints come from the temperature ramp at the biome midpoint');
   assert.equal(bandedPresentation({ ...legacy, tints: { dust: '#123456' } }, terrain, [], ['dust']).tints.dust, '#123456', 'existing tints are kept');
   assert.equal(tiles.textures.crater, undefined, 'unlisted feature biomes keep drawing their ground');
-  assert.deepEqual(defaultTileSource('regolith_1'), { id: 'regolith_lowland', tint: 'tint', strength: 1 });
-  assert.equal(defaultTileSource('frost_3').id, 'snow');
-  assert.equal(defaultTileSource('custom'), null);
   const catalog = tileCatalog(['dust', 'crater'], tiles, () => false);
   assert.deepEqual(catalog.tints, [hexRgb(rampTint(10, 0.25)), [255, 255, 255]]);
 });
@@ -235,19 +232,48 @@ test('the planet preset gives every kind five darker-to-lighter height layers', 
     const light = colors.map(hex => hexRgb(hex).reduce((sum, value) => sum + value, 0));
     for (let i = 1; i < light.length; i++) assert.ok(light[i] > light[i - 1], 'higher bands are lighter');
   }
-  assert.deepEqual(defaultTileSource('plain_floor'), { id: 'regolith_lowland', tint: 'tint', strength: 1 });
-  assert.equal(defaultTileSource('snow_mid').id, 'snow');
-  assert.equal(defaultTileSource('basalt_ridge').id, 'basalt');
 });
 
 test('exported RON parses back and keeps every setting', () => {
-  const tiles = { textures: { ash: 'basalt' }, default_placeholder: '#FF00FF', placeholder_colors: { basalt: '#202020', 'odd "name"': '#000000' }, layers: { basalt: 3 }, tints: { ash: '#AA8866' }, blend: { pixels_per_tile: 16, overlay_reach: 0.2, edge_noise: 0.35, noise_scale: 0.5, ao_strength: 0.4, ao_width: 2, ao_south: 2, ao_north: 0.25, tint_radius: 6 } };
+  const tiles = { textures: { ash: 'basalt' }, default_placeholder: '#FF00FF', placeholder_colors: { basalt: '#202020', 'odd "name"': '#000000' }, regions: { basalt: 'basalt_0' }, recolor: true, layers: { basalt: 3 }, tints: { ash: '#AA8866' }, blend: { pixels_per_tile: 16, overlay_reach: 0.2, edge_noise: 0.35, noise_scale: 0.5, ao_strength: 0.4, ao_width: 2, ao_south: 2, ao_north: 0.25, tint_radius: 6 } };
   assert.deepEqual(parseRon(tilesRon(tiles)), tiles);
-  const objects = { textures: {}, default_placeholder: '#475A47', placeholder_colors: { rock: '#5A5550' } };
+  const objects = {
+    default_placeholder: '#475A47',
+    tints: { plain_mid: '#64625E' },
+    recolor: '#EEEEEE',
+    surfaces: { plain_mid: 'regolith', basalt_low: 'basalt' },
+    kinds: {
+      pebbles: { sprite: 'regolith_pebbles', sprites: { basalt: 'basalt_pebbles' }, jitter: 0.4, flip: true, layer: 'Ground', placeholder: '#77726B' },
+      rock: { scale: [1, 1.25], tint: '#FFEEDD', tinted: false },
+      tree: {},
+    },
+  };
   assert.deepEqual(parseRon(objectsRon(objects)), objects);
   assert.deepEqual(parseRon('( a: Some(1.5), b: None, /* c */ c: [true, -2e3], d: {"k": (x: 1)}, ) // end'),
     { a: 1.5, b: null, c: [true, -2000], d: { k: { x: 1 } } });
+  assert.deepEqual(parseRon('(rect: (1, 2, 3, 4), pivot: Some((1.5, 4)), layer: Ground, empty: ())'),
+    { rect: [1, 2, 3, 4], pivot: [1.5, 4], layer: 'Ground', empty: {} }, 'tuples become lists, unit variants their name');
   assert.throws(() => parseRon('(a: 1'), /RON/);
+});
+
+test('tile art comes from atlas regions; old object files keep their colors', () => {
+  const atlas = readAtlas('(image: "textures/atlas.png", tiles: {"basalt_0": (2, 0, 2, 1)}, sprites: {"rock": [(rect: (0, 0, 1, 1))]})');
+  const tiles = { textures: {}, placeholder_colors: {}, default_placeholder: '#FF00FF', regions: { basalt_low: 'basalt_0', none: 'missing' } };
+  assert.deepEqual(tileRegion(atlas, tiles, 'basalt_low'), [2, 0, 2, 1]);
+  assert.deepEqual(tileRegion(atlas, tiles, 'basalt_0'), [2, 0, 2, 1], 'unlisted textures use their own name');
+  assert.equal(tileRegion(atlas, tiles, 'none'), null);
+  const catalog = tileCatalog(['basalt_low', 'crater'], tiles, name => !!tileRegion(atlas, tiles, name));
+  assert.deepEqual(catalog.ownTiles, [true, false], 'an atlas region gives a biome its own tiles');
+  // 4 × 1 sheet; each pixel's red channel is its index.
+  const sheet = { width: 4, height: 1, data: Uint8ClampedArray.from({ length: 16 }, (_, i) => (i % 4 === 0 ? i / 4 : 255)) };
+  assert.deepEqual([...cropRegion(sheet, [2, 0, 2, 1]).data].filter((_, i) => i % 4 === 0), [2, 3]);
+  assert.equal(cropRegion(sheet, [3, 0, 2, 1]), null, 'regions outside the sheet are rejected');
+  // Same case as the client's recolor test: mean red 125, so 100 → 128 and 200 clamps to white.
+  const art = { width: 2, height: 2, data: Uint8ClampedArray.from([200, 50, 10, 255, 100, 50, 10, 255, 100, 50, 10, 255, 100, 50, 10, 255]) };
+  const neutral = recolorImage(art, '#A0A0A0');
+  assert.deepEqual([...neutral.data.slice(0, 8)], [255, 255, 255, 255, 128, 128, 128, 255]);
+  const migrated = migrateObjects({ textures: { large_rock: 'rock' }, default_placeholder: '#475A47', placeholder_colors: { rock: '#5A5550' } });
+  assert.deepEqual(migrated.kinds, { rock: { placeholder: '#5A5550' }, large_rock: { placeholder: '#5A5550', sprite: 'rock' } });
 });
 
 test('texture arrays use placeholders for missing and mismatched images', () => {
@@ -263,16 +289,3 @@ test('texture arrays use placeholders for missing and mismatched images', () => 
   assert.equal(empty.width, 1);
 });
 
-test('object textures are baked at footprint size, standing on the bottom edge', () => {
-  const sheet = { width: 512, height: 512, data: new Uint8ClampedArray(512 * 512 * 4) };
-  // Opaque rock_0 sprite region (15 × 16 at 8, 424).
-  for (let y = 424; y < 440; y++) for (let x = 8; x < 23; x++) sheet.data.set([100, 100, 100, 255], (y * 512 + x) * 4);
-  const baked = bakeObjectTexture(sheet, { id: 'rock_0', tint: 'none' }, '#FFFFFF', { width: 2, height: 2 }, 16);
-  assert.equal(baked.width, 32);
-  assert.equal(baked.height, 32);
-  const alpha = (x, y) => baked.data[(y * 32 + x) * 4 + 3];
-  assert.equal(alpha(16, 31), 255, 'bottom row is covered');
-  assert.equal(alpha(16, 0), 0, 'space above the sprite stays clear');
-  const shrunk = bakeObjectTexture(sheet, { id: 'rock_0', tint: 'none' }, '#FFFFFF', { width: 1, height: 1 }, 8);
-  assert.equal(shrunk.width, 8);
-});

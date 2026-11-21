@@ -169,6 +169,7 @@ fn spawn_chunk(commands: &mut Commands, snapshot: ChunkSnapshot) -> Entity {
         commands.spawn((
             WorldObject {
                 kind: object.kind,
+                anchor: object.anchor,
                 footprint: object.footprint,
             },
             InChunk(chunk),

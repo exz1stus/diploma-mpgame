@@ -8,26 +8,35 @@ use bevy::prelude::*;
 use shared::world::{ChunkPos, TILE_SIZE};
 
 use super::{
+    atlas::{PixelRect, SheetPixels, load_sheet, sheet_settled},
     catalog::TileCatalog,
     chunk_mesh::{Neighborhood, build_chunk_mesh, tile_data, tile_data_image},
     config::PresentationConfig,
     layers::{TileLayers, TileVisual},
     material::{TerrainMaterial, TerrainParams},
-    textures::{TILE_FOLDER, all_settled, request_textures, stack_layers},
+    textures::{recolor, stack_layers},
 };
 use crate::{
-    assets::{AssetRoot, texture_file_exists},
     render_layers,
     world::{ChunkTiles, WorldChunk, WorldInfo},
 };
 
-/// Tile textures requested for the current catalog, until they are assembled.
+/// The sheet and each catalog texture's region in it, until the texture array is assembled.
 #[derive(Resource)]
-pub struct PendingTileTextures(Vec<Option<Handle<Image>>>);
+pub struct PendingTileTextures {
+    sheet: Handle<Image>,
+    regions: Vec<Option<PixelRect>>,
+    /// Make the art neutral in each texture's placeholder color (`tiles.ron` `recolor`).
+    recolor: bool,
+}
 
 /// The tile texture array shared by every chunk of the current world.
 #[derive(Resource)]
 pub struct GroundTextures(Handle<Image>);
+
+/// The quad that draws a chunk's ground; a child of the chunk.
+#[derive(Component)]
+pub struct GroundMesh;
 
 /// A chunk's styled tiles and the tile data textures its material reads.
 #[derive(Component)]
@@ -37,24 +46,31 @@ pub struct ChunkGround {
     tints: Handle<Image>,
 }
 
-/// Resolves tile textures for a newly streamed world and starts loading them.
+/// Resolves tile textures for a newly streamed world and starts loading the sheet.
 pub fn prepare_tile_catalog(
     mut commands: Commands,
     world: Res<WorldInfo>,
     config: Res<PresentationConfig>,
-    root: Res<AssetRoot>,
     asset_server: Res<AssetServer>,
 ) {
     let catalog = TileCatalog::build(&world, &config.tiles, |texture| {
-        texture_file_exists(&root, TILE_FOLDER, texture)
+        config.tile_region(texture).is_some()
     });
-    let handles = request_textures(&root, TILE_FOLDER, &catalog.textures, &asset_server);
+    let regions = catalog
+        .textures
+        .iter()
+        .map(|texture| config.tile_region(&texture.name))
+        .collect();
     commands.remove_resource::<GroundTextures>();
-    commands.insert_resource(PendingTileTextures(handles));
+    commands.insert_resource(PendingTileTextures {
+        sheet: load_sheet(&asset_server, &config.atlas),
+        regions,
+        recolor: config.tiles.recolor,
+    });
     commands.insert_resource(catalog);
 }
 
-/// Builds the texture array once every texture has loaded.
+/// Crops every texture's region out of the sheet into the texture array once it has loaded.
 pub fn assemble_ground_textures(
     mut commands: Commands,
     pending: Res<PendingTileTextures>,
@@ -62,14 +78,29 @@ pub fn assemble_ground_textures(
     asset_server: Res<AssetServer>,
     mut images: ResMut<Assets<Image>>,
 ) {
-    if !all_settled(&pending.0, &asset_server) {
+    if !sheet_settled(&pending.sheet, &asset_server) {
         return;
     }
-    let textures: Vec<_> = pending
-        .0
+    let sheet = images.get(&pending.sheet).and_then(SheetPixels::new);
+    if sheet.is_none() {
+        warn!("atlas sheet unavailable; tiles use their placeholder colors");
+    }
+    let crops: Vec<Option<Image>> = pending
+        .regions
         .iter()
-        .map(|handle| handle.as_ref().and_then(|handle| images.get(handle)))
+        .zip(&catalog.textures)
+        .map(|(region, texture)| {
+            let mut image = sheet
+                .as_ref()
+                .zip(*region)
+                .and_then(|(sheet, rect)| sheet.crop(rect))?;
+            if pending.recolor {
+                recolor(&mut image, texture.placeholder);
+            }
+            Some(image)
+        })
         .collect();
+    let textures: Vec<Option<&Image>> = crops.iter().map(Option::as_ref).collect();
     let array = stack_layers(&catalog.textures, &textures);
     commands.remove_resource::<PendingTileTextures>();
     commands.insert_resource(GroundTextures(images.add(array)));
@@ -117,6 +148,7 @@ pub fn spawn_chunk_visuals(
             tints,
         });
         commands.spawn((
+            GroundMesh,
             Mesh2d(meshes.add(build_chunk_mesh(tiles.size, TILE_SIZE))),
             MeshMaterial2d(material),
             Transform::from_xyz(0.0, 0.0, render_layers::GROUND),

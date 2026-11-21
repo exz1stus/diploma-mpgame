@@ -1,10 +1,8 @@
-//! Texture files for catalog entries: `assets/textures/<folder>/<name>.png`.
-//! Entries without a file are drawn with their placeholder color.
-
-use std::path::Path;
+//! The ground texture array: one layer per tile texture, cropped from the atlas; textures
+//! without a region are drawn with their placeholder color.
 
 use bevy::{
-    asset::{LoadState, RenderAssetUsages},
+    asset::RenderAssetUsages,
     image::ImageSampler,
     prelude::*,
     render::render_resource::{
@@ -12,37 +10,7 @@ use bevy::{
     },
 };
 
-use super::catalog::TextureEntry;
-use crate::assets::{texture_file_exists, texture_path};
-
-pub const TILE_FOLDER: &str = "tiles";
-pub const OBJECT_FOLDER: &str = "objects";
-
-/// One handle per catalog entry; `None` where no texture file exists.
-pub fn request_textures(
-    root: &Path,
-    folder: &str,
-    entries: &[TextureEntry],
-    asset_server: &AssetServer,
-) -> Vec<Option<Handle<Image>>> {
-    entries
-        .iter()
-        .map(|entry| {
-            texture_file_exists(root, folder, &entry.name)
-                .then(|| asset_server.load(texture_path(folder, &entry.name)))
-        })
-        .collect()
-}
-
-/// Every requested texture finished loading, successfully or not.
-pub fn all_settled(handles: &[Option<Handle<Image>>], asset_server: &AssetServer) -> bool {
-    handles.iter().flatten().all(|handle| {
-        matches!(
-            asset_server.get_load_state(handle),
-            Some(LoadState::Loaded | LoadState::Failed(_))
-        )
-    })
-}
+use super::{atlas::PixelRect, catalog::TextureEntry};
 
 /// Stacks one layer per entry into a 2D array texture. All layers take the size of the
 /// first texture; textures of another size, or missing ones, become placeholder layers.
@@ -72,6 +40,47 @@ pub fn stack_layers(entries: &[TextureEntry], textures: &[Option<&Image>]) -> Im
         }
     }
     array_image(size, entries.len().max(1) as u32, data)
+}
+
+/// Makes art neutral so tints color it: every pixel becomes `color` scaled by its red channel
+/// over the mean red of the art (opaque pixels only). Keeps the art's light and shade, drops
+/// its hue. The worldgen preview applies the same formula.
+pub fn recolor(image: &mut Image, color: Srgba) {
+    let size = image.size();
+    recolor_regions(image, &[PixelRect(0, 0, size.x, size.y)], color);
+}
+
+/// [`recolor`] applied to each region of an RGBA8 image on its own, such as every sprite of
+/// a sheet; regions reaching outside the image are skipped.
+pub fn recolor_regions(image: &mut Image, regions: &[PixelRect], color: Srgba) {
+    let width = image.width();
+    let height = image.height();
+    let Some(data) = image.data.as_mut() else {
+        return;
+    };
+    let rgb = color.to_u8_array();
+    for &PixelRect(x0, y0, w, h) in regions {
+        if x0 + w > width || y0 + h > height {
+            continue;
+        }
+        let pixel = |x: u32, y: u32| ((y * width + x) * 4) as usize;
+        let region = || (y0..y0 + h).flat_map(move |y| (x0..x0 + w).map(move |x| (x, y)));
+        let (sum, count) = region()
+            .map(|(x, y)| &data[pixel(x, y)..pixel(x, y) + 4])
+            .filter(|px| px[3] == 255)
+            .fold((0.0, 0u32), |(sum, count), px| {
+                (sum + f32::from(px[0]), count + 1)
+            });
+        let mean = (sum / count.max(1) as f32).max(1.0);
+        for (x, y) in region() {
+            let at = pixel(x, y);
+            let light = f32::from(data[at]) / mean;
+            for channel in 0..3 {
+                data[at + channel] =
+                    (f32::from(rgb[channel]) * light).round().clamp(0.0, 255.0) as u8;
+            }
+        }
+    }
 }
 
 fn to_rgba8(image: &Image) -> Option<(UVec2, Vec<u8>)> {
@@ -153,6 +162,36 @@ mod tests {
             &[255, 0, 0, 255],
             "wrong size uses placeholder"
         );
+    }
+
+    #[test]
+    fn recolor_keeps_relative_light_in_the_given_color() {
+        let mut image = texture(2, [100, 50, 10, 255]);
+        let data = image.data.as_mut().unwrap();
+        data[0] = 200; // first pixel twice as bright in red as the other three
+        recolor(&mut image, Srgba::rgb_u8(160, 160, 160));
+        let data = image.data.unwrap();
+        // Mean red is (200 + 3 × 100) / 4 = 125.
+        assert_eq!(
+            &data[0..4],
+            &[0xFF, 0xFF, 0xFF, 255],
+            "200/125 × 160 clamps to white"
+        );
+        assert_eq!(&data[4..8], &[128, 128, 128, 255], "100/125 × 160");
+    }
+
+    #[test]
+    fn regions_recolor_on_their_own_mean_and_leave_the_rest() {
+        // 2×1 image: a dim and a bright pixel, recolored as separate regions.
+        let mut image = texture(1, [0, 0, 0, 255]);
+        image.texture_descriptor.size.width = 2;
+        image.data = Some(vec![40, 0, 0, 255, 200, 9, 9, 255]);
+        recolor_regions(
+            &mut image,
+            &[PixelRect(1, 0, 1, 1)],
+            Srgba::rgb_u8(100, 100, 100),
+        );
+        assert_eq!(image.data.unwrap(), [40, 0, 0, 255, 100, 100, 100, 255]);
     }
 
     #[test]

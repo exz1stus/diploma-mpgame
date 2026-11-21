@@ -28,30 +28,32 @@ let queued = false;
 let timer = null;
 
 const mime = { '.html': 'text/html', '.css': 'text/css', '.mjs': 'text/javascript', '.png': 'image/png' };
-const staticFiles = new Set(['/', '/index.html', '/style.css', '/app.mjs', '/zoom.mjs', '/decode-worker.mjs', '/protocol.mjs', '/settings.mjs', '/biomes.mjs', '/objects.mjs', '/terrain.mjs', '/presentation.mjs', '/editor.mjs']);
-// The sprite sheet lives next to the preview example so artists edit a single source image.
-const assets = { '/textures.png': resolve(example, 'textures.png') };
+const staticFiles = new Set(['/', '/index.html', '/style.css', '/app.mjs', '/zoom.mjs', '/decode-worker.mjs', '/protocol.mjs', '/settings.mjs', '/biomes.mjs', '/objects.mjs', '/terrain.mjs', '/presentation.mjs', '/placement.mjs', '/editor.mjs']);
 
-const textureName = /^[A-Za-z0-9_-]+$/;
-const exportPath = /^(world\/(tiles|objects)\.ron|textures\/(tiles|objects)\/[A-Za-z0-9_-]+\.png)$/;
+// The editor only writes the style files; the atlas is edited by hand in the client.
+const exportPath = /^world\/(tiles|objects)\.ron$/;
 
-// Client presentation files: /client-assets/index.json lists texture files,
-// /client-assets/world/{tiles,objects}.ron and /client-assets/textures/<folder>/<name>.png.
+// Client presentation files: /client-assets/presets.json lists the preset folders in
+// world/presets/, /client-assets/world/[presets/<name>/]{atlas,tiles,objects}.ron, and atlas
+// sheets, /client-assets/textures/<name>.png.
 function clientAsset(path) {
-  if (path === '/client-assets/index.json') {
-    const list = folder => {
-      try { return readdirSync(resolve(clientAssets, 'textures', folder)).filter(name => name.endsWith('.png')).map(name => name.slice(0, -4)).filter(name => textureName.test(name)); } catch { return []; }
-    };
-    return { json: { tiles: list('tiles'), objects: list('objects') } };
+  if (path === '/client-assets/presets.json') {
+    let presets = [];
+    try {
+      presets = readdirSync(resolve(clientAssets, 'world/presets'), { withFileTypes: true })
+        .filter(entry => entry.isDirectory() && /^[A-Za-z0-9_-]+$/.test(entry.name))
+        .map(entry => entry.name).sort();
+    } catch { /* no presets folder */ }
+    return { json: { presets } };
   }
-  const world = /^\/client-assets\/world\/(presets\/old\/)?(tiles|objects)\.ron$/.exec(path);
+  const world = /^\/client-assets\/world\/(presets\/[A-Za-z0-9_-]+\/)?(atlas|tiles|objects)\.ron$/.exec(path);
   if (world) return { file: resolve(clientAssets, 'world', world[1] ?? '', `${world[2]}.ron`), type: 'text/plain' };
-  const texture = /^\/client-assets\/textures\/(tiles|objects)\/([A-Za-z0-9_-]+)\.png$/.exec(path);
-  if (texture) return { file: resolve(clientAssets, 'textures', texture[1], `${texture[2]}.png`), type: 'image/png' };
+  const sheet = /^\/client-assets\/textures\/([A-Za-z0-9_-]+)\.png$/.exec(path);
+  if (sheet) return { file: resolve(clientAssets, 'textures', `${sheet[1]}.png`), type: 'image/png' };
   return null;
 }
 
-// Replaces export/assets with the posted files: { files: [{ path, text } | { path, base64 }] }.
+// Replaces export/assets with the posted files: { files: [{ path, text }] }.
 function exportFiles(req, res) {
   let body = '';
   req.setEncoding('utf8');
@@ -64,7 +66,7 @@ function exportFiles(req, res) {
       for (const file of files) {
         const target = resolve(exportDir, file.path);
         mkdirSync(dirname(target), { recursive: true });
-        writeFileSync(target, typeof file.base64 === 'string' ? Buffer.from(file.base64, 'base64') : String(file.text ?? ''));
+        writeFileSync(target, String(file.text ?? ''));
       }
       console.log(`Exported ${files.length} presentation files to ${exportDir}`);
       res.writeHead(200, { 'content-type': 'application/json' });
@@ -103,9 +105,9 @@ const frontend = createServer((req, res) => {
     req.pipe(proxy);
     return;
   }
-  if (!staticFiles.has(path) && !Object.hasOwn(assets, path)) { res.writeHead(404); res.end(); return; }
+  if (!staticFiles.has(path)) { res.writeHead(404); res.end(); return; }
   const name = path === '/' ? 'index.html' : path.slice(1);
-  const file = createReadStream(assets[path] ?? resolve(dist, name));
+  const file = createReadStream(resolve(dist, name));
   file.on('error', () => { if (!res.headersSent) res.writeHead(404); res.end(); });
   file.on('open', () => {
     const type = mime[name.slice(name.lastIndexOf('.'))];

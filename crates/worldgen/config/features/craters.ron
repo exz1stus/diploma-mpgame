@@ -7,14 +7,18 @@
     min_radius: 24.0,
     max_radius: 384.0,
     density: 1.25,
-    temperature_offset: 0.0,
+    temperature_offset: -10.0,
     // No biome map: craters only shape the height, so they show the palette of the ground they
     // hit (terrain or basin), darker on their floors. Crater objects spawn by territory below.
     biome_map: [],
     // Spawned only inside crater territory, whatever the biome.
     // distance: from the crater centre, where 1.0 is the rim.
     objects: [
-        (object: "large_rock", density: 0.006, distance: (min: 0.8, max: 1.2)),
-        (object: "rock", density: 0.004, distance: (min: 0.0, max: 0.8)),
+        (object: "large_rock", density: 0.003, distance: (min: 0.8, max: 1.2)),
+        (object: "rock", density: 0.002, distance: (min: 0.0, max: 0.8)),
+        // Ores (spiky rocks) only near crater floors, now and then.
+        (object: "iron_ore", density: 0.0006, height: (min: 0.0, max: 0.5), distance: (min: 0.0, max: 0.7)),
+        // Crystals on the floors of cold craters (frost and snow climates; craters are colder).
+        (object: "crystal", density: 0.0003, temperature: (min: -1000.0, max: -6.0), distance: (min: 0.0, max: 0.7)),
     ],
 )

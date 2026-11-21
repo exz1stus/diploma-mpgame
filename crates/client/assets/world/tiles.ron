@@ -1,13 +1,19 @@
 // Ground textures and tints per biome. Exported by the worldgen preview (tools/worldgen-preview).
 //
-// A biome is drawn with the texture `textures/tiles/<texture>.png`. By default the texture
-// name is the biome name; list a biome under `textures` to rename it or share one texture
-// between several biomes. All tile textures must have the same size.
+// A biome is drawn with a texture. By default the texture name is the biome name; list a
+// biome under `textures` to rename it or share one texture between several biomes.
 //
-// Until a texture file exists, the tile is drawn flat with its placeholder color
-// (keyed by texture name).
+// regions: texture name -> atlas tile region (atlas.ron `tiles`) its art comes from; unlisted
+// textures use the region of their own name. Textures keep their own layer and placeholder
+// even when they share a region. Until a texture's region exists, the tile is drawn flat
+// with its placeholder color (keyed by texture name).
 //
-// A biome with no entry here and no texture file has no tiles of its own: it is drawn
+// recolor: true makes tile art neutral: each pixel becomes its texture's placeholder color
+// scaled by the pixel's brightness relative to the tile's average, so the art keeps its light
+// and shade but not its hue, and tints alone color the ground. Use false for art that is
+// already neutral (grayscale) or should keep its own colors.
+//
+// A biome with no entry here and no atlas region has no tiles of its own: it is drawn
 // with the tiles of the terrain biome underneath (the biome the terrain map gives the
 // tile). Feature biomes rely on this to override only objects.
 //
@@ -28,6 +34,42 @@
 // are averaged within a layer; 0 keeps each biome one flat color).
 (
     textures: {},
+    // Each surface's height ladder from the atlas. The two upper bands share the smooth top
+    // tile; rough underground tiles are only exposed on the floor band, mostly crater floors.
+    // Polar ground is mostly snow, with ice only low down.
+    regions: {
+        "plain_floor": "regolith_2",
+        "plain_low": "regolith_3",
+        "plain_mid": "regolith_3",
+        "plain_upland": "regolith_0",
+        "plain_ridge": "regolith_0",
+        "desert_floor": "regolith_1",
+        "desert_low": "regolith_3",
+        "desert_mid": "regolith_3",
+        "desert_upland": "regolith_0",
+        "desert_ridge": "regolith_0",
+        "sulfur_floor": "sulfur_1",
+        "sulfur_low": "sulfur_0",
+        "sulfur_mid": "sulfur_0",
+        "sulfur_upland": "sulfur_0",
+        "sulfur_ridge": "sulfur_0",
+        "basalt_floor": "basalt_1",
+        "basalt_low": "basalt_0",
+        "basalt_mid": "basalt_0",
+        "basalt_upland": "basalt_0",
+        "basalt_ridge": "basalt_0",
+        "snow_floor": "ice",
+        "snow_low": "snow",
+        "snow_mid": "snow",
+        "snow_upland": "snow",
+        "snow_ridge": "snow",
+        "frost_floor": "ice",
+        "frost_low": "ice",
+        "frost_mid": "snow",
+        "frost_upland": "snow",
+        "frost_ridge": "snow",
+    },
+    recolor: true,
     default_placeholder: "#FF00FF",
     placeholder_colors: {
         "basalt_floor": "#EEEEEE",

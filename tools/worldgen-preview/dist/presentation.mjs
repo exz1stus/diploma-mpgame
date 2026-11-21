@@ -1,43 +1,14 @@
-// Editable copy of the client's presentation files (crates/client/assets/world/{tiles,objects}.ron)
-// plus the texture images the client would load from assets/textures/{tiles,objects}/<name>.png.
+// Editable copy of the client's presentation files (crates/client/assets/world/{tiles,objects}.ron);
+// art comes from the client's atlas (world/atlas.ron and the sheet it names), never edited here.
 // Name resolution mirrors crates/client/src/world/presentation/{config,catalog}.rs.
 import { DEFAULT_BLEND, sanitizeBlend, srgbToLinear } from './terrain.mjs';
-
-export const TILE_TEXTURE_PX = 32;
-
-// Sprite-sheet regions offered as texture sources (crates/worldgen/examples/textures.png).
-// Rects are [x, y, width, height].
-export const TILE_SOURCES = {
-  regolith_highland: [288, 384, 32, 32],
-  regolith_cracked: [320, 384, 32, 32],
-  regolith_rocky: [352, 384, 32, 32],
-  regolith_lowland: [384, 384, 32, 32],
-  basalt: [384, 256, 32, 32],
-  ice: [416, 128, 32, 32],
-  snow: [384, 128, 32, 32],
-};
-
-const sprites = (prefix, rects) => Object.fromEntries(rects.map((rect, i) => [`${prefix}_${i}`, rect]));
-// Pebble sprites are the densest 16 px quadrant of each pebble cell, one tile at 16 px per tile.
-const PEBBLE_QUADRANTS = [[16, 0], [16, 0], [16, 0], [16, 0], [16, 16], [0, 0], [0, 0], [0, 0]];
-export const OBJECT_SOURCES = {
-  ...sprites('pebbles', PEBBLE_QUADRANTS.map(([dx, dy], i) => [i * 32 + dx, 384 + dy, 16, 16])),
-  ...sprites('rock', [[8, 424, 15, 16], [40, 428, 16, 10], [65, 429, 21, 14], [103, 429, 18, 15], [133, 425, 23, 18], [165, 425, 23, 17], [196, 420, 19, 20], [228, 425, 23, 18], [165, 455, 18, 17], [197, 449, 24, 27], [228, 451, 19, 25]]),
-  ...sprites('spikes', [[2, 447, 27, 32], [36, 447, 22, 32], [65, 447, 28, 32], [100, 447, 23, 32], [130, 448, 22, 31]]),
-  ...sprites('boulder', [[3, 486, 26, 24], [32, 482, 28, 27], [66, 484, 25, 23], [101, 483, 22, 27], [135, 486, 16, 19], [168, 482, 21, 26], [195, 486, 22, 19], [230, 486, 21, 21]]),
-  ...sprites('stalagmite_small', [[14, 277, 6, 9], [24, 270, 6, 16], [36, 266, 7, 20], [49, 264, 9, 23], [67, 262, 6, 25], [82, 261, 9, 26]]),
-  ...sprites('stalagmite_large', [[134, 259, 16, 27], [164, 256, 21, 32], [197, 241, 19, 44], [258, 234, 26, 53]]),
-  ...sprites('stalagmite_tall', [[101, 242, 24, 45], [197, 241, 19, 44], [228, 241, 21, 45]]),
-};
-
-// How a sheet region is colored when baked: `tint` multiplies its luminance by the
-// texture's placeholder color, `blend` shifts its own colors toward it by `strength`.
-export const TINTS = ['none', 'tint', 'blend'];
+import { styleJitter, styleScale } from './placement.mjs';
 
 // ---------------------------------------------------------------- RON subset
 
-// Parses the RON used by the presentation files: structs/tuples `( k: v )`, maps `{ "k": v }`,
-// lists, strings, numbers, booleans, `Some(x)`/`None`, and comments.
+// Parses the RON used by the presentation files: structs `( k: v )`, tuples `(a, b)` (as lists),
+// maps `{ "k": v }`, lists, strings, numbers, booleans, `Some(x)`/`None`, unit enum variants (as
+// their name), and comments.
 export function parseRon(text) {
   let i = 0;
   const fail = message => { throw new Error(`RON: ${message} at ${i}`); };
@@ -77,7 +48,13 @@ export function parseRon(text) {
       }
     }
     if (c === '(') {
-      i++; const struct = {};
+      i++; skip();
+      // Positional tuples, like atlas rects `(x, y, w, h)`, become lists.
+      if (text[i] !== ')' && !/^[A-Za-z_]\w*\s*:/.test(text.slice(i))) {
+        const tuple = [];
+        for (;;) { skip(); if (text[i] === ')') { i++; return tuple; } tuple.push(value()); skip(); if (text[i] === ',') i++; }
+      }
+      const struct = {};
       for (;;) {
         skip(); if (text[i] === ')') { i++; return struct; }
         const name = /^[A-Za-z_]\w*/.exec(text.slice(i))?.[0] ?? fail('expected field name');
@@ -90,6 +67,8 @@ export function parseRon(text) {
     if (word === 'true' || word === 'false') { i += word.length; return word === 'true'; }
     if (word === 'None') { i += 4; return null; }
     if (word === 'Some') { i += 4; expect('('); const inner = value(); expect(')'); return inner; }
+    // Unit enum variants, like `layer: Ground`, read as their name.
+    if (word) { i += word.length; return word; }
     return fail('unexpected token');
   };
   const result = value();
@@ -111,14 +90,20 @@ export function tilesRon(tiles) {
   const blend = sanitizeBlend(tiles.blend);
   return `// Ground textures and tints per biome. Exported by the worldgen preview (tools/worldgen-preview).
 //
-// A biome is drawn with the texture \`textures/tiles/<texture>.png\`. By default the texture
-// name is the biome name; list a biome under \`textures\` to rename it or share one texture
-// between several biomes. All tile textures must have the same size.
+// A biome is drawn with a texture. By default the texture name is the biome name; list a
+// biome under \`textures\` to rename it or share one texture between several biomes.
 //
-// Until a texture file exists, the tile is drawn flat with its placeholder color
-// (keyed by texture name).
+// regions: texture name -> atlas tile region (atlas.ron \`tiles\`) its art comes from; unlisted
+// textures use the region of their own name. Textures keep their own layer and placeholder
+// even when they share a region. Until a texture's region exists, the tile is drawn flat
+// with its placeholder color (keyed by texture name).
 //
-// A biome with no entry here and no texture file has no tiles of its own: it is drawn
+// recolor: true makes tile art neutral: each pixel becomes its texture's placeholder color
+// scaled by the pixel's brightness relative to the tile's average, so the art keeps its light
+// and shade but not its hue, and tints alone color the ground. Use false for art that is
+// already neutral (grayscale) or should keep its own colors.
+//
+// A biome with no entry here and no atlas region has no tiles of its own: it is drawn
 // with the tiles of the terrain biome underneath (the biome the terrain map gives the
 // tile). Feature biomes rely on this to override only objects.
 //
@@ -141,6 +126,8 @@ export function tilesRon(tiles) {
     textures: ${ronMap(tiles.textures)},
     default_placeholder: ${quote(tiles.default_placeholder)},
     placeholder_colors: ${ronMap(tiles.placeholder_colors)},
+    regions: ${ronMap(tiles.regions)},
+    recolor: ${tiles.recolor === true},
     layers: ${ronMap(tiles.layers, value => String(Math.max(0, Math.round(value))))},
     tints: ${ronMap(tiles.tints)},
     blend: (
@@ -158,19 +145,158 @@ export function tilesRon(tiles) {
 `;
 }
 
+// One kind's style, writing only the fields that differ from the client's defaults.
+function styleRon(style) {
+  const fields = [];
+  if (style.sprite) fields.push(`sprite: Some(${quote(style.sprite)})`);
+  if (Object.keys(style.sprites || {}).length) {
+    const entries = sortedEntries(style.sprites).map(([surface, sprite]) => `                ${quote(surface)}: ${quote(sprite)},`);
+    fields.push(`sprites: {\n${entries.join('\n')}\n            }`);
+  }
+  const jitter = styleJitter(style);
+  if (jitter) fields.push(`jitter: ${number(jitter)}`);
+  if (style.flip) fields.push('flip: true');
+  const [min, max] = styleScale(style);
+  if (min !== 1 || max !== 1) fields.push(`scale: (${number(min)}, ${number(max)})`);
+  if (style.layer === 'Ground') fields.push('layer: Ground');
+  if (style.tinted === false) fields.push('tinted: false');
+  if (style.tint) fields.push(`tint: Some(${quote(style.tint)})`);
+  if (style.placeholder) fields.push(`placeholder: Some(${quote(style.placeholder)})`);
+  return fields.length ? `(\n${fields.map(field => `            ${field},`).join('\n')}\n        )` : '()';
+}
+
 export function objectsRon(objects) {
-  return `// Object sprites per object kind. Exported by the worldgen preview (tools/worldgen-preview).
+  const kinds = sortedEntries(objects.kinds);
+  return `// How object kinds are drawn. Exported by the worldgen preview (tools/worldgen-preview).
+// Art comes from atlas.ron \`sprites\`; one variant per object is picked from its anchor tile,
+// so every client draws the same world.
 //
-// A kind is drawn with \`textures/objects/<texture>.png\`, stretched over its footprint.
-// By default the texture name is the kind name; list a kind under \`textures\` to rename it
-// or share a texture. Until a texture file exists, the object is drawn as a rectangle in
-// its placeholder color (keyed by texture name).
+// recolor: Some("#RRGGBB") makes the art of tinted kinds neutral in this color first (each sprite
+//   keeps its light and shade, relative to its own average), so the tint alone colors it. None
+//   keeps the art's own colors (use for art that is already neutral).
+// tints: biome name -> color the art of tinted kinds standing there is multiplied by; kept apart
+//   from the ground tints so objects stand out. Feature biomes without an entry use their ground
+//   biome's; other unlisted biomes stay white.
+//
+// surfaces: biome name -> surface. A kind's \`sprites\` choose art per surface, so a rock on
+//   basalt looks like basalt. Feature biomes without an entry use their ground biome's.
+//
+// kinds: object kind -> style; every field is optional.
+//   sprite:      atlas sprite where \`sprites\` lists no art for the surface (default: kind name)
+//   sprites:     surface -> atlas sprite
+//   jitter:      largest nudge of the foot off its footprint's south-edge center, in tiles
+//                (0 to 0.5); it only moves north, east and west, staying on the footprint
+//   flip:        mirror half of the objects; only for art without painted light (default: off)
+//   scale:       (min, max) size multiplier, picked per object
+//   layer:       Sorted (stands; drawn by foot position with players) or Ground (flat decal)
+//   tinted:      false keeps the art's own colors: no recolor and no biome tint (default: true)
+//   tint:        Some("#RRGGBB") multiplies the art
+//   placeholder: Some("#RRGGBB") rectangle drawn while the kind has no sprite
+// Art is drawn at its pixel size, \`tiles.ron\` blend.pixels_per_tile pixels per tile.
 (
-    textures: ${ronMap(objects.textures)},
     default_placeholder: ${quote(objects.default_placeholder)},
-    placeholder_colors: ${ronMap(objects.placeholder_colors)},
+    recolor: ${objects.recolor ? `Some(${quote(objects.recolor)})` : 'None'},
+    tints: ${ronMap(objects.tints)},
+    surfaces: ${ronMap(objects.surfaces)},
+    kinds: ${kinds.length ? `{\n${kinds.map(([kind, style]) => `        ${quote(kind)}: ${styleRon(style)},`).join('\n')}\n    }` : '{}'},
 )
 `;
+}
+
+// ---------------------------------------------------------------- atlas
+
+// The client's atlas.ron: { image, tiles: { name: [x, y, w, h] }, sprites: { name: [{ rect, pivot }] } }.
+export function readAtlas(text) {
+  const atlas = parseRon(text);
+  return { image: atlas.image, tiles: atlas.tiles || {}, sprites: atlas.sprites || {} };
+}
+
+// TileTable::region_for and PresentationConfig::tile_region.
+export const regionFor = (tiles, texture) => (Object.hasOwn(tiles.regions || {}, texture) ? tiles.regions[texture] : texture);
+export const tileRegion = (atlas, tiles, texture) => atlas?.tiles[regionFor(tiles, texture)] ?? null;
+
+// Atlas::sprite: a sprite's variants, or null when it is missing or empty.
+export const spriteVariants = (atlas, name) => (atlas?.sprites[name]?.length ? atlas.sprites[name] : null);
+
+// SheetPixels::crop: the pixels of a rect as their own image; null outside the sheet.
+export function cropRegion(sheet, [x0, y0, width, height]) {
+  if (!sheet || width <= 0 || height <= 0 || x0 + width > sheet.width || y0 + height > sheet.height) return null;
+  const data = new Uint8ClampedArray(width * height * 4);
+  for (let y = 0; y < height; y++) {
+    const from = ((y0 + y) * sheet.width + x0) * 4;
+    data.set(sheet.data.subarray(from, from + width * 4), y * width * 4);
+  }
+  return { width, height, data };
+}
+
+// textures::recolor: neutral art in `color`, scaled by each pixel's red over the tile's mean red
+// (opaque pixels), so tints alone color the ground.
+export function recolorImage(image, color) {
+  const rgb = hexRgb(color);
+  let sum = 0;
+  let count = 0;
+  for (let i = 0; i < image.data.length; i += 4) if (image.data[i + 3] === 255) { sum += image.data[i]; count++; }
+  const mean = Math.max(1, sum / Math.max(1, count));
+  const data = Uint8ClampedArray.from(image.data);
+  for (let i = 0; i < data.length; i += 4) {
+    const light = image.data[i] / mean;
+    for (let c = 0; c < 3; c++) data[i + c] = Math.min(255, Math.max(0, Math.round(rgb[c] * light)));
+  }
+  return { width: image.width, height: image.height, data };
+}
+
+// textures::recolor_regions: a copy of the sheet with each region recolored on its own mean.
+export function recolorRegions(sheet, rects, color) {
+  const out = { width: sheet.width, height: sheet.height, data: Uint8ClampedArray.from(sheet.data) };
+  for (const rect of rects) {
+    const crop = cropRegion(sheet, rect);
+    if (!crop) continue;
+    const neutral = recolorImage(crop, color);
+    const [x0, y0, width] = rect;
+    for (let y = 0; y < crop.height; y++) {
+      out.data.set(neutral.data.subarray(y * width * 4, (y + 1) * width * 4), ((y0 + y) * sheet.width + x0) * 4);
+    }
+  }
+  return out;
+}
+
+// Atlas::sprite_rects: every sprite variant's rect, once.
+export function spriteRects(atlas) {
+  const seen = new Map();
+  for (const variants of Object.values(atlas?.sprites ?? {})) for (const { rect } of variants) seen.set(rect.join(','), rect);
+  return [...seen.values()];
+}
+
+// ObjectStyles::style and ObjectStyle::sprite_for.
+export const objectStyleOf = (objects, kind) => objects.kinds?.[kind] ?? {};
+export const spriteFor = (style, kind, surface) => (surface && style.sprites?.[surface]) || style.sprite || kind;
+export const objectPlaceholder = (objects, style) => style.placeholder || objects.default_placeholder;
+
+// ObjectCatalog::surface: a tile's biome's surface, else its ground biome's.
+export function objectSurface(objects, biomeNames, biome, ground) {
+  const of = id => objects.surfaces?.[biomeNames[id]] ?? null;
+  return of(biome) ?? of(ground);
+}
+
+// ObjectCatalog::tint: a tile's biome's object tint, else its ground biome's; null is white.
+export function objectBiomeTint(objects, biomeNames, biome, ground) {
+  const of = id => objects.tints?.[biomeNames[id]] ?? null;
+  const hex = of(biome) ?? of(ground);
+  return hex ? hexRgb(hex) : null;
+}
+
+// Files written before per-kind styles (textures / placeholder_colors) keep their colors.
+export function migrateObjects(objects) {
+  if (objects.kinds) {
+    return {
+      default_placeholder: objects.default_placeholder ?? '#475A47', tints: objects.tints || {},
+      recolor: objects.recolor ?? null, surfaces: objects.surfaces || {}, kinds: objects.kinds,
+    };
+  }
+  const kinds = {};
+  for (const [texture, color] of Object.entries(objects.placeholder_colors || {})) kinds[texture] = { placeholder: color };
+  for (const [kind, texture] of Object.entries(objects.textures || {})) kinds[kind] = { ...kinds[texture], sprite: texture };
+  return { default_placeholder: objects.default_placeholder ?? '#475A47', tints: {}, recolor: null, surfaces: {}, kinds };
 }
 
 // ---------------------------------------------------------------- client name resolution
@@ -354,109 +480,13 @@ export function planetPresentation(biomeNames, blend = {}) {
   return tiles;
 }
 
-// Sheet art per default-preset texture: lower bands get rockier regolith.
-const PLANET_SOURCES = {
-  snow: ['snow', 'snow', 'snow', 'snow', 'snow'],
-  frost: ['ice', 'ice', 'ice', 'ice', 'ice'],
-  plain: ['regolith_lowland', 'regolith_rocky', 'regolith_cracked', 'regolith_highland', 'regolith_highland'],
-  desert: ['regolith_rocky', 'regolith_cracked', 'regolith_highland', 'regolith_highland', 'regolith_highland'],
-  sulfur: ['regolith_cracked', 'regolith_cracked', 'regolith_highland', 'regolith_highland', 'regolith_highland'],
-  basalt: ['basalt', 'basalt', 'basalt', 'basalt', 'basalt'],
-};
-
-// Sheet sources for banded texture names: lower layers get rockier regolith, frost turns from
-// ice to snow with height, basalt for volcanic ground. Art is baked neutral; tints color it.
-export function defaultTileSource(textureName) {
-  const planet = planetName(textureName);
-  if (planet) return { id: PLANET_SOURCES[planet.kind][planet.band], tint: 'tint', strength: 1 };
-  const match = /^(regolith|frost|basalt)_(\d+)$/.exec(textureName);
-  if (!match) return null;
-  const layer = Number(match[2]);
-  if (match[1] === 'frost') return { id: layer <= 2 ? 'ice' : 'snow', tint: 'none', strength: 1 };
-  if (match[1] === 'basalt') return { id: 'basalt', tint: 'tint', strength: 1 };
-  const id = ['regolith_lowland', 'regolith_rocky', 'regolith_cracked'][layer - 1] ?? 'regolith_highland';
-  return { id, tint: 'tint', strength: 1 };
-}
-
-const DEFAULT_OBJECT_SOURCES = {
-  rock: { id: 'rock_0', tint: 'tint', strength: 1 },
-  large_rock: { id: 'boulder_1', tint: 'tint', strength: 1 },
-  iron_ore: { id: 'spikes_3', tint: 'tint', strength: 1 },
-  pebbles: { id: 'pebbles_0', tint: 'tint', strength: 1 },
-};
-
-export function defaultObjectSource(textureName) {
-  return DEFAULT_OBJECT_SOURCES[textureName] ? { ...DEFAULT_OBJECT_SOURCES[textureName] } : null;
-}
-
-export const DEFAULT_OBJECT_COLORS = { pebbles: '#77726B' };
-
-// ---------------------------------------------------------------- baking
+// ---------------------------------------------------------------- images
 
 export function hexRgb(color) {
   const value = String(color || '').replace('#', '');
   const full = value.length === 3 ? [...value].map(c => c + c).join('') : value;
   const rgb = [0, 2, 4].map(i => parseInt(full.slice(i, i + 2), 16));
   return rgb.every(Number.isFinite) && full.length === 6 ? rgb : [255, 0, 255];
-}
-
-function regionMean(sheet, [x0, y0, width, height]) {
-  const mean = [0, 0, 0];
-  let count = 0;
-  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
-    const offset = ((y0 + y) * sheet.width + x0 + x) * 4;
-    if (sheet.data[offset + 3] < 255) continue;
-    for (let c = 0; c < 3; c++) mean[c] += sheet.data[offset + c];
-    count++;
-  }
-  return mean.map(value => Math.max(1, value / Math.max(1, count)));
-}
-
-function tinted(sheet, rect, source, color) {
-  const [x0, y0, width, height] = rect;
-  const rgb = hexRgb(color);
-  const mean = regionMean(sheet, rect);
-  const strength = Number.isFinite(source.strength) ? source.strength : 1;
-  const out = new Uint8ClampedArray(width * height * 4);
-  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
-    const from = ((y0 + y) * sheet.width + x0 + x) * 4;
-    const to = (y * width + x) * 4;
-    for (let c = 0; c < 3; c++) {
-      const value = sheet.data[from + c];
-      out[to + c] = source.tint === 'tint' ? rgb[c] * (sheet.data[from] / mean[0]) * strength + value * (1 - strength)
-        : source.tint === 'blend' ? value * (1 + strength * (rgb[c] / mean[c] - 1)) : value;
-    }
-    out[to + 3] = sheet.data[from + 3];
-  }
-  return { width, height, data: out };
-}
-
-// A tile texture from a sheet region, colored by its placeholder color.
-export function bakeTileTexture(sheet, source, color) {
-  const rect = TILE_SOURCES[source.id];
-  return rect ? tinted(sheet, rect, source, color) : null;
-}
-
-// An object texture sized to its footprint at `pixelsPerTile`: the sprite at native size,
-// standing on the bottom edge and centered (scaled down if it does not fit). The client
-// stretches the texture over the footprint, so proportions survive.
-export function bakeObjectTexture(sheet, source, color, footprint, pixelsPerTile) {
-  const rect = OBJECT_SOURCES[source.id];
-  if (!rect) return null;
-  const sprite = tinted(sheet, rect, source, color);
-  const width = Math.max(1, footprint.width * pixelsPerTile);
-  const height = Math.max(1, footprint.height * pixelsPerTile);
-  const scale = Math.min(1, width / sprite.width, height / sprite.height);
-  const drawWidth = Math.max(1, Math.round(sprite.width * scale));
-  const drawHeight = Math.max(1, Math.round(sprite.height * scale));
-  const left = Math.floor((width - drawWidth) / 2);
-  const top = height - drawHeight;
-  const data = new Uint8ClampedArray(width * height * 4);
-  for (let y = 0; y < drawHeight; y++) for (let x = 0; x < drawWidth; x++) {
-    const from = (Math.min(sprite.height - 1, Math.floor(y / scale)) * sprite.width + Math.min(sprite.width - 1, Math.floor(x / scale))) * 4;
-    data.set(sprite.data.subarray(from, from + 4), ((top + y) * width + left + x) * 4);
-  }
-  return { width, height, data };
 }
 
 export function solidTexture(color, width = 1, height = 1) {

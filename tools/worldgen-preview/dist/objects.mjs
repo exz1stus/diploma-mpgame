@@ -1,5 +1,10 @@
-// Objects are drawn like the client draws them (world/presentation/objects.rs): the kind's
-// texture stretched over the footprint, or a rectangle in its placeholder color at 90 %.
+// Objects are drawn like the client draws them (world/presentation/objects.rs): the kind's atlas
+// sprite for the surface under it, placed by placement.mjs (variant, jitter, flip, scale, pivot on
+// the foot), ground decals first and the rest by foot position; kinds without art are a rectangle
+// in their placeholder color at 90 % of the footprint.
+import { placeObject, variantPivot } from './placement.mjs';
+import { hexRgb, spriteFor, spriteVariants } from './presentation.mjs';
+
 export const PLACEHOLDER_SCALE = 0.9;
 
 const STYLES = {
@@ -66,30 +71,110 @@ export function readObjectChunk(chunk, x, y, size, types, world) {
   return { objects: chunk.objects };
 }
 
-// look(kind) → { image: CanvasImageSource | null, color: '#RRGGBB' }. The context is
-// mirrored so +Y points up (see app.mjs); images are flipped back upright.
-export function drawObject(ctx, look, x, y, width, height) {
-  if (look?.image) {
-    ctx.save();
-    ctx.translate(x, y + height);
-    ctx.scale(1, -1);
-    ctx.drawImage(look.image, 0, 0, width, height);
-    ctx.restore();
-    return;
+// How one object draws, in tiles (+Y up). look: { sheet, recolored, atlas, tilesPerPx, kinds: [{ name,
+// style, salt, placeholder }] }; under: { surface, tint } of the tile under its anchor (tint: its
+// object tint), or null. Tinted kinds draw from the recolored sheet with the tint, others from the
+// sheet in their own colors.
+// → { ground, sortY, tinted, tint, sprite: { rect, flip, left, bottom, width, height } } or a placeholder
+// rectangle { color, left, bottom, width, height }.
+export function objectVisual(object, look, under) {
+  const kind = look?.kinds[object.kind];
+  if (!kind) return null;
+  const surface = under?.surface ?? null;
+  const ground = kind.style.layer === 'Ground';
+  const { anchor } = object.id;
+  const variants = look.sheet && spriteVariants(look.atlas, spriteFor(kind.style, kind.name, surface));
+  if (!variants) {
+    const { width, height } = object.footprint;
+    const insetX = width * (1 - PLACEHOLDER_SCALE) / 2;
+    const insetY = height * (1 - PLACEHOLDER_SCALE) / 2;
+    return { ground, sortY: anchor.y, color: kind.placeholder, left: anchor.x + insetX, bottom: anchor.y + insetY, width: width - 2 * insetX, height: height - 2 * insetY };
   }
-  ctx.fillStyle = look?.color || '#FF00FF';
-  const insetX = width * (1 - PLACEHOLDER_SCALE) / 2;
-  const insetY = height * (1 - PLACEHOLDER_SCALE) / 2;
-  ctx.fillRect(x + insetX, y + insetY, width - 2 * insetX, height - 2 * insetY);
+  const placement = placeObject(anchor, object.footprint, kind.style, variants, kind.salt, look.tilesPerPx);
+  const { art, flip, size, foot } = placement;
+  const [pivotX, pivotY] = variantPivot(art);
+  const tilesPerArtPx = size.width / art.rect[2];
+  return {
+    ground, sortY: foot.y, tinted: kind.style.tinted !== false,
+    tint: objectTint(kind.style, kind.style.tinted !== false ? under?.tint : null),
+    sprite: {
+      rect: art.rect, flip, width: size.width, height: size.height,
+      // A mirrored sprite mirrors its pivot too, like the client's anchor.
+      left: foot.x - (flip ? art.rect[2] - pivotX : pivotX) * tilesPerArtPx,
+      bottom: foot.y - (art.rect[3] - pivotY) * tilesPerArtPx,
+    },
+  };
 }
 
-export function drawObjects(ctx, objects, originX, originY, pixels, look, hovered = null) {
+// objects.rs object_color: the kind's tint times the biome's object tint (sRGB, per channel); null
+// if white.
+export function objectTint(style, biomeTint) {
+  const own = style.tint ? hexRgb(style.tint) : [255, 255, 255];
+  const biome = biomeTint ?? [255, 255, 255];
+  const tint = own.map((value, c) => Math.round(value * biome[c] / 255));
+  return tint.every(value => value === 255) ? null : tint;
+}
+
+// A sprite multiplied by a tint, cached per sheet, rect and tint (canvases are cheap to reuse).
+const tintedSprites = new WeakMap();
+function tintedSprite(sheet, rect, tint) {
+  if (!tintedSprites.has(sheet)) tintedSprites.set(sheet, new Map());
+  const cache = tintedSprites.get(sheet);
+  const key = `${rect.join(',')}|${tint.join(',')}`;
+  if (!cache.has(key)) {
+    const [sx, sy, sw, sh] = rect;
+    const canvas = document.createElement('canvas');
+    canvas.width = sw; canvas.height = sh;
+    const context = canvas.getContext('2d');
+    context.drawImage(sheet, sx, sy, sw, sh, 0, 0, sw, sh);
+    context.globalCompositeOperation = 'multiply';
+    context.fillStyle = `rgb(${tint.join(',')})`;
+    context.fillRect(0, 0, sw, sh);
+    // Multiply fills transparent pixels too; keep only the sprite's own shape.
+    context.globalCompositeOperation = 'destination-in';
+    context.drawImage(sheet, sx, sy, sw, sh, 0, 0, sw, sh);
+    cache.set(key, canvas);
+  }
+  return cache.get(key);
+}
+
+// Draw order: ground decals first, then standing objects from north to south.
+export function sortVisuals(visuals) {
+  return visuals.sort((a, b) => Number(b.ground) - Number(a.ground) || b.sortY - a.sortY);
+}
+
+// The context is mirrored so +Y points up (see app.mjs); sprites are flipped back upright.
+function drawVisual(ctx, visual, look, originX, originY, pixels) {
+  const sheet = visual.tinted ? look.recolored ?? look.sheet : look.sheet;
+  const sprite = visual.sprite;
+  if (!sprite) {
+    ctx.fillStyle = visual.color || '#FF00FF';
+    ctx.fillRect(originX + visual.left * pixels, originY + visual.bottom * pixels, visual.width * pixels, visual.height * pixels);
+    return;
+  }
+  const width = sprite.width * pixels;
+  const height = sprite.height * pixels;
+  ctx.save();
+  ctx.translate(originX + sprite.left * pixels, originY + (sprite.bottom + sprite.height) * pixels);
+  ctx.scale(sprite.flip ? -1 : 1, -1);
+  const x = sprite.flip ? -width : 0;
+  if (visual.tint) {
+    ctx.drawImage(tintedSprite(sheet, sprite.rect, visual.tint), x, 0, width, height);
+  } else {
+    const [sx, sy, sw, sh] = sprite.rect;
+    ctx.drawImage(sheet, sx, sy, sw, sh, x, 0, width, height);
+  }
+  ctx.restore();
+}
+
+// underAt(x, y): { surface, tint } of the tile under an object's anchor, or null.
+export function drawObjects(ctx, objects, originX, originY, pixels, look, underAt, hovered = null) {
   ctx.save();
   ctx.imageSmoothingEnabled = false;
-  for (const object of objects) {
-    drawObject(ctx, look(object.kind), originX + object.id.anchor.x * pixels, originY + object.id.anchor.y * pixels,
-      object.footprint.width * pixels, object.footprint.height * pixels);
-  }
+  const visuals = sortVisuals(objects
+    .map(object => objectVisual(object, look, underAt(object.id.anchor.x, object.id.anchor.y)))
+    .filter(Boolean));
+  for (const visual of visuals) drawVisual(ctx, visual, look, originX, originY, pixels);
   if (hovered) {
     ctx.fillStyle = '#f1db822b'; ctx.strokeStyle = '#ffe59d'; ctx.lineWidth = 1.5;
     const x = originX + hovered.id.anchor.x * pixels;
@@ -101,19 +186,23 @@ export function drawObjects(ctx, objects, originX, originY, pixels, look, hovere
   ctx.restore();
 }
 
+// Legend icons: each kind's default art (no surface), standing on the icon's bottom edge.
 export function renderObjectLegend(legend, types, look) {
   legend.replaceChildren(...types.map((type, kind) => {
     const row = document.createElement('span');
     const icon = document.createElement('canvas');
     icon.width = 48; icon.height = 48; icon.setAttribute('aria-hidden', 'true');
     const context = icon.getContext('2d');
-    // Icons keep the footprint's aspect ratio, as the client stretches textures over it.
-    const scale = 44 / Math.max(type.footprint.width, type.footprint.height);
-    const width = type.footprint.width * scale;
-    const height = type.footprint.height * scale;
     context.setTransform(1, 0, 0, -1, 0, 48);
     context.imageSmoothingEnabled = false;
-    drawObject(context, look(kind), (48 - width) / 2, (48 - height) / 2, width, height);
+    const visual = objectVisual({ kind, id: { anchor: { x: 0, y: 0 } }, footprint: type.footprint }, look, null);
+    if (visual) {
+      const box = visual.sprite ?? visual;
+      const scale = 44 / Math.max(box.width, box.height);
+      const offsetX = (48 - box.width * scale) / 2 - box.left * scale;
+      const offsetY = 2 - box.bottom * scale;
+      drawVisual(context, visual, look, offsetX, offsetY, scale);
+    }
     const name = document.createElement('span');
     name.textContent = objectStyle(type).label;
     const dimensions = document.createElement('small');

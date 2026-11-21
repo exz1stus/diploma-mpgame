@@ -10,7 +10,7 @@
     max_height: 0.32,
     caldera_ratio: 0.28,
     caldera_depth: 0.18,
-    temperature_offset: 0.0,
+    temperature_offset: 1.0,
     biome_map: [
         (biome: "basalt_floor", height: (min: 0.0, max: 0.38), temperature: (min: -60.0, max: 60.0)),
         (biome: "basalt_low", height: (min: 0.38, max: 0.46), temperature: (min: -60.0, max: 60.0)),

@@ -16,6 +16,7 @@ use crate::net::{
     interpolation::{InterpolationSample, sample_at_tick},
     state::{ClientState, Owned, RemoteWorld},
 };
+use crate::render_layers;
 
 #[derive(Component, Default)]
 pub struct InterpolationDebug {
@@ -93,7 +94,7 @@ pub fn move_entity_visuals(
         ),
         Without<Visual>,
     >,
-    mut visuals: Query<(&ChildOf, &mut Transform), With<Visual>>,
+    mut visuals: Query<(&ChildOf, &Visual, &mut Transform)>,
 
     predicted_visuals: Res<PredictedVisuals>,
 ) {
@@ -108,7 +109,7 @@ pub fn move_entity_visuals(
         .get(&NetworkPhysicsState::NETWORK_ID)
         .is_some_and(|component| component.interpolated);
 
-    for (child_of, mut visual_transform) in &mut visuals {
+    for (child_of, visual, mut visual_transform) in &mut visuals {
         let Ok((
             identity,
             authoritative,
@@ -182,6 +183,9 @@ pub fn move_entity_visuals(
 
         visual_transform.translation.x = local_offset.x;
         visual_transform.translation.y = local_offset.y;
+        visual_transform.translation.z =
+            render_layers::y_sorted(visual_position.y - visual.foot_offset)
+                - root_transform.translation.z;
     }
 }
 

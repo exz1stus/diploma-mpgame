@@ -1,26 +1,48 @@
-//! Object sprites: `textures/objects/<texture>.png` sized to the footprint, or a
-//! placeholder rectangle while the texture file is missing.
+//! Object sprites from the atlas. Each object picks its kind's art for the surface it
+//! stands on, then a variant, offset, mirroring and scale from its anchor tile
+//! ([`place`]), colored by its biome's object tint. Kinds without art are drawn as a
+//! placeholder rectangle over the footprint.
 
-use bevy::prelude::*;
-use shared::world::TILE_SIZE;
+use bevy::{prelude::*, sprite::Anchor};
+use shared::world::{TILE_SIZE, TilePos, TileSample};
+
+use bevy::{image::ImageSampler, render::render_resource::TextureFormat};
 
 use super::{
-    catalog::ObjectCatalog,
-    config::PresentationConfig,
-    textures::{OBJECT_FOLDER, request_textures},
+    atlas::{load_sheet, sheet_settled},
+    catalog::{KindVisual, ObjectCatalog},
+    config::{ObjectLayer, PresentationConfig},
+    placement::place,
+    textures::recolor_regions,
 };
 use crate::{
-    assets::AssetRoot,
     render_layers,
-    world::{WorldInfo, WorldObject},
+    world::{ChunkTiles, InChunk, WorldChunk, WorldInfo, WorldObject},
 };
 
 /// Placeholder rectangles leave a gap so neighbouring objects stay distinguishable.
 const PLACEHOLDER_SCALE: f32 = 0.9;
 
-/// Texture handle per object catalog entry; `None` where no file exists.
+/// The sheets object sprites are cut from: the loaded atlas sheet, which untinted kinds draw
+/// from, and the sheet tinted kinds draw from: the same one, or a copy with every sprite made
+/// neutral (`objects.ron` `recolor`). Objects wait until `tinted` is ready.
 #[derive(Resource)]
-pub struct ObjectTextures(Vec<Option<Handle<Image>>>);
+pub struct ObjectSheet {
+    source: Handle<Image>,
+    recolor: Option<Srgba>,
+    tinted: Option<Handle<Image>>,
+}
+
+impl ObjectSheet {
+    fn for_kind(&self, kind: &KindVisual) -> Option<Handle<Image>> {
+        let tinted = self.tinted.clone()?;
+        Some(if kind.style.tinted {
+            tinted
+        } else {
+            self.source.clone()
+        })
+    }
+}
 
 /// Marks an object whose sprite has been attached.
 #[derive(Component)]
@@ -30,54 +52,141 @@ pub fn prepare_object_catalog(
     mut commands: Commands,
     world: Res<WorldInfo>,
     config: Res<PresentationConfig>,
-    root: Res<AssetRoot>,
     asset_server: Res<AssetServer>,
 ) {
-    let catalog = ObjectCatalog::build(&world, &config.objects);
-    let handles = request_textures(&root, OBJECT_FOLDER, &catalog.textures, &asset_server);
-    commands.insert_resource(ObjectTextures(handles));
-    commands.insert_resource(catalog);
+    let source = load_sheet(&asset_server, &config.atlas);
+    let recolor = config.objects.recolor();
+    commands.insert_resource(ObjectSheet {
+        tinted: recolor.is_none().then(|| source.clone()),
+        source,
+        recolor,
+    });
+    commands.insert_resource(ObjectCatalog::build(&world, &config.objects));
+}
+
+/// Once the sheet has loaded, makes the recolored copy tinted kinds draw from.
+pub fn recolor_object_sheet(
+    mut sheet: ResMut<ObjectSheet>,
+    config: Res<PresentationConfig>,
+    asset_server: Res<AssetServer>,
+    mut images: ResMut<Assets<Image>>,
+) {
+    let Some(color) = sheet.recolor.filter(|_| sheet.tinted.is_none()) else {
+        return;
+    };
+    if !sheet_settled(&sheet.source, &asset_server) {
+        return;
+    }
+    let recolored = images
+        .get(&sheet.source)
+        .and_then(|source| source.convert(TextureFormat::Rgba8UnormSrgb))
+        .map(|mut copy| {
+            recolor_regions(&mut copy, &config.atlas.sprite_rects(), color);
+            copy.sampler = ImageSampler::nearest();
+            images.add(copy)
+        });
+    sheet.tinted = Some(recolored.unwrap_or_else(|| sheet.source.clone()));
 }
 
 /// The sprite goes on the object entity itself: objects stream in by the thousand, and a
 /// child entity per object would double spawn and transform-propagation cost.
 pub fn spawn_object_visuals(
     mut commands: Commands,
-    mut objects: Query<(Entity, &WorldObject, &mut Transform), Without<ObjectVisual>>,
+    mut objects: Query<(Entity, &WorldObject, &InChunk, &mut Transform), Without<ObjectVisual>>,
+    chunks: Query<(&WorldChunk, &ChunkTiles)>,
     catalog: Res<ObjectCatalog>,
-    textures: Res<ObjectTextures>,
+    sheet: Res<ObjectSheet>,
+    config: Res<PresentationConfig>,
 ) {
-    for (entity, object, mut transform) in &mut objects {
-        let size = Vec2::new(
-            object.footprint.width as f32,
-            object.footprint.height as f32,
-        ) * TILE_SIZE;
-        let sprite = object_sprite(&catalog, &textures, object, size);
-        transform.translation.z = render_layers::OBJECTS;
-        commands.entity(entity).insert((ObjectVisual, sprite));
+    if sheet.tinted.is_none() {
+        return;
+    }
+    let world_per_px = TILE_SIZE / config.tiles.blend.sanitized().pixels_per_tile as f32;
+    for (entity, object, in_chunk, mut transform) in &mut objects {
+        let Some((kind, image)) = catalog
+            .kind(object.kind)
+            .and_then(|kind| Some((kind, sheet.for_kind(kind)?)))
+        else {
+            continue;
+        };
+        let sample = chunks
+            .get(in_chunk.0)
+            .ok()
+            .and_then(|(chunk, tiles)| tile_at(chunk, tiles, object.anchor));
+        let surface = sample.and_then(|sample| catalog.surface(sample));
+        let object_tint = sample
+            .filter(|_| kind.style.tinted)
+            .and_then(|sample| catalog.tint(sample));
+        let color = object_color(kind, object_tint);
+        let (sprite, anchor) = match config.atlas.sprite(kind.sprite(surface)) {
+            Some(variants) => {
+                let placement = place(
+                    object.anchor,
+                    object.footprint,
+                    &kind.style,
+                    variants,
+                    kind.salt,
+                    world_per_px,
+                );
+                let art = variants[placement.variant];
+                transform.translation.z = object_z(kind, placement.foot.y);
+                (
+                    Sprite {
+                        image: image.clone(),
+                        rect: Some(art.rect.to_rect()),
+                        custom_size: Some(placement.size),
+                        flip_x: placement.flip,
+                        color,
+                        ..default()
+                    },
+                    Anchor(placement.anchor),
+                )
+            }
+            None => {
+                let size = Vec2::new(
+                    object.footprint.width as f32,
+                    object.footprint.height as f32,
+                ) * TILE_SIZE;
+                let south = transform.translation.y - size.y / 2.0;
+                transform.translation.z = object_z(kind, south);
+                (
+                    Sprite::from_color(kind.placeholder, size * PLACEHOLDER_SCALE),
+                    Anchor::CENTER,
+                )
+            }
+        };
+        commands
+            .entity(entity)
+            .insert((ObjectVisual, sprite, anchor));
     }
 }
 
-fn object_sprite(
-    catalog: &ObjectCatalog,
-    textures: &ObjectTextures,
-    object: &WorldObject,
-    size: Vec2,
-) -> Sprite {
-    let index = catalog.texture_of.get(usize::from(object.kind.0));
-    let texture = index.and_then(|&index| textures.0.get(index as usize)?.clone());
-    match (texture, catalog.texture(object.kind)) {
-        (Some(image), _) => Sprite {
-            image,
-            custom_size: Some(size),
-            ..default()
-        },
-        (None, Some(entry)) => Sprite::from_color(entry.placeholder, size * PLACEHOLDER_SCALE),
-        (None, None) => Sprite::from_color(Srgba::rgb(1.0, 0.0, 1.0), size * PLACEHOLDER_SCALE),
+/// The kind's own tint, times the object tint of the biome under it (tinted kinds only); both
+/// sRGB, multiplied per channel like the terrain shader multiplies tiles.
+fn object_color(kind: &KindVisual, object_tint: Option<[u8; 3]>) -> Color {
+    let tint = kind.style.tint().to_srgba();
+    let [r, g, b] = object_tint.map_or([1.0; 3], |rgb| rgb.map(|value| f32::from(value) / 255.0));
+    Srgba::new(tint.red * r, tint.green * g, tint.blue * b, tint.alpha).into()
+}
+
+fn object_z(kind: &KindVisual, foot_y: f32) -> f32 {
+    match kind.style.layer {
+        ObjectLayer::Sorted => render_layers::y_sorted(foot_y),
+        ObjectLayer::Ground => render_layers::DECALS,
     }
+}
+
+/// The tile at a world tile position, if it lies in this chunk.
+fn tile_at(chunk: &WorldChunk, tiles: &ChunkTiles, pos: TilePos) -> Option<TileSample> {
+    let size = i64::from(tiles.size);
+    let (x, y) = (pos.x - chunk.pos.x * size, pos.y - chunk.pos.y * size);
+    if !(0..size).contains(&x) || !(0..size).contains(&y) {
+        return None;
+    }
+    tiles.tiles.get((y * size + x) as usize).copied()
 }
 
 pub fn clear_objects(mut commands: Commands) {
     commands.remove_resource::<ObjectCatalog>();
-    commands.remove_resource::<ObjectTextures>();
+    commands.remove_resource::<ObjectSheet>();
 }

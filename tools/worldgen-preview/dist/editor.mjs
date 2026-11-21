@@ -1,21 +1,26 @@
-// Presentation editor: edits a copy of the client's tiles.ron / objects.ron and texture images,
-// renders them through the client renderer, and exports the files for crates/client/assets.
+// Presentation editor: edits a copy of the client's tiles.ron / objects.ron, renders them with
+// the client's atlas (world/atlas.ron and its sheet, read-only here), and exports the two files
+// for crates/client/assets.
 import {
   BLEND_CONTROLS, DEFAULT_BLEND, sanitizeBlend,
 } from './terrain.mjs';
 import {
-  DEFAULT_OBJECT_COLORS, OBJECT_SOURCES, TILE_SOURCES, TINTS, averageColor, bakeObjectTexture, bakeTileTexture,
-  bandedPresentation, planetTints, rampTints, defaultObjectSource, defaultTileSource, listsName, objectsRon, parseRon, placeholderOf,
-  stackLayers, textureCatalog, textureFor, tileCatalog, tilesRon,
+  averageColor, bandedPresentation, cropRegion, listsName, migrateObjects, objectBiomeTint, objectPlaceholder, objectStyleOf,
+  objectSurface, objectsRon, parseRon, placeholderOf, planetTints, rampTints, readAtlas, recolorImage, recolorRegions, regionFor, spriteFor,
+  spriteRects, spriteVariants,
+  stackLayers, tileCatalog, tileRegion, tilesRon,
 } from './presentation.mjs';
+import { fnv1a, styleJitter, styleScale } from './placement.mjs';
 
-// v2: tints and height shading; v1 drafts (per-biome colored textures) are dropped.
-const DRAFT_KEY = 'worldgen-preview-presentation-v2';
-const SHEET_URL = './textures.png';
+// v6: object tints per biome; older drafts are dropped.
+const DRAFT_KEY = 'worldgen-preview-presentation-v6';
 const CLIENT = './client-assets';
-// Client presentation folder per preset (crates/client/assets/...).
-const PRESET_WORLD = { 'old.ron': 'world/presets/old' };
+// The client's own presentation; presets live in world/presets/<name>/ and fall back to it
+// file by file (atlas.ron, tiles.ron, objects.ron).
+const WORLD = 'world';
+const CURRENT = '';
 const GROUND = 'ground';
+const LAYERS = ['Sorted', 'Ground'];
 
 const element = (tag, props = {}, children = []) => {
   const node = Object.assign(document.createElement(tag), props);
@@ -43,119 +48,129 @@ function toCanvas(image) {
   return canvas;
 }
 
-async function pngBase64(image) {
-  const blob = await new Promise(resolve => toCanvas(image).toBlob(resolve, 'image/png'));
-  const bytes = new Uint8Array(await blob.arrayBuffer());
-  let binary = '';
-  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-  return btoa(binary);
-}
-
 export class PresentationEditor {
   constructor(panel, onChange) {
     this.panel = panel;
     this.onChange = onChange;
     this.state = null;
+    this.atlas = null;
     this.sheet = null;
-    this.files = { tiles: new Map(), objects: new Map() };
+    this.sheetCanvas = null;
     this.meta = null;
     this.look = null;
     this.revision = 0;
     this.timer = 0;
     this.status = '';
+    // Presentation presets found in the client's world/presets/, and the one being edited.
+    this.presets = null;
+    this.presentation = CURRENT;
   }
 
-  // Each preset edits its own client files and keeps its own draft.
-  worldPath() { return PRESET_WORLD[this.meta?.preset] ?? 'world'; }
-  draftKey() { return `${DRAFT_KEY}:${this.meta?.preset ?? 'default.ron'}`; }
+  // Each presentation edits its own client files and keeps its own draft.
+  worldPath() { return this.presentation ? `${WORLD}/presets/${this.presentation}` : WORLD; }
+  draftKey() { return `${DRAFT_KEY}:${this.presentation || WORLD}`; }
 
   // meta: { preset, biomes: [{name}], maps: { Default: rules, ... }, objectTypes: [{name, footprint}] }
+  // A new worldgen preset selects the presentation preset of the same name, if there is one.
   async setMeta(meta) {
     const reload = !this.meta || meta.preset !== this.meta.preset;
     this.meta = meta;
-    if (reload) {
-      if (!this.sheet) {
-        try { this.sheet = await loadImageData(SHEET_URL); } catch { this.status = 'Sprite sheet unavailable: sheet sources draw as placeholders.'; }
-      }
-      await this.loadClientFiles();
-      let draft = null;
-      try { draft = JSON.parse(localStorage.getItem(this.draftKey())); } catch { /* storage unavailable */ }
-      this.state = draft?.tiles && draft?.objects && draft?.sources ? draft : await this.clientState();
+    if (!reload) { this.rebuild(); return; }
+    this.presets ??= await this.listPresets();
+    const matching = String(meta.preset ?? '').replace(/\.ron$/, '');
+    await this.selectPresentation(this.presets.includes(matching) ? matching : CURRENT);
+  }
+
+  async listPresets() {
+    try {
+      return (await (await fetch(`${CLIENT}/presets.json`, { cache: 'no-store' })).json()).presets ?? [];
+    } catch {
+      return [];
     }
+  }
+
+  async selectPresentation(name) {
+    this.presentation = name;
+    this.status = '';
+    await this.loadAtlas();
+    let draft = null;
+    try { draft = JSON.parse(localStorage.getItem(this.draftKey())); } catch { /* storage unavailable */ }
+    this.state = draft?.tiles && draft?.objects ? draft : await this.clientState();
     this.rebuild();
   }
 
-  async loadClientFiles() {
-    this.files = { tiles: new Map(), objects: new Map() };
-    try {
-      const index = await (await fetch(`${CLIENT}/index.json`, { cache: 'no-store' })).json();
-      for (const folder of ['tiles', 'objects']) {
-        await Promise.all((index[folder] || []).map(async name => {
-          try { this.files[folder].set(name, await loadImageData(`${CLIENT}/textures/${folder}/${encodeURIComponent(name)}.png`)); } catch { /* unreadable file */ }
-        }));
-      }
-    } catch { /* no dev server listing */ }
+  // A client file of the selected presentation, else of the client's own world/ folder.
+  async fetchClient(name) {
+    for (const folder of new Set([this.worldPath(), WORLD])) {
+      const response = await fetch(`${CLIENT}/${folder}/${name}`, { cache: 'no-store' });
+      if (response.ok) return response.text();
+    }
+    throw new Error('not found');
   }
 
-  // The client's current files, with defaults for what they leave out: layers from the biome
-  // maps, and sheet textures for textures that have no file yet.
+  async loadAtlas() {
+    this.atlas = null;
+    this.sheet = this.sheetCanvas = null;
+    try {
+      this.atlas = readAtlas(await this.fetchClient('atlas.ron'));
+      this.sheet = await loadImageData(`${CLIENT}/${this.atlas.image}`);
+      this.sheetCanvas = toCanvas(this.sheet);
+    } catch (error) {
+      this.atlas ||= { image: '', tiles: {}, sprites: {} };
+      this.status = `Client atlas unavailable (${error.message}): art draws as placeholders.`;
+    }
+  }
+
+  async readClient(name, fallback) {
+    try {
+      return parseRon(await this.fetchClient(name));
+    } catch (error) {
+      this.status = `Cannot read client ${name} (${error.message}); starting from defaults.`;
+      return fallback;
+    }
+  }
+
+  // The client's current files, with defaults for what they leave out.
   async clientState() {
-    const read = async (name, fallback) => {
-      try {
-        const response = await fetch(`${CLIENT}/${this.worldPath()}/${name}`, { cache: 'no-store' });
-        if (!response.ok) throw new Error(`${response.status}`);
-        return parseRon(await response.text());
-      } catch (error) {
-        this.status = `Cannot read client ${name} (${error.message}); starting from defaults.`;
-        return fallback;
-      }
-    };
-    let tiles = await read('tiles.ron', { textures: {}, default_placeholder: '#FF00FF', placeholder_colors: {} });
-    const objects = await read('objects.ron', { textures: {}, default_placeholder: '#475A47', placeholder_colors: {} });
+    let tiles = await this.readClient('tiles.ron', { textures: {}, default_placeholder: '#FF00FF', placeholder_colors: {} });
+    const objects = migrateObjects(await this.readClient('objects.ron', { default_placeholder: '#475A47' }));
     tiles.textures ||= {}; tiles.placeholder_colors ||= {};
-    objects.textures ||= {}; objects.placeholder_colors ||= {};
     const { Default: terrain = [], ...features } = this.meta.maps;
-    const biomeNames = this.biomeNames();
     // Files from before tints colored each biome's texture; move that color into a tint and
     // share neutral textures per height band.
-    if (!tiles.tints) tiles = bandedPresentation(tiles, terrain, Object.values(features), biomeNames);
+    if (!tiles.tints) tiles = bandedPresentation(tiles, terrain, Object.values(features), this.biomeNames());
+    tiles.regions ||= {};
     tiles.layers ||= {};
     tiles.blend = sanitizeBlend({ ...DEFAULT_BLEND, ...tiles.blend });
-    const sources = { tiles: {}, objects: {} };
-    const catalog = tileCatalog(biomeNames, tiles, name => this.files.tiles.has(name));
-    catalog.textures.forEach((texture, index) => {
-      if (this.files.tiles.has(texture.name)) { sources.tiles[texture.name] = { id: 'file' }; return; }
-      const users = biomeNames.filter((_, biome) => catalog.textureOf[biome] === index && catalog.ownTiles[biome]);
-      const source = users.length && defaultTileSource(texture.name);
-      if (source) sources.tiles[texture.name] = source;
-    });
-    for (const type of this.meta.objectTypes) {
-      const texture = textureFor(objects, type.name);
-      if (!Object.hasOwn(objects.placeholder_colors, texture) && DEFAULT_OBJECT_COLORS[texture]) objects.placeholder_colors[texture] = DEFAULT_OBJECT_COLORS[texture];
-      const source = this.files.objects.has(texture) ? { id: 'file' } : defaultObjectSource(texture);
-      if (source) sources.objects[texture] = source;
-    }
-    return { tiles, objects, sources };
+    return { tiles, objects };
   }
 
   biomeNames() { return this.meta.biomes.map(biome => biome.name); }
 
   tileImage(name) {
-    const source = this.state.sources.tiles[name];
-    if (!source) return null;
-    if (source.id === 'file') return this.files.tiles.get(name) || null;
-    return this.sheet ? bakeTileTexture(this.sheet, source, placeholderOf(this.state.tiles, name)) : null;
+    const { tiles } = this.state;
+    const rect = tileRegion(this.atlas, tiles, name);
+    const image = rect ? cropRegion(this.sheet, rect) : null;
+    return image && tiles.recolor ? recolorImage(image, placeholderOf(tiles, name)) : image;
   }
 
-  objectImage(name, footprint) {
-    const source = this.state.sources.objects[name];
-    if (!source) return null;
-    if (source.id === 'file') return this.files.objects.get(name) || null;
-    const pixels = sanitizeBlend(this.state.tiles.blend).pixels_per_tile;
-    return this.sheet ? bakeObjectTexture(this.sheet, source, placeholderOf(this.state.objects, name), footprint, pixels) : null;
+  // The first variant of a sprite, for thumbnails.
+  spriteImage(name) {
+    const variants = spriteVariants(this.atlas, name);
+    return variants ? cropRegion(this.sheet, variants[0].rect) : null;
   }
 
-  // What the renderer needs: the client's catalogs and texture array for the current state.
+  // The sheet objects draw from: the atlas sheet, or a copy with every sprite recolored
+  // (objects.ron recolor), kept until the color or the sheet changes.
+  objectSheet(recolor) {
+    if (!recolor || !this.sheet) return this.sheetCanvas;
+    if (this.recolored?.sheet !== this.sheet || this.recolored.color !== recolor) {
+      this.recolored = { sheet: this.sheet, color: recolor, canvas: toCanvas(recolorRegions(this.sheet, spriteRects(this.atlas), recolor)) };
+    }
+    return this.recolored.canvas;
+  }
+
+  // What the renderer needs: the client's catalogs and texture array, and how objects draw.
   buildLook() {
     const { tiles, objects } = this.state;
     const biomeNames = this.biomeNames();
@@ -164,20 +179,26 @@ export class PresentationEditor {
       if (!images.has(name)) images.set(name, this.tileImage(name));
       return images.get(name);
     };
-    const catalog = tileCatalog(biomeNames, tiles, name => !!tileImage(name));
+    const catalog = tileCatalog(biomeNames, tiles, name => !!tileRegion(this.atlas, tiles, name));
     const stack = stackLayers(catalog.textures, catalog.textures.map(texture => tileImage(texture.name)));
     const colors = new Uint8Array(catalog.textures.length * 3);
     stack.layers.forEach((layer, i) => colors.set(averageColor({ width: stack.width, height: stack.height, data: layer }), i * 3));
-    const objectCatalog = textureCatalog(this.meta.objectTypes.map(type => type.name), objects);
-    const objectLooks = this.meta.objectTypes.map((type, kind) => {
-      const texture = objectCatalog.textures[objectCatalog.textureOf[kind]];
-      const image = this.objectImage(texture.name, type.footprint);
-      return { texture: texture.name, color: texture.placeholder, image: image && toCanvas(image) };
-    });
+    const blend = sanitizeBlend(tiles.blend);
     return {
       revision: ++this.revision,
-      catalog, stack, objectLooks,
-      blend: sanitizeBlend(tiles.blend),
+      catalog, stack, blend,
+      objects: {
+        sheet: this.sheetCanvas,
+        recolored: this.objectSheet(objects.recolor),
+        atlas: this.atlas,
+        tilesPerPx: 1 / blend.pixels_per_tile,
+        kinds: this.meta.objectTypes.map(type => {
+          const style = objectStyleOf(objects, type.name);
+          return { name: type.name, style, salt: fnv1a(type.name), placeholder: objectPlaceholder(objects, style) };
+        }),
+        surface: (biome, ground) => objectSurface(objects, biomeNames, biome, ground),
+        tint: (biome, ground) => objectBiomeTint(objects, biomeNames, biome, ground),
+      },
       palette: {
         own: Uint8Array.from(catalog.ownTiles, Number),
         textureOf: Uint16Array.from(catalog.textureOf),
@@ -205,9 +226,18 @@ export class PresentationEditor {
 
   async resetToClient() {
     try { localStorage.removeItem(this.draftKey()); } catch { /* storage unavailable */ }
-    await this.loadClientFiles();
-    this.state = await this.clientState();
-    this.rebuild();
+    this.presets = await this.listPresets();
+    await this.selectPresentation(this.presets.includes(this.presentation) ? this.presentation : CURRENT);
+  }
+
+  // Picks which client presentation (world/ or a world/presets/ folder) is drawn and edited.
+  presentationSelect() {
+    const select = element('select', { title: 'Client presentation: crates/client/assets/world/ or a preset folder in world/presets/ (its missing files come from world/)' },
+      [[CURRENT, 'Current (world/)'], ...(this.presets ?? []).map(name => [name, `Preset: ${name}`])]
+        .map(([value, textContent]) => element('option', { value, textContent })));
+    select.value = this.presentation;
+    select.addEventListener('change', () => this.selectPresentation(select.value));
+    return element('label', { className: 'field' }, [element('span', { textContent: 'Presentation' }), select]);
   }
 
   // ------------------------------------------------------------ export
@@ -218,16 +248,6 @@ export class PresentationEditor {
       { path: 'world/tiles.ron', text: tilesRon(tiles) },
       { path: 'world/objects.ron', text: objectsRon(objects) },
     ];
-    const tileNames = new Set(this.look.catalog.textures.map(texture => texture.name));
-    for (const name of tileNames) {
-      const image = this.tileImage(name);
-      if (image) files.push({ path: `textures/tiles/${name}.png`, base64: await pngBase64(image) });
-    }
-    for (const [kind, look] of this.look.objectLooks.entries()) {
-      if (!look.image || files.some(file => file.path === `textures/objects/${look.texture}.png`)) continue;
-      const image = this.objectImage(look.texture, this.meta.objectTypes[kind].footprint);
-      files.push({ path: `textures/objects/${look.texture}.png`, base64: await pngBase64(image) });
-    }
     const response = await fetch('./export', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ files }) });
     if (!response.ok) throw new Error(await response.text());
     return response.json();
@@ -249,42 +269,171 @@ export class PresentationEditor {
     return element('label', { className: 'field' }, [element('span', { textContent: label }), input]);
   }
 
-  sourceSelect(folder, name, ids, hasFile) {
-    const select = element('select', { className: 'source-select', title: 'Texture source' });
-    const options = [['', 'Placeholder color'], ...(hasFile ? [['file', 'Client file']] : []), ...ids.map(id => [id, `Sheet: ${id.replaceAll('_', ' ')}`])];
-    select.append(...options.map(([value, text]) => element('option', { value, textContent: text })));
-    const source = this.state.sources[folder][name];
-    select.value = source?.id && (source.id !== 'file' || hasFile) ? source.id : '';
+  // A select of atlas names; `none` labels the empty choice.
+  atlasSelect(names, value, none, title) {
+    const select = element('select', { className: 'source-select', title });
+    select.append(...[['', none], ...names.sort().map(name => [name, name.replaceAll('_', ' ')])]
+      .map(([option, text]) => element('option', { value: option, textContent: text })));
+    select.value = names.includes(value) ? value : '';
     return select;
   }
 
-  tintControls(folder, name) {
-    const source = this.state.sources[folder][name];
-    const select = element('select', { className: 'tint-select', title: 'Color the sheet art with the placeholder color' });
-    select.append(...TINTS.map(tint => element('option', { value: tint, textContent: tint })));
-    select.value = source?.tint || 'none';
-    const strength = element('input', { type: 'number', min: 0, max: 1, step: 0.05, value: source?.strength ?? 1, className: 'strength', title: 'Tint strength' });
-    const sheetSource = source && source.id !== 'file';
-    select.disabled = strength.disabled = !sheetSource;
-    const apply = () => {
-      const current = this.state.sources[folder][name];
-      if (!current) return;
-      current.tint = select.value;
-      current.strength = Math.min(1, Math.max(0, Number(strength.value) || 0));
-      this.changed();
-    };
-    select.addEventListener('change', apply);
-    strength.addEventListener('change', apply);
-    return [select, strength];
-  }
-
+  // Art scaled to fit 24 × 24, keeping its proportions.
   thumbnail(image, color) {
     const canvas = element('canvas', { width: 24, height: 24, className: 'thumb' });
     const context = canvas.getContext('2d');
     context.imageSmoothingEnabled = false;
-    if (image) context.drawImage(image instanceof HTMLCanvasElement ? image : toCanvas(image), 0, 0, 24, 24);
-    else { context.fillStyle = color; context.fillRect(0, 0, 24, 24); }
+    if (image) {
+      const scale = Math.min(24 / image.width, 24 / image.height);
+      const width = image.width * scale;
+      const height = image.height * scale;
+      context.drawImage(toCanvas(image), (24 - width) / 2, 24 - height, width, height);
+    } else { context.fillStyle = color; context.fillRect(0, 0, 24, 24); }
     return canvas;
+  }
+
+  tileRows(tiles, catalog, biomeNames) {
+    const regionNames = Object.keys(this.atlas.tiles);
+    return catalog.textures.map((texture, index) => {
+      const users = biomeNames.filter((_, biome) => catalog.textureOf[biome] === index && catalog.ownTiles[biome]);
+      const color = element('input', { type: 'color', value: texture.placeholder.slice(0, 7), title: 'Placeholder color (drawn while the texture has no atlas region)' });
+      color.addEventListener('change', () => { tiles.placeholder_colors[texture.name] = color.value.toUpperCase(); this.changed(); });
+      const layer = element('input', { type: 'number', min: 0, max: 255, step: 1, value: catalog.overlay[index], className: 'layer', title: 'Overlay layer: higher layers overlay lower ones' });
+      layer.addEventListener('change', () => { tiles.layers[texture.name] = Math.min(255, Math.max(0, Math.round(Number(layer.value) || 0))); this.changed({ rerender: false }); });
+      const region = this.atlasSelect(regionNames, regionFor(tiles, texture.name), 'Placeholder color', 'Atlas tile region (tiles.ron regions)');
+      region.addEventListener('change', () => {
+        if (region.value === texture.name) delete tiles.regions[texture.name];
+        else tiles.regions[texture.name] = region.value;
+        // A texture with art must be listed, or its biomes would draw their ground.
+        if (!listsName(tiles, texture.name)) tiles.placeholder_colors[texture.name] = texture.placeholder;
+        this.changed();
+      });
+      return element('div', { className: 'texture-row' }, [
+        this.thumbnail(this.tileImage(texture.name), texture.placeholder), color,
+        element('span', { className: 'texture-name', textContent: texture.name, title: users.length ? `Biomes: ${users.join(', ')}` : 'Only drawn as ground' }),
+        layer, region,
+      ]);
+    });
+  }
+
+  biomeRows(tiles, objects, catalog, biomeNames) {
+    const names = [...new Set([...catalog.textures.map(texture => texture.name), ...Object.keys(tiles.placeholder_colors)])].sort();
+    const surfaces = [...new Set(Object.values(objects.surfaces))].sort();
+    const lists = [
+      element('datalist', { id: 'texture-names' }, [GROUND, ...names].map(name => element('option', { value: name }))),
+      element('datalist', { id: 'surface-names' }, surfaces.map(name => element('option', { value: name }))),
+    ];
+    const rows = biomeNames.map((name, biome) => {
+      const own = catalog.ownTiles[biome];
+      const input = element('input', {
+        value: !own ? GROUND : Object.hasOwn(tiles.textures, name) ? tiles.textures[name] : '',
+        placeholder: name, className: 'biome-texture',
+        title: `Blank: texture "${name}". "${GROUND}": draw the terrain biome underneath (feature biomes).`,
+      });
+      input.setAttribute('list', 'texture-names');
+      input.addEventListener('change', () => {
+        const value = input.value.trim();
+        delete tiles.textures[name];
+        if (value === GROUND) {
+          delete tiles.placeholder_colors[name];
+          delete tiles.regions[name];
+        } else {
+          if (value && value !== name) tiles.textures[name] = value;
+          const texture = value || name;
+          if (!Object.hasOwn(tiles.placeholder_colors, texture)) tiles.placeholder_colors[texture] = tiles.default_placeholder;
+        }
+        this.changed();
+      });
+      const tint = element('input', { type: 'color', value: (tiles.tints?.[name] ?? '#FFFFFF').slice(0, 7), title: 'Tint: the ground is multiplied by this color, smoothed across neighboring tiles' });
+      tint.addEventListener('change', () => { tiles.tints ||= {}; tiles.tints[name] = tint.value.toUpperCase(); this.changed({ rerender: false }); });
+      const surface = element('input', { value: objects.surfaces[name] ?? '', placeholder: 'surface', className: 'biome-surface', title: 'Surface (objects.ron surfaces): which per-surface object art stands on this biome' });
+      surface.setAttribute('list', 'surface-names');
+      surface.addEventListener('change', () => {
+        const value = surface.value.trim();
+        if (value) objects.surfaces[name] = value; else delete objects.surfaces[name];
+        this.changed();
+      });
+      const objectTint = element('input', { type: 'color', value: (objects.tints?.[name] ?? '#FFFFFF').slice(0, 7), title: 'Object tint (objects.ron tints): tinted objects standing on this biome are multiplied by it' });
+      objectTint.addEventListener('change', () => { objects.tints ||= {}; objects.tints[name] = objectTint.value.toUpperCase(); this.changed({ rerender: false }); });
+      return element('label', { className: 'biome-row' }, [element('span', { textContent: name }), tint, input, surface, objectTint]);
+    });
+    return [...lists, ...rows];
+  }
+
+  // objects.ron recolor (object tints are set per biome in the biome rows).
+  objectColorFields(objects) {
+    const recolorOn = element('input', { type: 'checkbox', checked: !!objects.recolor, title: 'Make object art neutral before tints' });
+    const recolor = element('input', { type: 'color', value: (objects.recolor || '#EEEEEE').slice(0, 7), disabled: !objects.recolor, title: 'Neutral color of recolored object art' });
+    const apply = () => {
+      objects.recolor = recolorOn.checked ? recolor.value.toUpperCase() : null;
+      recolor.disabled = !recolorOn.checked;
+      this.changed({ rerender: false });
+    };
+    recolorOn.addEventListener('change', apply);
+    recolor.addEventListener('change', apply);
+    return element('div', { className: 'object-fields' }, [
+      element('label', { textContent: 'recolor tinted art ' }, [recolorOn, recolor]),
+    ]);
+  }
+
+  objectRows(objects) {
+    const spriteNames = Object.keys(this.atlas.sprites);
+    const surfaces = [...new Set(Object.values(objects.surfaces))].sort();
+    return this.meta.objectTypes.map((type, kind) => {
+      const style = () => (objects.kinds[type.name] ||= {});
+      const current = objectStyleOf(objects, type.name);
+      const placeholder = objectPlaceholder(objects, current);
+      const color = element('input', { type: 'color', value: placeholder.slice(0, 7), title: 'Placeholder color (drawn while the kind has no sprite)' });
+      color.addEventListener('change', () => { style().placeholder = color.value.toUpperCase(); this.changed(); });
+      const sprite = this.atlasSelect(spriteNames, current.sprite ?? '', `${type.name} (kind name)`, 'Atlas sprite where no surface sprite is set');
+      sprite.addEventListener('change', () => {
+        if (sprite.value) style().sprite = sprite.value; else delete style().sprite;
+        this.changed();
+      });
+      const jitter = element('input', { type: 'number', min: 0, max: 0.5, step: 0.05, value: styleJitter(current), title: 'Jitter: largest nudge off center, in tiles' });
+      jitter.addEventListener('change', () => { style().jitter = styleJitter({ jitter: Number(jitter.value) }); this.changed({ rerender: false }); });
+      const flip = element('input', { type: 'checkbox', checked: !!current.flip, title: 'Mirror half of the objects; only for art without painted light' });
+      const tinted = element('input', { type: 'checkbox', checked: current.tinted !== false, title: 'Take the object colors (recolor and biome object tints); off keeps the art in its own colors' });
+      tinted.addEventListener('change', () => {
+        if (tinted.checked) delete style().tinted; else style().tinted = false;
+        this.changed({ rerender: false });
+      });
+      flip.addEventListener('change', () => { style().flip = flip.checked; this.changed({ rerender: false }); });
+      const layer = element('select', { title: 'Sorted: stands, drawn by foot position. Ground: flat decal.' },
+        LAYERS.map(value => element('option', { value, textContent: value })));
+      layer.value = current.layer === 'Ground' ? 'Ground' : 'Sorted';
+      layer.addEventListener('change', () => { style().layer = layer.value; this.changed({ rerender: false }); });
+      const [min, max] = styleScale(current);
+      const scale = [min, max].map((value, i) => {
+        const input = element('input', { type: 'number', min: 0.1, max: 10, step: 0.05, value, title: i ? 'Largest scale' : 'Smallest scale' });
+        input.addEventListener('change', () => {
+          const next = styleScale(style());
+          next[i] = Number(input.value);
+          style().scale = styleScale({ scale: next });
+          this.changed({ rerender: false });
+        });
+        return input;
+      });
+      const surfaceSprites = surfaces.map(surface => {
+        const select = this.atlasSelect(spriteNames, current.sprites?.[surface] ?? '', 'default sprite', `Sprite on ${surface}`);
+        select.addEventListener('change', () => {
+          style().sprites ||= {};
+          if (select.value) style().sprites[surface] = select.value; else delete style().sprites[surface];
+          this.changed();
+        });
+        return element('label', { className: 'surface-sprite' }, [element('span', { textContent: surface }), select]);
+      });
+      return element('div', { className: 'object-row' }, [
+        this.thumbnail(this.spriteImage(spriteFor(current, type.name, null)), placeholder), color,
+        element('span', { className: 'texture-name', textContent: type.name, title: `${type.footprint.width}×${type.footprint.height} footprint · kind ${kind}` }),
+        sprite,
+        element('span', { className: 'object-fields' }, [
+          element('label', { textContent: 'jitter ' }, [jitter]), element('label', { textContent: 'flip ' }, [flip]), element('label', { textContent: 'tinted ' }, [tinted]), layer,
+          element('label', { textContent: 'scale ' }, scale),
+        ]),
+        element('div', { className: 'surface-sprites' }, surfaceSprites),
+      ]);
+    });
   }
 
   render() {
@@ -298,56 +447,10 @@ export class PresentationEditor {
         tiles.blend = sanitizeBlend({ ...tiles.blend, [control.key]: value });
         this.changed();
       })));
-
-    const textureRows = catalog.textures.map((texture, index) => {
-      const users = biomeNames.filter((_, biome) => catalog.textureOf[biome] === index && catalog.ownTiles[biome]);
-      const color = element('input', { type: 'color', value: texture.placeholder.slice(0, 7), title: 'Placeholder color (drawn while no texture file exists; tints sheet art)' });
-      color.addEventListener('change', () => { tiles.placeholder_colors[texture.name] = color.value.toUpperCase(); this.changed(); });
-      const layer = element('input', { type: 'number', min: 0, max: 255, step: 1, value: catalog.overlay[index], className: 'layer', title: 'Overlay layer: higher layers overlay lower ones; equal layers fade' });
-      layer.addEventListener('change', () => { tiles.layers[texture.name] = Math.min(255, Math.max(0, Math.round(Number(layer.value) || 0))); this.changed({ rerender: false }); });
-      const source = this.sourceSelect('tiles', texture.name, Object.keys(TILE_SOURCES), this.files.tiles.has(texture.name));
-      source.addEventListener('change', () => {
-        if (!source.value) delete this.state.sources.tiles[texture.name];
-        else this.state.sources.tiles[texture.name] = { tint: 'tint', strength: 1, ...this.state.sources.tiles[texture.name], id: source.value };
-        // A texture with a source must be listed, or its biomes would draw their ground.
-        if (!listsName(tiles, texture.name)) tiles.placeholder_colors[texture.name] = texture.placeholder;
-        this.changed();
-      });
-      const image = this.look.stack.layers[index] && this.tileImage(texture.name);
-      return element('div', { className: 'texture-row' }, [
-        this.thumbnail(image, texture.placeholder), color,
-        element('span', { className: 'texture-name', textContent: texture.name, title: users.length ? `Biomes: ${users.join(', ')}` : 'Only drawn as ground' }),
-        layer, source, ...this.tintControls('tiles', texture.name),
-      ]);
-    });
-
-    const names = [...new Set([...catalog.textures.map(texture => texture.name), ...Object.keys(tiles.placeholder_colors)])].sort();
-    const datalist = element('datalist', { id: 'texture-names' }, [GROUND, ...names].map(name => element('option', { value: name })));
-    const biomeRows = biomeNames.map((name, biome) => {
-      const own = catalog.ownTiles[biome];
-      const input = element('input', {
-        value: !own ? GROUND : Object.hasOwn(tiles.textures, name) ? tiles.textures[name] : '',
-        placeholder: name, className: 'biome-texture',
-        title: `Blank: texture "${name}". "${GROUND}": draw the terrain biome underneath (feature biomes).`,
-      });
-      input.setAttribute('list', 'texture-names');
-      input.addEventListener('change', () => {
-        const value = input.value.trim();
-        delete tiles.textures[name];
-        if (value === GROUND) {
-          delete tiles.placeholder_colors[name];
-          delete this.state.sources.tiles[name];
-        } else {
-          if (value && value !== name) tiles.textures[name] = value;
-          const texture = value || name;
-          if (!Object.hasOwn(tiles.placeholder_colors, texture)) tiles.placeholder_colors[texture] = tiles.default_placeholder;
-        }
-        this.changed();
-      });
-      const tint = element('input', { type: 'color', value: (tiles.tints?.[name] ?? '#FFFFFF').slice(0, 7), title: 'Tint: the ground is multiplied by this color, smoothed across neighboring tiles' });
-      tint.addEventListener('change', () => { tiles.tints ||= {}; tiles.tints[name] = tint.value.toUpperCase(); this.changed({ rerender: false }); });
-      return element('label', { className: 'biome-row' }, [element('span', { textContent: name }), tint, input]);
-    });
+    const recolor = element('input', { type: 'checkbox', checked: tiles.recolor === true });
+    recolor.addEventListener('change', () => { tiles.recolor = recolor.checked; this.changed(); });
+    const recolorField = element('label', { className: 'field', title: 'tiles.ron recolor: make tile art neutral in its placeholder color (light and shade only), so tints alone color the ground' },
+      [element('span', { textContent: 'Neutral tile art (recolor)' }), recolor]);
 
     // Palette biomes get the preset palette; any others the temperature ramp.
     const rampButton = element('button', { type: 'button', textContent: 'Reset tints to palette' });
@@ -356,26 +459,6 @@ export class PresentationEditor {
       const own = biomeNames.filter((_, biome) => catalog.ownTiles[biome]);
       tiles.tints = { ...tiles.tints, ...rampTints(rules, own), ...planetTints(own) };
       this.changed();
-    });
-    const rampRow = element('div', { className: 'action-row' }, [rampButton]);
-
-    const objectCatalog = textureCatalog(this.meta.objectTypes.map(type => type.name), objects);
-    const objectRows = objectCatalog.textures.map((texture, index) => {
-      const kinds = this.meta.objectTypes.filter((_, kind) => objectCatalog.textureOf[kind] === index);
-      const color = element('input', { type: 'color', value: texture.placeholder.slice(0, 7), title: 'Placeholder color' });
-      color.addEventListener('change', () => { objects.placeholder_colors[texture.name] = color.value.toUpperCase(); this.changed(); });
-      const source = this.sourceSelect('objects', texture.name, Object.keys(OBJECT_SOURCES), this.files.objects.has(texture.name));
-      source.addEventListener('change', () => {
-        if (!source.value) delete this.state.sources.objects[texture.name];
-        else this.state.sources.objects[texture.name] = { tint: 'tint', strength: 1, ...this.state.sources.objects[texture.name], id: source.value };
-        this.changed();
-      });
-      const look = this.look.objectLooks[this.meta.objectTypes.indexOf(kinds[0])];
-      return element('div', { className: 'texture-row' }, [
-        this.thumbnail(look?.image, texture.placeholder), color,
-        element('span', { className: 'texture-name', textContent: texture.name, title: kinds.map(kind => `${kind.name} ${kind.footprint.width}×${kind.footprint.height}`).join(', ') }),
-        source, ...this.tintControls('objects', texture.name),
-      ]);
     });
 
     const save = element('button', { type: 'button', textContent: 'Save client files' });
@@ -386,7 +469,7 @@ export class PresentationEditor {
       this.statusLine.textContent = 'Exporting…';
       try {
         const { directory, files } = await this.exportFiles();
-        const target = this.worldPath() === 'world' ? 'crates/client/assets/' : `crates/client/assets/ (world/*.ron go to ${this.worldPath()}/)`;
+        const target = this.worldPath() === WORLD ? 'crates/client/assets/' : `crates/client/assets/ (world/*.ron go to ${this.worldPath()}/)`;
         this.status = `Saved ${files.length} files to ${directory}. Copy its contents into ${target}.`;
       } catch (error) {
         this.status = `Export failed: ${error.message}`;
@@ -408,19 +491,21 @@ export class PresentationEditor {
     const rendered = this.rendered;
     this.rendered = true;
     const isOpen = (title, fallback) => (rendered ? opened.has(title) : fallback);
+    const textureTitle = `Tile textures (${catalog.textures.length})`;
     this.panel.replaceChildren(
-      details('Tile blending', isOpen('Tile blending', true), [blend],
-        'Client renderer settings (tiles.ron blend). Height: on different layers the higher texture overlays the lower one with a crisp edge and shades its foot. Biomes within a layer meet on crisp, noisy edges too. Tints color each biome; a tint radius above 0 softens colors inside a biome.'),
-      details(`Tile textures (${catalog.textures.length})`, isOpen(`Tile textures (${catalog.textures.length})`, true), textureRows,
-        'Each row: placeholder color, texture, overlay layer (height); then source, bake tint and strength. Keep textures neutral and shared per height band; biome tints color them. Sprite-sheet sources are baked and exported as PNGs.'),
-      details('Biomes: tint and texture', isOpen('Biomes: tint and texture', true), [rampRow, datalist, ...biomeRows],
-        `Tint (temperature color, smoothed across tiles) and texture per biome. Blank texture uses the biome's own name; several biomes may share one. "${GROUND}" draws the terrain biome underneath.`),
-      details('Object textures', isOpen('Object textures', true), objectRows,
-        'Drawn stretched over the footprint, as in the client. Sheet sprites are baked at footprint × pixels per tile, standing on the bottom edge.'),
+      this.presentationSelect(),
+      details('Tile blending', isOpen('Tile blending', true), [blend, recolorField],
+        'Client renderer settings (tiles.ron blend). Height: on different layers the higher texture overlays the lower one with a crisp edge and shades its foot. Biomes within a layer meet on crisp, noisy edges too. Tints color each biome; a tint radius above 0 softens colors inside a biome. Pixels per tile also sets the size objects are drawn at.'),
+      details(textureTitle, isOpen(textureTitle, true), this.tileRows(tiles, catalog, biomeNames),
+        'Each row: placeholder color, texture, overlay layer (height) and its atlas tile region. Art comes from the client atlas (world/atlas.ron), which is edited by hand.'),
+      details('Biomes: tint, texture and surface', isOpen('Biomes: tint, texture and surface', true),
+        [element('div', { className: 'action-row' }, [rampButton]), ...this.biomeRows(tiles, objects, catalog, biomeNames)],
+        `Ground tint (temperature color), texture, object surface and object tint per biome. Blank texture uses the biome's own name; "${GROUND}" draws the terrain biome underneath. The surface picks per-surface object art; the object tint colors tinted objects there, apart from the ground so they stand out.`),
+      details('Objects', isOpen('Objects', true), [this.objectColorFields(objects), ...this.objectRows(objects)],
+        'Ground tint multiplies objects by the tint of the biome they stand on; recolor first makes their art neutral in a color. Each kind: placeholder color, default sprite, jitter (tiles), flip, layer, scale range, and a sprite per surface. One variant per object is picked from its anchor tile, as in the client.'),
       element('div', { className: 'action-row' }, [save, reload]),
       this.statusLine,
     );
     this.renderStatus();
   }
 }
-

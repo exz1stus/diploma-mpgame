@@ -3,7 +3,7 @@
 //! ([`crate::world::presentation`]).
 
 use bevy::prelude::*;
-use shared::world::{ChunkPos, Footprint, ObjectId, TileSample, WorldManifest};
+use shared::world::{ChunkPos, Footprint, ObjectId, TilePos, TileSample, WorldManifest};
 
 /// The streamed world's manifest: chunk size and the names behind biome and object IDs.
 /// Present while a world stream is active.
@@ -28,6 +28,8 @@ pub struct ChunkTiles {
 #[derive(Component, Clone, Debug)]
 pub struct WorldObject {
     pub kind: ObjectId,
+    /// Minimum tile of the footprint.
+    pub anchor: TilePos,
     pub footprint: Footprint,
 }
 

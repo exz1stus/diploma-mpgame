@@ -99,7 +99,7 @@ mod tests {
     fn server_overrides_build_a_generator() {
         let generator = load_generator(Path::new(CONFIG_OVERRIDES_DIR), None);
         let manifest = generator.manifest();
-        for name in ["rock", "large_rock", "iron_ore", "tree"] {
+        for name in ["rock", "large_rock", "iron_ore"] {
             assert!(
                 manifest.objects.iter().any(|kind| kind.name == name),
                 "default object kinds rely on {name:?}"

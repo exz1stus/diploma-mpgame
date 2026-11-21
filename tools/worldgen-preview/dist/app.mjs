@@ -151,13 +151,24 @@ function recolorFlat() {
   invalidate();
 }
 
-const objectLook = kind => look?.objectLooks[kind];
+// The surface and object tint (objects.ron) under a tile, from the cached LOD 0 samples; null
+// while unloaded.
+function underAt(x, y) {
+  const size = config.size;
+  const cx = Math.floor(x / size);
+  const cy = Math.floor(y / size);
+  const chunk = cache.get(key(cx, cy, 0));
+  const sample = chunk ? readSample(chunk.bytes, (y - cy * size) * size + x - cx * size) : null;
+  if (sample?.status !== 1 || !look) return null;
+  const { biomeId, groundId } = sample;
+  return { surface: look.objects.surface(biomeId, groundId), tint: look.objects.tint(biomeId, groundId) };
+}
 
 function applyLook(next) {
   look = next;
   recolorFlat();
   renderBiomeMap();
-  renderObjectLegend(document.querySelector('#object-legend'), objectTypes, objectLook);
+  renderObjectLegend(document.querySelector('#object-legend'), objectTypes, look?.objects);
 }
 
 const editor = new PresentationEditor(document.querySelector('#presentation-editor'), applyLook);
@@ -654,7 +665,7 @@ function draw() {
     }
     visibleObjects = collectObjects(chunks, { minX: left, minY: top, maxX: right, maxY: bottom });
     const hover = pointer && !dragging ? cellAt(pointer.x, pointer.y, m) : null;
-    drawObjects(ctx, visibleObjects, worldX, worldY, m.baseTilePx, objectLook,
+    drawObjects(ctx, visibleObjects, worldX, worldY, m.baseTilePx, look?.objects, underAt,
       hover ? objectAt(visibleObjects, hover.x, hover.y) : null);
     const unavailable = chunks.filter(chunk => chunk.error).length;
     objectStatus.textContent = objectError || (unavailable
