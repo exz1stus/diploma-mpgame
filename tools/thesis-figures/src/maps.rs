@@ -144,12 +144,7 @@ fn raster(grid: &WorldGrid, path: &Path, color: impl Fn(usize, usize, &TileData)
     write_png(path, grid.side, grid.side, &rgb);
 }
 
-pub fn world_maps(
-    base: &WorldGrid,
-    full: &WorldGrid,
-    generator: &WorldGenerator,
-    out: &Path,
-) {
+pub fn world_maps(base: &WorldGrid, full: &WorldGrid, generator: &WorldGenerator, out: &Path) {
     let biome_name = |id: BiomeId| generator.biomes().get(id).map_or("", |b| b.name.as_str());
     const RELIEF: f64 = 150.0;
     raster(base, &out.join("map_base_elevation.png"), |_, _, t| {
@@ -367,10 +362,7 @@ pub fn biome_shares(
 }
 
 /// Largest connected group of grid samples owned by `owner`; returns its centre in tiles.
-pub fn largest_territory(
-    full: &WorldGrid,
-    owner: usize,
-) -> Option<TilePos> {
+pub fn largest_territory(full: &WorldGrid, owner: usize) -> Option<TilePos> {
     let side = full.side;
     let mut seen = vec![false; side * side];
     let mut best: Option<(usize, (f64, f64))> = None;
@@ -438,12 +430,7 @@ pub struct Transect<'a> {
 }
 
 /// Height along a west–east line, with and without features; territory shaded.
-pub fn transects(
-    base: &WorldGenerator,
-    full: &WorldGenerator,
-    lines: &[Transect],
-    path: &Path,
-) {
+pub fn transects(base: &WorldGenerator, full: &WorldGenerator, lines: &[Transect], path: &Path) {
     let mut svg = Svg::new(1000.0, 60.0 + 330.0 * lines.len() as f64);
     for (index, line) in lines.iter().enumerate() {
         let samples: Vec<(f64, f64, f64, bool)> = (-line.half_length..=line.half_length)

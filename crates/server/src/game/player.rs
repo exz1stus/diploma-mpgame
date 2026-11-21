@@ -1,8 +1,6 @@
 use avian2d::{
-    collision::collider::Collider,
     dynamics::rigid_body::{AngularVelocity, LinearVelocity, LockedAxes, RigidBody},
     physics_transform::Position,
-    prelude::CollisionEventsEnabled,
 };
 use bevy::{app::App, math::Vec2, transform::components::Transform};
 use bevy_ecs::{

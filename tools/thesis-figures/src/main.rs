@@ -50,8 +50,7 @@ fn main() {
 
     let crater = maps::largest_territory(&full_grid, 2).expect("a crater");
     let centre = |owner, sign| {
-        maps::strongest_change(&base_grid, &full_grid, owner, sign)
-            .expect("a feature")
+        maps::strongest_change(&base_grid, &full_grid, owner, sign).expect("a feature")
     };
     let lines = [
         Transect {
@@ -77,12 +76,7 @@ fn main() {
         "transect centres {:?}",
         lines.iter().map(|l| l.center).collect::<Vec<_>>()
     );
-    maps::transects(
-        &base,
-        &full,
-        &lines,
-        &out.join("transects.svg"),
-    );
+    maps::transects(&base, &full, &lines, &out.join("transects.svg"));
     let region_origin = TilePos {
         x: crater.x - REGION / 2,
         y: crater.y - REGION / 2,
