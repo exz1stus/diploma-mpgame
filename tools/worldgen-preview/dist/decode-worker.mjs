@@ -7,7 +7,7 @@ function terrain({ id, size, originX, originY, data, hidden, textures, blend }) 
     const hiddenTiles = hidden && new Uint8Array(hidden);
     const { pixels, width } = composeChunk({
       size, originX, originY, textures, blend,
-      data: { layer: new Uint8Array(data.layer), level: new Uint8Array(data.level), tint: new Uint8Array(data.tint) },
+      data: { layer: new Uint8Array(data.layer), level: new Uint8Array(data.level), biome: new Uint16Array(data.biome), tint: new Uint8Array(data.tint) },
       hidden: hiddenTiles ? (x, y) => hiddenTiles[y * size + x] === 1 : undefined,
     });
     const canvas = new OffscreenCanvas(width, width);

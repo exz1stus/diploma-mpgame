@@ -8,9 +8,9 @@ use std::{
 };
 
 use worldgen::{
-    BasinSettings, BiomeMap, BiomeMapDefinition, BiomeRepository, CraterGenerator, FbmNoise,
-    NoiseConfig, NoiseSource, PlanetParams, TemperatureCoefficients, TerrainSources, TilePos,
-    VolcanoGenerator, WorldConfig, WorldGenerator, WorldGeneratorConfig,
+    BasinSettings, BiomeMap, BiomeMapDefinition, BiomeRepository, ConfigSource, CraterGenerator,
+    FbmNoise, NoiseConfig, NoiseSource, PlanetParams, TemperatureCoefficients, TerrainSources,
+    TilePos, VolcanoGenerator, WorldConfig, WorldGenerator, WorldGeneratorConfig,
 };
 
 #[derive(serde::Serialize)]
@@ -344,6 +344,51 @@ fn controls() -> Vec<Control> {
         "any",
     );
     add(
+        "basin_shape_noise",
+        "Outline irregularity",
+        "Impact basins",
+        Some(basins.shape_noise),
+        0.0,
+        0.6,
+        "any",
+    );
+    add(
+        "basin_edge_noise",
+        "Edge detail",
+        "Impact basins",
+        Some(basins.edge_noise),
+        0.0,
+        0.5,
+        "any",
+    );
+    add(
+        "basin_edge_scale",
+        "Edge detail size (tiles)",
+        "Impact basins",
+        Some(basins.edge_noise_scale),
+        4.0,
+        4096.0,
+        "any",
+    );
+    add(
+        "basin_edge_octaves",
+        "Edge detail octaves",
+        "Impact basins",
+        Some(basins.edge_octaves as f64),
+        1.0,
+        12.0,
+        "1",
+    );
+    add(
+        "basin_edge_ridged",
+        "Ridged edges (0 or 1)",
+        "Impact basins",
+        Some(f64::from(u8::from(basins.edge_ridged))),
+        0.0,
+        1.0,
+        "1",
+    );
+    add(
         "basin_coarse_octaves",
         "Smoothing octaves",
         "Impact basins",
@@ -462,12 +507,12 @@ struct PreviewSettings {
 impl PreviewSettings {
     fn from_params(params: &HashMap<&str, &str>) -> Result<Self, String> {
         let values = control_values(params)?;
-        let mut world = WorldConfig::bundled();
+        // The preset supplies biomes, maps and objects; controls set the numeric settings.
+        let (_, mut world) = selected_preset(params)?;
         apply_world_controls(&mut world, &values);
         apply_crater_controls(&mut world.craters, &values)?;
         apply_basin_controls(&mut world.basins, &values)?;
         apply_volcano_controls(&mut world.volcanoes, &values)?;
-        world.biome_map = selected_biomes(params, &bundled_biomes())?.1;
         let seed = world.world.seed;
         Ok(Self {
             world,
@@ -480,10 +525,6 @@ impl PreviewSettings {
                 .map_or(seed ^ 0x5445_4d50, |seed| *seed as u64),
         })
     }
-}
-
-fn bundled_biomes() -> BiomeRepository {
-    BiomeRepository::parse()
 }
 
 /// Every control's value: from the query, else its default. Rejects out-of-range values.
@@ -575,6 +616,11 @@ fn apply_basin_controls(
     basins.min_rim_height = values["basin_min_rim_height"];
     basins.max_rim_height = values["basin_max_rim_height"];
     basins.smoothing = values["basin_smoothing"];
+    basins.shape_noise = values["basin_shape_noise"];
+    basins.edge_noise = values["basin_edge_noise"];
+    basins.edge_noise_scale = values["basin_edge_scale"];
+    basins.edge_octaves = values["basin_edge_octaves"] as usize;
+    basins.edge_ridged = values["basin_edge_ridged"] == 1.0;
     basins.smoothing_octaves = values["basin_coarse_octaves"] as usize;
     basins.temperature_offset = values["basin_temperature_offset"];
     if basins.min_radius > basins.max_radius
@@ -777,9 +823,10 @@ fn metadata(query: &str, build: u128) -> Result<String, String> {
     let params = params(query);
     let config = request_config(&params)?;
     let side = world_side(config)?;
-    let biomes = bundled_biomes();
-    let (biome_file, biome_map) = selected_biomes(&params, &biomes)?;
-    let biome_map = biome_map
+    let (biome_file, preset) = selected_preset(&params)?;
+    let biomes = preset_biomes(&preset)?;
+    let biome_map = preset
+        .biome_map
         .resolve(&biomes)
         .map_err(|error| format!("{biome_file}: {error}"))?;
     let map_rules = |map: &BiomeMap| -> Vec<serde_json::Value> {
@@ -792,38 +839,82 @@ fn metadata(query: &str, build: u128) -> Result<String, String> {
             })
             .collect()
     };
-    let bundled = WorldConfig::bundled();
     let mut feature_maps = serde_json::Map::new();
-    for (name, definition) in [
-        ("Basins", bundled.basins.biome_map),
-        ("Craters", bundled.craters.biome_map),
-        ("Volcanoes", bundled.volcanoes.biome_map),
-    ] {
+    // One map per basin type ("Basins (sulfur)", ...), or "Basins" without types.
+    let basin_maps: Vec<(String, BiomeMapDefinition)> = if preset.basins.variants.is_empty() {
+        vec![("Basins".into(), preset.basins.biome_map.clone())]
+    } else {
+        preset
+            .basins
+            .variants
+            .iter()
+            .map(|variant| {
+                (
+                    format!("Basins ({})", variant.name),
+                    variant.biome_map.clone(),
+                )
+            })
+            .collect()
+    };
+    for (name, definition) in basin_maps.into_iter().chain([
+        ("Craters".to_owned(), preset.craters.biome_map),
+        ("Volcanoes".to_owned(), preset.volcanoes.biome_map),
+    ]) {
         let map = definition
             .resolve(&biomes)
             .map_err(|error| error.to_string())?;
-        feature_maps.insert(name.into(), serde_json::json!(map_rules(&map)));
+        feature_maps.insert(name, serde_json::json!(map_rules(&map)));
     }
     Ok(serde_json::json!({
         "build": build.to_string(), "protocol": PROTOCOL,
         "world": { "width": side, "height": side }, "controls": controls(),
         "biome_files": biome_files()?, "biome_file": biome_file, "biomes": biomes.biomes(),
         "biome_rules": map_rules(&biome_map), "feature_biome_maps": feature_maps,
-        "object_types": bundled.objects.kinds,
+        "object_types": preset.objects.kinds,
     })
     .to_string())
 }
 
-/// The selectable terrain biome map: `config/biome_map.ron`, read on every request so
-/// edits show up without restarting.
-const DEFAULT_BIOME_FILE: &str = "default.ron";
-
-fn biome_map_path() -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("config/biome_map.ron")
-}
+/// Selectable presets, listed as "biome files" for older frontends: `default.ron` is the
+/// bundled config (`config/`), `old.ron` the `config/presets/old/` folder (the previous
+/// default). A preset supplies biomes, the terrain and feature biome maps, and objects.
+const DEFAULT_PRESET: &str = "default.ron";
+const PRESETS: [&str; 2] = [DEFAULT_PRESET, "old.ron"];
 
 fn biome_files() -> Result<Vec<String>, String> {
-    Ok(vec![DEFAULT_BIOME_FILE.to_owned()])
+    Ok(PRESETS.map(str::to_owned).to_vec())
+}
+
+fn presets_dir() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("config/presets")
+}
+
+/// The selected preset's file name and config, validated so its maps resolve.
+fn selected_preset(params: &HashMap<&str, &str>) -> Result<(String, WorldConfig), String> {
+    let filename = decode_query_value(params.get("biome").unwrap_or(&DEFAULT_PRESET))?;
+    // Keep previously shared preview URLs working after the default map rename.
+    let filename = if filename == "biomes.ron" {
+        DEFAULT_PRESET.to_owned()
+    } else {
+        filename
+    };
+    let source = match filename.as_str() {
+        DEFAULT_PRESET => ConfigSource::bundled(),
+        "old.ron" => ConfigSource::with_overrides(presets_dir().join("old"))
+            .map_err(|error| format!("{filename}: {error}"))?,
+        _ => return Err(format!("Choose a preset: {}", PRESETS.join(", "))),
+    };
+    let config = WorldConfig::load(&source).map_err(|error| format!("{filename}: {error}"))?;
+    let biomes = preset_biomes(&config)?;
+    config
+        .biome_map
+        .resolve(&biomes)
+        .map_err(|error| format!("{filename}: {error}"))?;
+    Ok((filename, config))
+}
+
+fn preset_biomes(config: &WorldConfig) -> Result<BiomeRepository, String> {
+    BiomeRepository::from_definitions(&config.biomes.biomes).map_err(|error| error.to_string())
 }
 
 fn decode_query_value(value: &str) -> Result<String, String> {
@@ -844,30 +935,6 @@ fn decode_query_value(value: &str) -> Result<String, String> {
         });
     }
     String::from_utf8(decoded).map_err(|_| "Invalid biome filename encoding".into())
-}
-
-fn selected_biomes(
-    params: &HashMap<&str, &str>,
-    repository: &BiomeRepository,
-) -> Result<(String, BiomeMapDefinition), String> {
-    let filename = decode_query_value(params.get("biome").unwrap_or(&DEFAULT_BIOME_FILE))?;
-    // Keep previously shared preview URLs working after the default map rename.
-    let filename = if filename == "biomes.ron" {
-        DEFAULT_BIOME_FILE.to_owned()
-    } else {
-        filename
-    };
-    if !biome_files()?.contains(&filename) {
-        return Err(format!("Choose the biome map {DEFAULT_BIOME_FILE}"));
-    }
-    let source = std::fs::read_to_string(biome_map_path())
-        .map_err(|error| format!("Cannot read {filename}: {error}"))?;
-    let definition =
-        BiomeMapDefinition::from_ron(&source).map_err(|error| format!("{filename}: {error}"))?;
-    definition
-        .resolve(repository)
-        .map_err(|error| format!("{filename}: {error}"))?;
-    Ok((filename, definition))
 }
 
 /// Wire protocol version reported by `/api/meta`; bump it with the record layout.
@@ -1499,7 +1566,7 @@ mod tests {
             meta["object_types"],
             serde_json::to_value(generator.object_placer().objects().objects()).unwrap()
         );
-        assert_eq!(meta["biome_rules"].as_array().unwrap().len(), 32);
+        assert_eq!(meta["biome_rules"].as_array().unwrap().len(), 20);
         for name in ["Basins", "Craters", "Volcanoes"] {
             let rules = meta["feature_biome_maps"][name].as_array().unwrap();
             assert!(rules.len() >= 2);
@@ -1536,10 +1603,20 @@ mod tests {
             );
         }
         assert_eq!(
-            selected_biomes(&params("biome=default%2Eron"), &BiomeRepository::parse())
-                .unwrap()
-                .0,
+            selected_preset(&params("biome=default%2Eron")).unwrap().0,
             "default.ron"
         );
+        let (name, old) = selected_preset(&params("biome=old.ron")).unwrap();
+        assert_eq!(name, "old.ron");
+        assert!(
+            old.biomes
+                .biomes
+                .iter()
+                .any(|biome| biome.name == "weathered_basalt")
+        );
+        let old_meta: serde_json::Value =
+            serde_json::from_str(&metadata("biome=old.ron", 123).unwrap()).unwrap();
+        assert_eq!(old_meta["biome_rules"].as_array().unwrap().len(), 32);
+        assert_eq!(old_meta["biome_file"], "old.ron");
     }
 }

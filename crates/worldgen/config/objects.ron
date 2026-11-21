@@ -18,9 +18,9 @@
             (object: "rock", density: 0.002),
             (object: "large_rock", density: 0.001, max_height_difference: Some(0.04)),
         ],
-        // Loose stones on exposed ground: none on frozen ground (below -12 °C) or high ridges.
+        // Loose stones on exposed ground: none on frozen ground (below -6 °C) or high ridges.
         "pebbles": [
-            (object: "pebbles", density: 0.06, height: (min: 0.0, max: 0.8), temperature: (min: -12.0, max: 1000.0)),
+            (object: "pebbles", density: 0.06, height: (min: 0.0, max: 0.8), temperature: (min: -6.0, max: 1000.0)),
         ],
         "iron_deposits": [
             (object: "iron_ore", density: 0.0007, max_height_difference: Some(0.06)),

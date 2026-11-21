@@ -8,6 +8,16 @@ use crate::{movement::TickNumber, replication::ReplicatedComponent};
 #[derive(Component, Serialize, Deserialize, Debug)]
 pub struct Player;
 
+/// What an entity is (`"player"`, `"slime"`, ...). Clients choose its visuals by this name.
+#[derive(Component, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Debug)]
+pub struct EntityKind(pub String);
+
+impl EntityKind {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self(name.into())
+    }
+}
+
 #[derive(Component, Clone, Copy, Serialize, Deserialize, Debug, Default)]
 pub struct NetworkPhysicsState {
     // Local metadata. The enclosing server message supplies the wire tick.
@@ -54,4 +64,4 @@ macro_rules! assign_network_ids {
     };
 }
 
-assign_network_ids!(Ownership, Player, NetworkPhysicsState, Health);
+assign_network_ids!(Ownership, Player, NetworkPhysicsState, Health, EntityKind);

@@ -17,6 +17,8 @@ mod hash;
 mod manifest;
 mod noise;
 pub mod objects;
+#[cfg(test)]
+mod old_preset;
 mod pipeline;
 mod range;
 mod stage;
@@ -34,7 +36,7 @@ pub use config::{
 };
 pub use elevation::{ClampHeightStage, ElevationStage};
 pub use error::GenerationError;
-pub use features::basin::{BasinGenerator, BasinSettings};
+pub use features::basin::{BasinGenerator, BasinSettings, BasinVariant};
 pub use features::crater::CraterGenerator;
 pub use features::volcano::VolcanoGenerator;
 pub use features::{

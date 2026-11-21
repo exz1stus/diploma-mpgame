@@ -11,11 +11,11 @@ use bevy_ecs::{
     query::With,
     system::{Commands, Query},
 };
-use shared::components::{DisconnectPolicy, Health, NetworkPhysicsState, Player};
+use shared::components::{DisconnectPolicy, EntityKind, Health, NetworkPhysicsState, Player};
 
 use crate::{
     game::world::WorldObserver,
-    networking::{client::ClientIntiated, entity::NetworkCommandsExt, input::CurrentMovementInput},
+    net::{client::ClientIntiated, entity::NetworkCommandsExt, input::CurrentMovementInput},
 };
 
 pub fn plugin(app: &mut App) {
@@ -30,6 +30,7 @@ pub fn new_player_bundle() -> impl Bundle {
 fn new_player_bundle_at(spawn: Vec2) -> impl Bundle {
     (
         Player,
+        EntityKind::new("player"),
         Health(100),
         NetworkPhysicsState {
             tick: 0,

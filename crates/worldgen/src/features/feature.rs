@@ -17,6 +17,12 @@ pub trait TerrainFeature: Send + Sync {
     /// influence terrain.
     fn influence_radius(&self) -> f64;
 
+    /// Which of the generator's biome maps (`FeatureGenerator::biome_maps`) this feature's
+    /// territory uses.
+    fn variant(&self) -> usize {
+        0
+    }
+
     /// Modify terrain at a world-space position. Chunk queries may select this
     /// feature for tiles outside its influence; leave those tiles unchanged.
     /// Inside the territory, even for weak or zero changes, return the distance
@@ -36,6 +42,11 @@ pub trait FeatureGenerator: Send + Sync {
 
     fn biome_map(&self) -> BiomeMapDefinition {
         BiomeMapDefinition::default()
+    }
+
+    /// One biome map per feature variant (see `TerrainFeature::variant`).
+    fn biome_maps(&self) -> Vec<BiomeMapDefinition> {
+        vec![self.biome_map()]
     }
 
     /// Size of the spatial generation cells, in tiles.
@@ -72,6 +83,10 @@ impl<G: FeatureGenerator> FeatureGenerator for ScaledFeatures<G> {
 
     fn biome_map(&self) -> BiomeMapDefinition {
         self.inner.biome_map()
+    }
+
+    fn biome_maps(&self) -> Vec<BiomeMapDefinition> {
+        self.inner.biome_maps()
     }
 
     fn cell_size(&self) -> f64 {

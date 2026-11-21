@@ -129,7 +129,7 @@ mod tests {
 
     #[test]
     fn maps_resolve_shared_ids_and_preserve_rule_order_and_boundaries() {
-        let repository = BiomeRepository::parse();
+        let repository = crate::old_preset::biomes();
         let map = BiomeMap::from_ron(
             r#"[
             (biome: "crater", height: (min: 0.0, max: 0.5), temperature: (min: -10.0, max: 10.0)),
@@ -148,7 +148,7 @@ mod tests {
 
     #[test]
     fn invalid_ranges_and_unknown_references_fail_before_sampling() {
-        let repository = BiomeRepository::parse();
+        let repository = crate::old_preset::biomes();
         let unknown = r#"[(biome: "missing", height: (min: 0.0, max: 1.0), temperature: (min: -10.0, max: 10.0))]"#;
         assert!(matches!(
             BiomeMap::from_ron(unknown, &repository),

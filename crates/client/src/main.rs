@@ -1,28 +1,22 @@
+mod assets;
+mod combat;
 mod config;
-mod game;
-mod networking;
-mod world_presentation;
+mod entities;
+mod net;
+mod player;
+mod render_layers;
+mod schedule;
+mod ui;
+mod world;
 
 use bevy::{DefaultPlugins, prelude::*, window::WindowPlugin};
-use bevy_egui::{EguiPlugin, EguiPrimaryContextPass};
-use bevy_renet::{RenetClientPlugin, netcode::NetcodeClientPlugin};
+use bevy_egui::EguiPlugin;
 use shared::app_init;
 use shared::role::NetworkRole;
 
 use crate::{
-    config::ClientConfig,
-    game::{
-        debug_zoom,
-        menu::{MenuState, menu_ui, toggle_menu},
-        spawn_camera,
-    },
-    networking::{
-        client::GameClient,
-        netgraph::network_diagnostics_ui,
-        session::{drive_session, install_session},
-        world_streaming::WorldStreamingPlugin,
-    },
-    world_presentation::WorldPresentationPlugin,
+    combat::CombatPlugin, config::ClientConfig, entities::EntityVisualsPlugin, net::NetPlugin,
+    player::PlayerPlugin, schedule::SchedulePlugin, ui::UiPlugin, world::WorldPresentationPlugin,
 };
 
 fn main() {
@@ -41,26 +35,18 @@ fn main() {
             ..default()
         }),
         EguiPlugin::default(),
-        RenetClientPlugin,
-        NetcodeClientPlugin,
-        WorldStreamingPlugin,
+        SchedulePlugin,
+        NetPlugin {
+            config: ClientConfig::new(),
+        },
         WorldPresentationPlugin,
+        EntityVisualsPlugin,
+        PlayerPlugin,
+        CombatPlugin,
+        UiPlugin,
     ));
 
-    app.add_systems(Startup, spawn_camera);
-    app.init_resource::<MenuState>();
-
-    app.add_systems(Update, (drive_session, toggle_menu, debug_zoom).chain());
-    app.add_systems(
-        EguiPrimaryContextPass,
-        (menu_ui, network_diagnostics_ui).chain(),
-    );
-
-    let config = ClientConfig::new();
-    install_session(&mut app, &config);
-
-    let mut client = GameClient::new(app, &config);
-    client.run();
+    app.run();
 }
 
 #[cfg(target_os = "linux")]

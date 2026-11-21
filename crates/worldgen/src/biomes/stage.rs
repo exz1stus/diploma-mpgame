@@ -32,17 +32,16 @@ impl GenerationStage for BiomeStage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::BiomeRepository;
 
     #[test]
     fn feature_maps_choose_by_final_height_and_temperature_and_gaps_use_default() {
-        let repository = BiomeRepository::parse();
+        let repository = crate::old_preset::biomes();
         let feature_map = Arc::new(BiomeMap::from_ron(r#"[
             (biome: "frozen_volcano", height: (min: 0.0, max: 1.0), temperature: (min: -20.0, max: -5.0)),
             (biome: "volcano", height: (min: 0.0, max: 0.7), temperature: (min: -5.0, max: 20.0)),
             (biome: "crater", height: (min: 0.7, max: 1.0), temperature: (min: -5.0, max: 20.0)),
         ]"#, &repository).unwrap());
-        let default_map = Arc::new(BiomeMap::parse(&repository));
+        let default_map = Arc::new(crate::old_preset::map(&repository));
         let stage = BiomeStage::new(Arc::clone(&default_map));
         for (height, temperature, expected) in [
             (0.5, -10.0, repository.id("frozen_volcano")),

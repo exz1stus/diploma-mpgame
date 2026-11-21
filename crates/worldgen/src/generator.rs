@@ -154,7 +154,7 @@ mod tests {
     use crate::{
         BiomeMap, BiomeMapDefinition, BiomeStage, ClampHeightStage, ElevationStage, NoiseSource,
         PlanetParams, TemperatureCoefficients, TemperatureModel, TemperatureStage, TerrainSources,
-        WorldConfig, WorldGeneratorConfig, WorldGeography,
+        WorldGeneratorConfig, WorldGeography,
     };
 
     #[test]
@@ -170,7 +170,7 @@ mod tests {
             }
         }
 
-        let biomes = Arc::new(BiomeRepository::parse());
+        let biomes = Arc::new(crate::old_preset::biomes());
         let stages: Vec<Box<dyn GenerationStage>> = vec![
             Box::new(ElevationStage::new(FlatNoise)),
             Box::new(ConeStage(Arc::new(BiomeMap::from_ron(
@@ -184,7 +184,7 @@ mod tests {
                 WorldGeography::new(16, 4),
                 PlanetParams::default(),
             ))),
-            Box::new(BiomeStage::new(Arc::new(BiomeMap::parse(&biomes)))),
+            Box::new(BiomeStage::new(Arc::new(crate::old_preset::map(&biomes)))),
         ];
         let generator = WorldGenerator::new(
             WorldGeneratorConfig::default(),
@@ -198,7 +198,7 @@ mod tests {
         assert_eq!(cone.biome, biomes.id("volcano").unwrap());
         assert_eq!(
             Some(cone.ground),
-            BiomeMap::parse(&biomes).determine_biome(2.0, 1.0),
+            crate::old_preset::map(&biomes).determine_biome(2.0, 1.0),
             "the feature biome sits on the terrain biome"
         );
         let plain = generator.tile_data_at(TilePos { x: 1, y: 0 });
@@ -264,7 +264,7 @@ mod tests {
     }
 
     fn volcanic_world(chunk_size: u32, probability: f64) -> WorldGenerator {
-        let mut config = WorldConfig::bundled();
+        let mut config = crate::old_preset::config();
         config.world.seed = 42;
         config.world.chunk_size = chunk_size;
         config.world.world_size_chunks = 64 / chunk_size;

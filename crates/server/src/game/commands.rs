@@ -24,7 +24,7 @@ use shared::{
     snapshots::{NetworkEntityId, NetworkIdentity},
 };
 
-use crate::networking::{client::ReplicationClients, messages::MessageBuffer, server::TickCounter};
+use crate::net::{client::ReplicationClients, messages::MessageBuffer, server::TickCounter};
 
 pub fn plugin(app: &mut App) {
     app.add_command::<Shoot>();

@@ -1,4 +1,4 @@
-// Objects are drawn like the client draws them (world_presentation/objects.rs): the kind's
+// Objects are drawn like the client draws them (world/presentation/objects.rs): the kind's
 // texture stretched over the footprint, or a rectangle in its placeholder color at 90 %.
 export const PLACEHOLDER_SCALE = 0.9;
 

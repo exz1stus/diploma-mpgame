@@ -215,14 +215,15 @@ function terrainMessage(cx, cy, sources) {
     const sample = sampleAt(x, y);
     if (sample?.status !== 1) return null;
     const texture = drawnTexture(look.catalog, sample.biomeId, sample.groundId);
-    return [texture, look.catalog.overlay[texture] ?? 0, ...look.catalog.tints[drawnBiome(look.catalog, sample.biomeId, sample.groundId)]];
+    const biome = drawnBiome(look.catalog, sample.biomeId, sample.groundId);
+    return [texture, look.catalog.overlay[texture] ?? 0, ...look.catalog.tints[biome], biome];
   }, look.blend.tint_radius);
   // Outside-world padding and unclassified tiles (which the client never receives) stay empty.
   const hidden = new Uint8Array(size * size);
   for (let i = 0; i < size * size; i++) hidden[i] = sources[4].bytes[i * SAMPLE_BYTES] === 1 ? 0 : 1;
   return {
     size, originX: cx * size, originY: cy * size, textures: look.stack, blend: look.blend,
-    data: { layer: data.layer.buffer, level: data.level.buffer, tint: data.tint.buffer }, hidden: hidden.buffer,
+    data: { layer: data.layer.buffer, level: data.level.buffer, biome: data.biome.buffer, tint: data.tint.buffer }, hidden: hidden.buffer,
   };
 }
 
@@ -258,7 +259,7 @@ function fetchTerrainVisible(minX, minY, maxX, maxY) {
     const revision = look.revision;
     const message = terrainMessage(cx, cy, sources);
     const imageSide = config.size * imagePixelsPerTile(config.size, look.blend);
-    composeTerrainImage(message, [message.data.layer, message.data.level, message.data.tint, message.hidden])
+    composeTerrainImage(message, [message.data.layer, message.data.level, message.data.biome, message.data.tint, message.hidden])
       .then(image => {
         if (terrainActive.get(id) !== token || cache.get(id) !== sources[4]) { image.close(); return; }
         const previous = terrainCache.get(id);
@@ -329,7 +330,7 @@ function installControls(nextControls) {
       'Temperature coefficients': 'Temperature is always the daily average for the selected season.',
       Planet: 'Orbit: 0 / 0.5 equinox, 0.25 northern summer, 0.75 northern winter.',
       Craters: 'Territory is marked without replacing terrain colors. Temperature offsets heat or cool affected tiles before biome selection. Density is the expected number per cell; 0 disables craters. Maximum radius × 1.5 must fit within a cell.',
-      'Impact basins': 'Territory is marked without replacing terrain colors. Temperature offsets heat or cool basin interiors before biome selection. Large, rare impacts applied before craters. Probability 0 disables basins; 1 tests every cell. Use Fit world (□) to see their extent. Smoothing octaves are capped by elevation octaves.',
+      'Impact basins': 'Each basin picks a type (default preset: basalt or sulfur) whose biome map colors its interior; outline irregularity 0 keeps them circular. Temperature offsets heat or cool basin interiors before biome selection. Large impacts applied before craters. Probability 0 disables basins; 1 tests every cell. Use Fit world (□) to see their extent. Smoothing octaves are capped by elevation octaves.',
       Volcanoes: 'Temperature offsets heat or cool affected tiles before biome selection. Raised cones with summit calderas, applied after basins and craters. Volcano territory is always marked. Final height, temperature and biome select a global tile through the separate tile map. Probability 0 disables volcanoes; 1 places one per cell. Heights and depths use the normalized height scale. Caldera radius 0 makes a solid cone. Use Fit world (□) to find sparse volcanoes.',
     };
     const hint = document.createElement('p');
@@ -880,7 +881,7 @@ async function pollBuild() {
       biomeMapView.value = Object.hasOwn(biomeMaps, selectedMap) ? selectedMap : 'Default';
       renderBiomeMap();
     }
-    if (biomesChanged || objectsChanged) editor.setMeta({ biomes, maps: biomeMaps, objectTypes });
+    if (biomesChanged || objectsChanged) editor.setMeta({ preset: biomeFile, biomes, maps: biomeMaps, objectTypes });
     biomeReady = true;
     updateUrl();
     if (buildId !== null && build !== buildId) {

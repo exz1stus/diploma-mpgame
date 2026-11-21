@@ -1,0 +1,12 @@
+// Visuals per entity kind, keyed by the `EntityKind` name the server sends.
+//   size:    diameter in world units
+//   texture: `textures/entities/<texture>.png`, defaulting to the kind's own name;
+//            while the file is missing, a circle of `size` is drawn instead
+//   tint:    PerEntity (a stable hue per entity) or Hex("#RRGGBB")
+// Kinds without an entry use `unknown`.
+(
+    unknown: (size: 16.0, tint: Hex("#ff00ff")),
+    kinds: {
+        "player": (size: 32.0, tint: PerEntity),
+    },
+)

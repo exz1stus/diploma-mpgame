@@ -48,9 +48,9 @@ pub(crate) fn first_failure(checks: &[(bool, &str)]) -> Result<(), String> {
 mod tests {
     use super::*;
     use crate::{
-        BiomeMap, BiomeRepository, BiomeStage, ClampHeightStage, GenerationStage, NoiseSource,
-        PlanetParams, TemperatureCoefficients, TemperatureModel, TemperatureStage, TileDraft,
-        TilePos, WorldGeography,
+        BiomeStage, ClampHeightStage, GenerationStage, NoiseSource, PlanetParams,
+        TemperatureCoefficients, TemperatureModel, TemperatureStage, TileDraft, TilePos,
+        WorldGeography,
     };
     use rand::SeedableRng;
     use std::sync::Arc;
@@ -63,7 +63,7 @@ mod tests {
     }
 
     fn check_feature<G: FeatureGenerator>(generator: G, expected_biome: &str) {
-        let repository = BiomeRepository::parse();
+        let repository = crate::old_preset::biomes();
         let map = Arc::new(generator.biome_map().resolve(&repository).unwrap());
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
         let features = generator.generate_cell(0, 0, &mut rng);
@@ -100,7 +100,7 @@ mod tests {
             tile.temperature,
             tile.temperature_offset - 10.0 * tile.height
         );
-        let terrain = BiomeMap::parse(&repository);
+        let terrain = crate::old_preset::map(&repository);
         let ground = terrain.determine_biome(tile.temperature, tile.height);
         BiomeStage::new(Arc::new(terrain)).apply(pos, &mut tile);
         let finished = tile.finish();
@@ -131,7 +131,7 @@ mod tests {
 
     #[test]
     fn each_feature_uses_its_configured_map_and_preserves_heating_until_biome_selection() {
-        let config = crate::WorldConfig::bundled();
+        let config = crate::old_preset::config();
         let mut crater = config.craters;
         crater.density = 4.0;
         crater.temperature_offset = 20.0;
@@ -150,27 +150,74 @@ mod tests {
     }
 
     #[test]
-    fn bundled_feature_maps_cover_climate_bands() {
-        let repository = BiomeRepository::parse();
-        for definition in [
-            crater::CraterGenerator::default().biome_map,
-            basin::BasinSettings::default().biome_map,
-            volcano::VolcanoGenerator::default().biome_map,
+    fn default_maps_cover_the_climate_domain_with_the_preset_kinds() {
+        let repository = crate::BiomeRepository::parse();
+        let name = |id| repository.get(id).unwrap().name.clone();
+        let terrain = crate::BiomeMap::parse(&repository);
+        assert!(
+            crater::CraterGenerator::default().biome_map.0.is_empty(),
+            "craters only shape height and keep the terrain or basin biome map"
+        );
+        let settings = basin::BasinSettings::default();
+        let variants: Vec<_> = settings
+            .variants
+            .iter()
+            .map(|variant| variant.name.as_str())
+            .collect();
+        assert_eq!(variants, ["basalt", "sulfur"]);
+        assert!(settings.shape_noise > 0.0, "basins have irregular outlines");
+        let basins: Vec<_> = settings
+            .biome_maps()
+            .iter()
+            .map(|map| map.resolve(&repository).unwrap())
+            .collect();
+        let volcanoes = volcano::VolcanoGenerator::default()
+            .biome_map
+            .resolve(&repository)
+            .unwrap();
+        for temperature in [
+            -60.0, -35.0, -16.0, -12.0, -6.0, 0.0, 5.999, 6.0, 13.0, 14.0, 59.999,
         ] {
-            let map = definition.resolve(&repository).unwrap();
-            for temperature in [
-                -50.0, -35.0, -30.0, -20.0, -12.0, -5.0, -2.0, 0.0, 2.0, 5.0, 8.0, 14.0, 20.0,
-                39.999,
-            ] {
-                for height in [0.0, 0.32, 0.4, 0.44, 0.5, 0.52, 0.65, 0.68, 0.78, 1.0] {
-                    let id = map
+            for height in [0.0, 0.37, 0.38, 0.45, 0.5, 0.6, 0.62, 0.9, 1.0] {
+                let ground = name(
+                    terrain
                         .determine_biome(temperature, height)
-                        .expect("feature map must cover the default climate domain");
-                    if temperature < -20.0 {
-                        assert!(repository.get(id).unwrap().name.starts_with("polar_"));
+                        .expect("terrain covers"),
+                );
+                let kind = match temperature {
+                    t if t < -16.0 => "snow_",
+                    t if t < -6.0 => "frost_",
+                    t if t < 6.0 => "plain_",
+                    _ => "desert_",
+                };
+                assert!(ground.starts_with(kind), "{ground} at {temperature} °C");
+                assert!(
+                    name(volcanoes.determine_biome(temperature, height).unwrap())
+                        .starts_with("basalt_")
+                );
+                // Sulfur and basalt appear only in their basin types.
+                for (map, kind) in basins.iter().zip(["basalt_", "sulfur_"]) {
+                    match map.determine_biome(temperature, height) {
+                        Some(id) => {
+                            assert!(temperature >= -6.0);
+                            assert!(name(id).starts_with(kind));
+                        }
+                        None => assert!(
+                            temperature < -6.0,
+                            "frozen basins fall back to the terrain map"
+                        ),
                     }
                 }
             }
         }
+        // Lower ground gets the lower variant in every kind.
+        assert_eq!(
+            name(terrain.determine_biome(0.0, 0.1).unwrap()),
+            "plain_floor"
+        );
+        assert_eq!(
+            name(terrain.determine_biome(0.0, 0.7).unwrap()),
+            "plain_ridge"
+        );
     }
 }

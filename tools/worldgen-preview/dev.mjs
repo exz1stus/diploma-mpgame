@@ -44,8 +44,8 @@ function clientAsset(path) {
     };
     return { json: { tiles: list('tiles'), objects: list('objects') } };
   }
-  const world = /^\/client-assets\/world\/(tiles|objects)\.ron$/.exec(path);
-  if (world) return { file: resolve(clientAssets, 'world', `${world[1]}.ron`), type: 'text/plain' };
+  const world = /^\/client-assets\/world\/(presets\/old\/)?(tiles|objects)\.ron$/.exec(path);
+  if (world) return { file: resolve(clientAssets, 'world', world[1] ?? '', `${world[2]}.ron`), type: 'text/plain' };
   const texture = /^\/client-assets\/textures\/(tiles|objects)\/([A-Za-z0-9_-]+)\.png$/.exec(path);
   if (texture) return { file: resolve(clientAssets, 'textures', texture[1], `${texture[2]}.png`), type: 'image/png' };
   return null;

@@ -8,7 +8,7 @@ use std::{
     sync::Arc,
 };
 
-use crate::{config::AppConfig, networking::server::TickSet};
+use crate::{config::AppConfig, net::server::TickSet};
 
 pub(crate) mod components;
 pub(crate) mod coords;

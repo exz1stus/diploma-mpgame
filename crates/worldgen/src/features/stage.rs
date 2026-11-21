@@ -11,8 +11,9 @@ pub struct FeatureStage<G: FeatureGenerator> {
     kind: FeatureKind,
     layer: FeatureLayer<G>,
     chunk_size: u32,
-    /// `None` for an empty map: the feature only shapes terrain and leaves biomes alone.
-    biome_map: Option<Arc<BiomeMap>>,
+    /// Per feature variant; `None` for an empty map: the feature only shapes terrain and
+    /// leaves biomes alone.
+    biome_maps: Vec<Option<Arc<BiomeMap>>>,
     // cache features for each chuck, to avoid mulitple intersection lookups
     chunk_features: Mutex<HashMap<ChunkPos, Arc<[G::Feature]>>>,
 }
@@ -26,26 +27,32 @@ impl<G: FeatureGenerator> FeatureStage<G> {
         biomes: &BiomeRepository,
     ) -> Self {
         assert!(chunk_size > 0, "chunk_size must be positive");
-        let biome_map = generator
-            .biome_map()
-            .resolve(biomes)
-            .expect("feature biome map must reference valid biomes and ranges");
+        let biome_maps = generator
+            .biome_maps()
+            .iter()
+            .map(|definition| {
+                let map = definition
+                    .resolve(biomes)
+                    .expect("feature biome map must reference valid biomes and ranges");
+                (!map.rules().is_empty()).then(|| Arc::new(map))
+            })
+            .collect();
         Self {
             kind,
             layer: FeatureLayer::new(seed, generator),
             chunk_size,
-            biome_map: (!biome_map.rules().is_empty()).then(|| Arc::new(biome_map)),
+            biome_maps,
             chunk_features: Mutex::new(HashMap::new()),
         }
     }
 
-    /// Records the territory; only a feature with biome rules replaces the biome map.
-    fn mark(&self, tile: &mut TileDraft, distance: f64) {
+    /// Records the territory; only a feature variant with biome rules replaces the biome map.
+    fn mark(&self, tile: &mut TileDraft, distance: f64, variant: usize) {
         tile.feature = Some(FeatureMark {
             kind: self.kind,
             distance,
         });
-        if let Some(map) = &self.biome_map {
+        if let Some(Some(map)) = self.biome_maps.get(variant) {
             tile.biome_map = Some(Arc::clone(map));
         }
     }
@@ -80,7 +87,7 @@ impl<G: FeatureGenerator> GenerationStage for FeatureStage<G> {
         };
         for feature in self.features_for_chunk(chunk).iter() {
             if let Some(distance) = feature.apply(pos, tile) {
-                self.mark(tile, distance);
+                self.mark(tile, distance, feature.variant());
             }
         }
     }
@@ -160,7 +167,7 @@ mod tests {
                 biome_map: Default::default(),
             },
             16,
-            &BiomeRepository::parse(),
+            &crate::old_preset::biomes(),
         );
         let sample = |x| {
             let mut tile = TileDraft::default();
@@ -186,8 +193,8 @@ mod tests {
 
     #[test]
     fn maps_apply_only_inside_features_and_last_map_gaps_use_default() {
-        let biomes = BiomeRepository::parse();
-        let default_map = Arc::new(BiomeMap::parse(&biomes));
+        let biomes = crate::old_preset::biomes();
+        let default_map = Arc::new(crate::old_preset::map(&biomes));
         let make_stage = |source: &str| {
             FeatureStage::new(
                 FeatureKind::Crater,
@@ -215,13 +222,13 @@ mod tests {
         );
         assert!(Arc::ptr_eq(
             tile.biome_map.as_ref().unwrap(),
-            first.biome_map.as_ref().unwrap()
+            first.biome_maps[0].as_ref().unwrap()
         ));
         last.apply(TilePos { x: 0, y: 8 }, &mut tile);
         assert!(
             Arc::ptr_eq(
                 tile.biome_map.as_ref().unwrap(),
-                first.biome_map.as_ref().unwrap()
+                first.biome_maps[0].as_ref().unwrap()
             ),
             "unaffected tiles retain the earlier map"
         );
@@ -232,7 +239,7 @@ mod tests {
         );
         assert!(Arc::ptr_eq(
             tile.biome_map.as_ref().unwrap(),
-            last.biome_map.as_ref().unwrap()
+            last.biome_maps[0].as_ref().unwrap()
         ));
         tile.height = 0.5;
         tile.temperature = 0.0;
@@ -243,7 +250,7 @@ mod tests {
 
     #[test]
     fn features_without_biome_rules_mark_territory_but_keep_the_biome_map() {
-        let biomes = BiomeRepository::parse();
+        let biomes = crate::old_preset::biomes();
         let stage = |kind, source: &str| {
             FeatureStage::new(
                 kind,
@@ -279,7 +286,7 @@ mod tests {
         assert!(
             Arc::ptr_eq(
                 tile.biome_map.as_ref().unwrap(),
-                basin.biome_map.as_ref().unwrap()
+                basin.biome_maps[0].as_ref().unwrap()
             ),
             "a crater inside a basin keeps the basin's biome rules"
         );

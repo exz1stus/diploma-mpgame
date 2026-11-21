@@ -1,7 +1,7 @@
 // Editable copy of the client's presentation files (crates/client/assets/world/{tiles,objects}.ron)
 // plus the texture images the client would load from assets/textures/{tiles,objects}/<name>.png.
-// Name resolution mirrors crates/client/src/world_presentation/{config,catalog}.rs.
-import { DEFAULT_BLEND, sanitizeBlend } from './terrain.mjs';
+// Name resolution mirrors crates/client/src/world/presentation/{config,catalog}.rs.
+import { DEFAULT_BLEND, sanitizeBlend, srgbToLinear } from './terrain.mjs';
 
 export const TILE_TEXTURE_PX = 32;
 
@@ -124,18 +124,19 @@ export function tilesRon(tiles) {
 //
 // layers: texture name -> overlay layer (unlisted: 0), for height. Where textures on different
 // layers meet, the higher one overlays the lower one with a crisp, noisy edge and shades the
-// lower ground next to it; textures on the same layer blend. Give height bands increasing
-// layers.
+// lower ground next to it. Give height bands increasing layers. Within a layer, biomes meet
+// on crisp, noisy edges too, without shading.
 //
 // tints: biome name -> color the ground is multiplied by (unlisted: white), for temperature.
-// Tints are averaged over neighboring tiles, so they change in smooth gradients. Keep
-// textures neutral and let tints color them.
+// Keep textures neutral and let tints color them; close tints make biomes read as terraces.
 //
 // blend: pixels_per_tile (texture pixels per tile; textures repeat in world space),
-// smooth_width (same-layer blend width in tiles, 0-1), overlay_reach (how far a higher layer
-// reaches over a lower neighbor, 0-0.5 tiles), edge_noise (overlay edge irregularity, 0-1),
-// noise_scale (its size in tiles), ao_strength (shade at the foot of higher layers, 0-1),
-// ao_width (its width in pixels), tint_radius (tint smoothing radius in tiles).
+// overlay_reach (how far a higher layer reaches over a lower neighbor, 0-0.5 tiles),
+// edge_noise (irregularity of height and biome edges, 0-1), noise_scale (its size in tiles),
+// ao_strength (shade at the foot of higher layers, 0-1),
+// ao_width (its width in pixels), ao_south / ao_north (shade scale where the higher ground
+// lies north / south of the lower ground, 0-4), tint_radius (radius in tiles over which tints
+// are averaged within a layer; 0 keeps each biome one flat color).
 (
     textures: ${ronMap(tiles.textures)},
     default_placeholder: ${quote(tiles.default_placeholder)},
@@ -144,12 +145,13 @@ export function tilesRon(tiles) {
     tints: ${ronMap(tiles.tints)},
     blend: (
         pixels_per_tile: ${blend.pixels_per_tile},
-        smooth_width: ${number(blend.smooth_width)},
         overlay_reach: ${number(blend.overlay_reach)},
         edge_noise: ${number(blend.edge_noise)},
         noise_scale: ${number(blend.noise_scale)},
         ao_strength: ${number(blend.ao_strength)},
         ao_width: ${blend.ao_width},
+        ao_south: ${number(blend.ao_south)},
+        ao_north: ${number(blend.ao_north)},
         tint_radius: ${blend.tint_radius},
     ),
 )
@@ -246,33 +248,127 @@ function surfaceOf(name, rules) {
 
 export const NEUTRAL_PLACEHOLDER = '#D0D0D0';
 
+// Temperature palette for tints: close, muted colors from snow white through frost blue-gray,
+// neutral gray and warm gray to tan, ochre, copper and rust. [°C, sRGB].
+export const TEMPERATURE_RAMP = [
+  [-50, '#E8EEF4'], [-30, '#D3DDE6'], [-18, '#BEC8D0'], [-8, '#B0B6BA'], [0, '#ADADAA'],
+  [6, '#B3AB9E'], [12, '#BAA78E'], [18, '#C0A07E'], [26, '#BE9271'], [35, '#B07E63'], [45, '#9E6C56'],
+];
+
+const linearToSrgbByte = value => Math.round(Math.min(1, Math.max(0, value <= 0.0031308 ? value * 12.92 : 1.055 * value ** (1 / 2.4) - 0.055)) * 255);
+
+// The ramp color at a temperature (interpolated in linear light), brightened slightly with
+// height so higher bands read a little lighter: ×0.94 at height 0 to ×1.06 at height 1.
+export function rampTint(temperature, height = 0.5) {
+  const ramp = TEMPERATURE_RAMP;
+  let i = 0;
+  while (i < ramp.length - 2 && temperature > ramp[i + 1][0]) i++;
+  const [t0, c0] = ramp[i];
+  const [t1, c1] = ramp[i + 1];
+  const k = Math.min(1, Math.max(0, (temperature - t0) / (t1 - t0)));
+  const light = 0.94 + 0.12 * Math.min(1, Math.max(0, height));
+  const a = hexRgb(c0);
+  const b = hexRgb(c1);
+  const rgb = a.map((value, c) => {
+    const mixed = srgbToLinear(value / 255) * (1 - k) + srgbToLinear(b[c] / 255) * k;
+    return linearToSrgbByte(mixed * light);
+  });
+  return `#${rgb.map(value => value.toString(16).padStart(2, '0')).join('').toUpperCase()}`;
+}
+
+// Ramp tints for every biome with rules: the color at the midpoint of its temperature and
+// height ranges (averaged over its rules). Unbounded ranges are clamped to the ramp.
+export function rampTints(rules, biomeNames) {
+  const tints = {};
+  const [low, high] = [TEMPERATURE_RAMP[0][0], TEMPERATURE_RAMP.at(-1)[0]];
+  const clamp = value => Math.min(high, Math.max(low, value));
+  for (const name of biomeNames) {
+    const own = rules.filter(rule => rule.name === name);
+    if (!own.length) continue;
+    const temperature = own.reduce((sum, rule) => sum + (clamp(rule.temperature.min) + clamp(rule.temperature.max)) / 2, 0) / own.length;
+    const height = own.reduce((sum, rule) => sum + (rule.height.min + rule.height.max) / 2, 0) / own.length;
+    tints[name] = rampTint(temperature, height);
+  }
+  return tints;
+}
+
 // Height-banded presentation, Minecraft style: biomes share neutral textures per surface and
 // height layer (\`regolith_2\`, \`frost_1\`, ...) and get their color from tints. Layers come
-// from defaultLayers; tints default to the biomes' old placeholder colors. Biomes without an
-// entry keep drawing their ground.
+// from defaultLayers; tints from the temperature ramp. Biomes without an entry keep drawing
+// their ground.
 export function bandedPresentation(tiles, terrainRules, featureMaps, biomeNames) {
   const biomeLayers = defaultLayers(terrainRules, featureMaps, { textures: {} });
   const rules = [...terrainRules, ...featureMaps.flat()];
   const out = {
     textures: {}, default_placeholder: tiles.default_placeholder ?? '#FF00FF', placeholder_colors: {},
-    layers: {}, tints: { ...(tiles.tints || {}) }, blend: sanitizeBlend({ ...DEFAULT_BLEND, ...tiles.blend }),
+    layers: {}, tints: {}, blend: sanitizeBlend({ ...DEFAULT_BLEND, ...tiles.blend }),
   };
+  const ramp = rampTints(rules, biomeNames);
   for (const name of biomeNames) {
-    const legacy = tiles.placeholder_colors?.[textureFor(tiles, name)];
     if (!listsName(tiles, name) || !Object.hasOwn(biomeLayers, name)) continue;
     const layer = biomeLayers[name];
     const texture = `${surfaceOf(name, rules.filter(rule => rule.name === name))}_${layer}`;
     out.textures[name] = texture;
     out.placeholder_colors[texture] = NEUTRAL_PLACEHOLDER;
     out.layers[texture] = layer;
-    if (legacy && !out.tints[name]) out.tints[name] = legacy;
+    out.tints[name] = tiles.tints?.[name] ?? ramp[name];
   }
   return out;
 }
 
+// The default preset's palette: tints per biome kind, from crater floor to ridge (lower ground
+// is darker so craters read as dark bowls). Biome names are \`<kind>_<band>\`.
+export const PLANET_BANDS = ['floor', 'low', 'mid', 'upland', 'ridge'];
+export const PLANET_PALETTE = {
+  snow: ['#C9D3DB', '#D8E0E6', '#E4EAEE', '#EEF2F5', '#F8FAFB'],
+  frost: ['#7F8D97', '#93A0A9', '#A7B2B9', '#BAC3C8', '#CDD4D8'],
+  plain: ['#57534D', '#6B665E', '#7F7970', '#938C81', '#A79F93'],
+  desert: ['#6F5E48', '#85715A', '#9B846A', '#AF977A', '#C1A98B'],
+  sulfur: ['#6E6230', '#8A7B3A', '#A49244', '#BBA850', '#CDBC62'],
+  basalt: ['#24262A', '#2F3135', '#3A3C40', '#46484B', '#535457'],
+};
+export const PLANET_NEUTRAL = '#EEEEEE';
+
+// Kind and band of a default-preset biome or texture name, or null.
+export function planetName(name) {
+  const match = /^(snow|frost|plain|desert|sulfur|basalt)_(floor|low|mid|upland|ridge)$/.exec(name);
+  return match ? { kind: match[1], band: PLANET_BANDS.indexOf(match[2]) } : null;
+}
+
+// Palette tints for the default preset's biomes (others are left out).
+export function planetTints(biomeNames) {
+  return Object.fromEntries(biomeNames.map(name => [name, planetName(name)])
+    .filter(([, parsed]) => parsed)
+    .map(([name, { kind, band }]) => [name, PLANET_PALETTE[kind][band]]));
+}
+
+// The default preset's presentation: one neutral texture per biome, overlay layer by height band
+// (floor 1 to ridge 5), palette tints. Biomes outside the palette (crater territory) draw their
+// ground.
+export function planetPresentation(biomeNames, blend = {}) {
+  const tiles = { textures: {}, default_placeholder: '#FF00FF', placeholder_colors: {}, layers: {}, tints: planetTints(biomeNames), blend: sanitizeBlend({ ...DEFAULT_BLEND, ...blend }) };
+  for (const name of Object.keys(tiles.tints)) {
+    tiles.placeholder_colors[name] = PLANET_NEUTRAL;
+    tiles.layers[name] = planetName(name).band + 1;
+  }
+  return tiles;
+}
+
+// Sheet art per default-preset texture: lower bands get rockier regolith.
+const PLANET_SOURCES = {
+  snow: ['snow', 'snow', 'snow', 'snow', 'snow'],
+  frost: ['ice', 'ice', 'ice', 'ice', 'ice'],
+  plain: ['regolith_lowland', 'regolith_rocky', 'regolith_cracked', 'regolith_highland', 'regolith_highland'],
+  desert: ['regolith_rocky', 'regolith_cracked', 'regolith_highland', 'regolith_highland', 'regolith_highland'],
+  sulfur: ['regolith_cracked', 'regolith_cracked', 'regolith_highland', 'regolith_highland', 'regolith_highland'],
+  basalt: ['basalt', 'basalt', 'basalt', 'basalt', 'basalt'],
+};
+
 // Sheet sources for banded texture names: lower layers get rockier regolith, frost turns from
 // ice to snow with height, basalt for volcanic ground. Art is baked neutral; tints color it.
 export function defaultTileSource(textureName) {
+  const planet = planetName(textureName);
+  if (planet) return { id: PLANET_SOURCES[planet.kind][planet.band], tint: 'tint', strength: 1 };
   const match = /^(regolith|frost|basalt)_(\d+)$/.exec(textureName);
   if (!match) return null;
   const layer = Number(match[2]);

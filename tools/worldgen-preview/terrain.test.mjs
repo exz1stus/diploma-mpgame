@@ -2,12 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildTileData, composeChunk, edgeNoise, lattice, sanitizeBlend } from './dist/terrain.mjs';
 import {
-  bakeObjectTexture, bandedPresentation, defaultLayers, defaultTileSource, drawnTexture, objectsRon, parseRon,
+  bakeObjectTexture, bandedPresentation, defaultLayers, rampTint, hexRgb, planetPresentation, PLANET_PALETTE, defaultTileSource, drawnTexture, objectsRon, parseRon,
   stackLayers, tileCatalog, tilesRon,
 } from './dist/presentation.mjs';
 
 // No edge noise, no height shadow, no tint smoothing.
-const NO_NOISE = { pixels_per_tile: 2, smooth_width: 1, overlay_reach: 0, edge_noise: 0, noise_scale: 0.5, ao_strength: 0, ao_width: 0, tint_radius: 0 };
+const NO_NOISE = { pixels_per_tile: 2, overlay_reach: 0, edge_noise: 0, noise_scale: 0.5, ao_strength: 0, ao_width: 0, ao_south: 1, ao_north: 1, tint_radius: 0 };
 const WHITE = [255, 255, 255];
 
 // Solid 2 × 2 textures: index i is gray level 40 * (i + 1).
@@ -15,11 +15,11 @@ function textures(count) {
   return { width: 2, height: 2, layers: Array.from({ length: count }, (_, i) => Uint8Array.from({ length: 16 }, (_, c) => (c % 4 === 3 ? 255 : 40 * (i + 1)))) };
 }
 
-// A row of tiles described per column: [texture, overlay, ...tint (white when omitted)];
-// every row is the same.
+// A row of tiles described per column: [texture, overlay, ...tint (white when omitted),
+// biome (0 when omitted)]; every row is the same.
 function chunk(columns, { originX = 0, blend = NO_NOISE, neighbors = null, layers = textures(4) } = {}) {
   const size = columns.length;
-  const full = tile => tile && (tile.length === 5 ? tile : [...tile, ...WHITE]);
+  const full = tile => tile && (tile.length === 6 ? tile : tile.length === 5 ? [...tile, 0] : [...tile, ...WHITE, 0]);
   const data = buildTileData(size, (x, y) => full(x >= 0 && x < size ? columns[x] : neighbors?.(x, y) ?? null), sanitizeBlend(blend).tint_radius);
   return composeChunk({ size, originX, originY: 0, data, textures: layers, blend });
 }
@@ -37,8 +37,9 @@ test('the hash matches the shader\'s u32 arithmetic', () => {
 });
 
 test('blend settings clamp like the client', () => {
-  assert.deepEqual(sanitizeBlend({ pixels_per_tile: 0, smooth_width: 3, overlay_reach: -1, edge_noise: NaN, noise_scale: 0, ao_width: 40, tint_radius: 99 }),
-    { pixels_per_tile: 1, smooth_width: 1, overlay_reach: 0, edge_noise: 0.35, noise_scale: 0.05, ao_strength: 0.35, ao_width: 16, tint_radius: 12 });
+  assert.deepEqual(sanitizeBlend({ pixels_per_tile: 0, overlay_reach: -1, edge_noise: NaN, noise_scale: 0, ao_width: 40, tint_radius: 99 }),
+    { pixels_per_tile: 1, overlay_reach: 0, edge_noise: 0.35, noise_scale: 0.05, ao_strength: 0.35, ao_width: 16, ao_south: 1.5, ao_north: 0.4, tint_radius: 12 });
+  assert.equal(sanitizeBlend({ ao_south: 9 }).ao_south, 4);
 });
 
 test('textures repeat in world space with image rows top-down and world +Y up', () => {
@@ -66,13 +67,27 @@ test('a higher layer overlays a lower one with a crisp edge, reaching further wi
   assert.ok(new Set(edges).size > 1, 'edge noise makes the border irregular');
 });
 
-test('textures on the same layer fade smoothly', () => {
-  const image = chunk([[0, 2], [0, 2], [1, 2], [1, 2]], { blend: { ...NO_NOISE, pixels_per_tile: 8 } });
-  const row = [...Array(image.width).keys()].map(x => pixel(image, x, 3)[0]);
-  assert.ok(row.some(value => value > 40 && value < 80), 'mixed colors across the border');
-  for (let i = 1; i < row.length; i++) assert.ok(row[i] >= row[i - 1], 'monotonic fade');
-  const crisp = chunk([[0, 2], [0, 2], [1, 2], [1, 2]], { blend: { ...NO_NOISE, pixels_per_tile: 8, smooth_width: 0 } });
-  assert.ok([...Array(crisp.width).keys()].every(x => [40, 80].includes(pixel(crisp, x, 3)[0])), 'zero width is crisp');
+test('biomes on one layer meet on a crisp edge that edge noise makes irregular', () => {
+  // Biome 1 (texture 0, gray 40) | biome 2 (texture 1, gray 80), same layer.
+  const columns = [[0, 2, ...WHITE, 1], [0, 2, ...WHITE, 1], [1, 2, ...WHITE, 2], [1, 2, ...WHITE, 2]];
+  const crisp = chunk(columns, { blend: { ...NO_NOISE, pixels_per_tile: 8 } });
+  const row = [...Array(crisp.width).keys()].map(x => pixel(crisp, x, 3)[0]);
+  assert.deepEqual(row, [...Array(16).fill(40), ...Array(16).fill(80)], 'no noise: a clean edge on the tile border, no mixed colors');
+  const noisy = chunk(columns, { blend: { ...NO_NOISE, pixels_per_tile: 8, edge_noise: 0.6 } });
+  const values = new Set();
+  const edges = [];
+  for (let y = 0; y < noisy.width; y++) {
+    const line = [...Array(noisy.width).keys()].map(x => pixel(noisy, x, y)[0]);
+    line.forEach(value => values.add(value));
+    edges.push(line.indexOf(80));
+  }
+  assert.deepEqual([...values].sort(), [40, 80], 'still crisp: only the two textures');
+  assert.ok(new Set(edges).size > 2, 'the edge wanders');
+  // One texture, two biome tints: the tint steps crisply on the edge.
+  const tinted = chunk([[0, 2, 200, 0, 0, 1], [0, 2, 200, 0, 0, 1], [0, 2, 0, 0, 200, 2], [0, 2, 0, 0, 200, 2]],
+    { layers: { width: 2, height: 2, layers: [new Uint8Array(16).fill(255)] }, blend: { ...NO_NOISE, pixels_per_tile: 8 } });
+  assert.deepEqual(pixel(tinted, 15, 3).slice(0, 3), [200, 0, 0]);
+  assert.deepEqual(pixel(tinted, 16, 3).slice(0, 3), [0, 0, 200], 'tints switch on the biome edge');
 });
 
 test('lower ground at the foot of a higher layer is shaded in whole-pixel steps', () => {
@@ -88,6 +103,30 @@ test('lower ground at the foot of a higher layer is shaded in whole-pixel steps'
   assert.ok([...Array(flat.width).keys()].every(x => pixel(flat, x, 3)[0] === 40));
 });
 
+// A column of pixels through a raised band of tiles (rows 3..4 on layer 1, the rest on 0),
+// from the bottom (south) up.
+function bandColumn(blend) {
+  const size = 8;
+  const data = buildTileData(size, (x, y) => [0, y >= 3 && y <= 4 ? 1 : 0, ...WHITE]);
+  const image = composeChunk({ size, originX: 0, originY: 0, data, textures: textures(1), blend });
+  return [...Array(image.width).keys()].map(y => pixel(image, 20, y)[0]);
+}
+
+test('the height shadow is stronger south of a raised band than north of it', () => {
+  const column = bandColumn({ ...NO_NOISE, pixels_per_tile: 8, ao_strength: 0.4, ao_width: 3, ao_south: 1.5, ao_north: 0.4 });
+  // Rows 0..23 lie south of the band (it is north of them); rows 40..63 lie north.
+  const south = column.slice(0, 24);
+  const north = column.slice(40);
+  const shaded = values => values.filter(value => value < 40).length;
+  assert.ok(shaded(south) > shaded(north), `wider on the south side: ${shaded(south)} vs ${shaded(north)} px`);
+  assert.ok(Math.min(...south) < Math.min(...north), 'darker on the south side');
+  assert.ok(shaded(north) > 0, 'the north side still has a little shade');
+  const even = bandColumn({ ...NO_NOISE, pixels_per_tile: 8, ao_strength: 0.4, ao_width: 3, ao_south: 1, ao_north: 1 });
+  assert.equal(shaded(even.slice(0, 24)), shaded(even.slice(40)), 'equal scales shade both sides alike');
+  const none = bandColumn({ ...NO_NOISE, pixels_per_tile: 8, ao_strength: 0.4, ao_width: 3, ao_south: 1, ao_north: 0 });
+  assert.equal(shaded(none.slice(40)), 0, 'north scale 0 removes the north shadow');
+});
+
 test('tints multiply the ground and are smoothed across tiles into a gradient', () => {
   // White texture; tint jumps from red to blue between columns 3 and 4.
   const layers = { width: 2, height: 2, layers: [new Uint8Array(16).fill(255)] };
@@ -99,6 +138,17 @@ test('tints multiply the ground and are smoothed across tiles into a gradient', 
   for (let i = 1; i < reds.length; i++) assert.ok(reds[i] <= reds[i - 1], 'monotonic gradient');
   const mixed = reds.filter(red => red > 10 && red < 190).length;
   assert.ok(mixed >= 20, `the gradient spans several tiles (${mixed} px)`);
+});
+
+test('tints never cross a height step', () => {
+  // White texture; the left half (layer 1, green tint) is higher than the right (layer 0, red).
+  const layers = { width: 2, height: 2, layers: [new Uint8Array(16).fill(255)] };
+  const columns = [...Array(8)].map((_, x) => (x < 4 ? [0, 1, 0, 200, 0] : [0, 0, 200, 0, 0]));
+  const image = chunk(columns, { layers, blend: { ...NO_NOISE, pixels_per_tile: 4, tint_radius: 3 } });
+  for (let x = 0; x < image.width; x++) {
+    const [r, g] = pixel(image, x, 12);
+    assert.ok(r === 0 || g === 0, `pixel ${x} mixes both tints: ${r}, ${g}`);
+  }
 });
 
 test('chunks are seamless: two halves with neighbor borders match one chunk', () => {
@@ -145,24 +195,53 @@ test('default layers stack by height within a temperature column', () => {
   assert.deepEqual(layers, { low: 1, high: 2, warm_low: 1, warm_high: 2, volcano: 3, crater: 3, rim: 4 });
 });
 
-test('legacy colored biomes become neutral height-band textures with tints', () => {
+test('legacy colored biomes become neutral height-band textures with ramp tints', () => {
   const rule = (name, h0, h1, t0, t1) => ({ name, height: { min: h0, max: h1 }, temperature: { min: t0, max: t1 } });
   const terrain = [rule('ice_low', 0, 0.5, -40, -20), rule('ice_high', 0.5, 1, -40, -20), rule('dust', 0, 0.5, 0, 20), rule('ridge', 0.5, 1, 0, 20)];
   const legacy = { textures: {}, default_placeholder: '#FF00FF', placeholder_colors: { ice_low: '#AACCEE', ice_high: '#EEEEFF', dust: '#A18B68', ridge: '#ABA18B', volcano: '#454850' } };
   const tiles = bandedPresentation(legacy, terrain, [[rule('volcano', 0, 1, -50, 50)]], ['ice_low', 'ice_high', 'dust', 'ridge', 'volcano', 'crater']);
   assert.deepEqual(tiles.textures, { ice_low: 'frost_1', ice_high: 'frost_2', dust: 'regolith_1', ridge: 'regolith_2', volcano: 'basalt_3' });
   assert.deepEqual(tiles.layers, { frost_1: 1, frost_2: 2, regolith_1: 1, regolith_2: 2, basalt_3: 3 });
-  assert.equal(tiles.tints.dust, '#A18B68');
+  assert.equal(tiles.tints.dust, rampTint(10, 0.25), 'tints come from the temperature ramp at the biome midpoint');
+  assert.equal(bandedPresentation({ ...legacy, tints: { dust: '#123456' } }, terrain, [], ['dust']).tints.dust, '#123456', 'existing tints are kept');
   assert.equal(tiles.textures.crater, undefined, 'unlisted feature biomes keep drawing their ground');
   assert.deepEqual(defaultTileSource('regolith_1'), { id: 'regolith_lowland', tint: 'tint', strength: 1 });
   assert.equal(defaultTileSource('frost_3').id, 'snow');
   assert.equal(defaultTileSource('custom'), null);
   const catalog = tileCatalog(['dust', 'crater'], tiles, () => false);
-  assert.deepEqual(catalog.tints, [[0xA1, 0x8B, 0x68], [255, 255, 255]]);
+  assert.deepEqual(catalog.tints, [hexRgb(rampTint(10, 0.25)), [255, 255, 255]]);
+});
+
+test('the temperature ramp is gradual: cold is blue-white, warm is tan, neighbors are close', () => {
+  const [r0, , b0] = hexRgb(rampTint(-40));
+  assert.ok(b0 > r0, 'cold tints lean blue');
+  const [r1, , b1] = hexRgb(rampTint(25));
+  assert.ok(r1 > b1, 'warm tints lean red');
+  let previous = hexRgb(rampTint(-50));
+  for (let t = -48; t <= 45; t += 2) {
+    const next = hexRgb(rampTint(t));
+    assert.ok(next.every((value, c) => Math.abs(value - previous[c]) <= 6), `2 °C steps stay close at ${t} °C`);
+    previous = next;
+  }
+  assert.ok(hexRgb(rampTint(0, 1))[0] > hexRgb(rampTint(0, 0))[0], 'higher ground is slightly lighter');
+});
+
+test('the planet preset gives every kind five darker-to-lighter height layers', () => {
+  const tiles = planetPresentation(['snow_floor', 'snow_ridge', 'plain_mid', 'basalt_low', 'crater']);
+  assert.deepEqual(tiles.layers, { snow_floor: 1, snow_ridge: 5, plain_mid: 3, basalt_low: 2 });
+  assert.equal(tiles.tints.plain_mid, PLANET_PALETTE.plain[2]);
+  assert.equal(tiles.tints.crater, undefined, 'crater territory draws its ground');
+  for (const colors of Object.values(PLANET_PALETTE)) {
+    const light = colors.map(hex => hexRgb(hex).reduce((sum, value) => sum + value, 0));
+    for (let i = 1; i < light.length; i++) assert.ok(light[i] > light[i - 1], 'higher bands are lighter');
+  }
+  assert.deepEqual(defaultTileSource('plain_floor'), { id: 'regolith_lowland', tint: 'tint', strength: 1 });
+  assert.equal(defaultTileSource('snow_mid').id, 'snow');
+  assert.equal(defaultTileSource('basalt_ridge').id, 'basalt');
 });
 
 test('exported RON parses back and keeps every setting', () => {
-  const tiles = { textures: { ash: 'basalt' }, default_placeholder: '#FF00FF', placeholder_colors: { basalt: '#202020', 'odd "name"': '#000000' }, layers: { basalt: 3 }, tints: { ash: '#AA8866' }, blend: { pixels_per_tile: 16, smooth_width: 0.5, overlay_reach: 0.2, edge_noise: 0.35, noise_scale: 0.5, ao_strength: 0.4, ao_width: 2, tint_radius: 6 } };
+  const tiles = { textures: { ash: 'basalt' }, default_placeholder: '#FF00FF', placeholder_colors: { basalt: '#202020', 'odd "name"': '#000000' }, layers: { basalt: 3 }, tints: { ash: '#AA8866' }, blend: { pixels_per_tile: 16, overlay_reach: 0.2, edge_noise: 0.35, noise_scale: 0.5, ao_strength: 0.4, ao_width: 2, ao_south: 2, ao_north: 0.25, tint_radius: 6 } };
   assert.deepEqual(parseRon(tilesRon(tiles)), tiles);
   const objects = { textures: {}, default_placeholder: '#475A47', placeholder_colors: { rock: '#5A5550' } };
   assert.deepEqual(parseRon(objectsRon(objects)), objects);

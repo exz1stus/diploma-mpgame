@@ -5,7 +5,7 @@ import {
 } from './terrain.mjs';
 import {
   DEFAULT_OBJECT_COLORS, OBJECT_SOURCES, TILE_SOURCES, TINTS, averageColor, bakeObjectTexture, bakeTileTexture,
-  bandedPresentation, defaultObjectSource, defaultTileSource, listsName, objectsRon, parseRon, placeholderOf,
+  bandedPresentation, planetTints, rampTints, defaultObjectSource, defaultTileSource, listsName, objectsRon, parseRon, placeholderOf,
   stackLayers, textureCatalog, textureFor, tileCatalog, tilesRon,
 } from './presentation.mjs';
 
@@ -13,6 +13,8 @@ import {
 const DRAFT_KEY = 'worldgen-preview-presentation-v2';
 const SHEET_URL = './textures.png';
 const CLIENT = './client-assets';
+// Client presentation folder per preset (crates/client/assets/...).
+const PRESET_WORLD = { 'old.ron': 'world/presets/old' };
 const GROUND = 'ground';
 
 const element = (tag, props = {}, children = []) => {
@@ -63,15 +65,21 @@ export class PresentationEditor {
     this.status = '';
   }
 
-  // meta: { biomes: [{name}], maps: { Default: rules, ... }, objectTypes: [{name, footprint}] }
+  // Each preset edits its own client files and keeps its own draft.
+  worldPath() { return PRESET_WORLD[this.meta?.preset] ?? 'world'; }
+  draftKey() { return `${DRAFT_KEY}:${this.meta?.preset ?? 'default.ron'}`; }
+
+  // meta: { preset, biomes: [{name}], maps: { Default: rules, ... }, objectTypes: [{name, footprint}] }
   async setMeta(meta) {
-    const first = !this.meta;
+    const reload = !this.meta || meta.preset !== this.meta.preset;
     this.meta = meta;
-    if (first) {
-      try { this.sheet = await loadImageData(SHEET_URL); } catch { this.status = 'Sprite sheet unavailable: sheet sources draw as placeholders.'; }
+    if (reload) {
+      if (!this.sheet) {
+        try { this.sheet = await loadImageData(SHEET_URL); } catch { this.status = 'Sprite sheet unavailable: sheet sources draw as placeholders.'; }
+      }
       await this.loadClientFiles();
       let draft = null;
-      try { draft = JSON.parse(localStorage.getItem(DRAFT_KEY)); } catch { /* storage unavailable */ }
+      try { draft = JSON.parse(localStorage.getItem(this.draftKey())); } catch { /* storage unavailable */ }
       this.state = draft?.tiles && draft?.objects && draft?.sources ? draft : await this.clientState();
     }
     this.rebuild();
@@ -94,7 +102,7 @@ export class PresentationEditor {
   async clientState() {
     const read = async (name, fallback) => {
       try {
-        const response = await fetch(`${CLIENT}/world/${name}`, { cache: 'no-store' });
+        const response = await fetch(`${CLIENT}/${this.worldPath()}/${name}`, { cache: 'no-store' });
         if (!response.ok) throw new Error(`${response.status}`);
         return parseRon(await response.text());
       } catch (error) {
@@ -186,7 +194,7 @@ export class PresentationEditor {
   }
 
   changed({ rerender = true } = {}) {
-    try { localStorage.setItem(DRAFT_KEY, JSON.stringify(this.state)); } catch { /* storage unavailable */ }
+    try { localStorage.setItem(this.draftKey(), JSON.stringify(this.state)); } catch { /* storage unavailable */ }
     clearTimeout(this.timer);
     this.timer = setTimeout(() => {
       this.look = this.buildLook();
@@ -196,7 +204,7 @@ export class PresentationEditor {
   }
 
   async resetToClient() {
-    try { localStorage.removeItem(DRAFT_KEY); } catch { /* storage unavailable */ }
+    try { localStorage.removeItem(this.draftKey()); } catch { /* storage unavailable */ }
     await this.loadClientFiles();
     this.state = await this.clientState();
     this.rebuild();
@@ -341,6 +349,16 @@ export class PresentationEditor {
       return element('label', { className: 'biome-row' }, [element('span', { textContent: name }), tint, input]);
     });
 
+    // Palette biomes get the preset palette; any others the temperature ramp.
+    const rampButton = element('button', { type: 'button', textContent: 'Reset tints to palette' });
+    rampButton.addEventListener('click', () => {
+      const rules = Object.values(this.meta.maps).flat();
+      const own = biomeNames.filter((_, biome) => catalog.ownTiles[biome]);
+      tiles.tints = { ...tiles.tints, ...rampTints(rules, own), ...planetTints(own) };
+      this.changed();
+    });
+    const rampRow = element('div', { className: 'action-row' }, [rampButton]);
+
     const objectCatalog = textureCatalog(this.meta.objectTypes.map(type => type.name), objects);
     const objectRows = objectCatalog.textures.map((texture, index) => {
       const kinds = this.meta.objectTypes.filter((_, kind) => objectCatalog.textureOf[kind] === index);
@@ -368,7 +386,8 @@ export class PresentationEditor {
       this.statusLine.textContent = 'Exporting…';
       try {
         const { directory, files } = await this.exportFiles();
-        this.status = `Saved ${files.length} files to ${directory}. Copy its contents into crates/client/assets/.`;
+        const target = this.worldPath() === 'world' ? 'crates/client/assets/' : `crates/client/assets/ (world/*.ron go to ${this.worldPath()}/)`;
+        this.status = `Saved ${files.length} files to ${directory}. Copy its contents into ${target}.`;
       } catch (error) {
         this.status = `Export failed: ${error.message}`;
       }
@@ -391,10 +410,10 @@ export class PresentationEditor {
     const isOpen = (title, fallback) => (rendered ? opened.has(title) : fallback);
     this.panel.replaceChildren(
       details('Tile blending', isOpen('Tile blending', true), [blend],
-        'Client renderer settings (tiles.ron blend). Height: on different layers the higher texture overlays the lower one with a crisp edge and shades its foot. Same layer: bilinear blend. Temperature: biome tints, smoothed across tiles.'),
+        'Client renderer settings (tiles.ron blend). Height: on different layers the higher texture overlays the lower one with a crisp edge and shades its foot. Biomes within a layer meet on crisp, noisy edges too. Tints color each biome; a tint radius above 0 softens colors inside a biome.'),
       details(`Tile textures (${catalog.textures.length})`, isOpen(`Tile textures (${catalog.textures.length})`, true), textureRows,
         'Each row: placeholder color, texture, overlay layer (height); then source, bake tint and strength. Keep textures neutral and shared per height band; biome tints color them. Sprite-sheet sources are baked and exported as PNGs.'),
-      details('Biomes: tint and texture', isOpen('Biomes: tint and texture', true), [datalist, ...biomeRows],
+      details('Biomes: tint and texture', isOpen('Biomes: tint and texture', true), [rampRow, datalist, ...biomeRows],
         `Tint (temperature color, smoothed across tiles) and texture per biome. Blank texture uses the biome's own name; several biomes may share one. "${GROUND}" draws the terrain biome underneath.`),
       details('Object textures', isOpen('Object textures', true), objectRows,
         'Drawn stretched over the footprint, as in the client. Sheet sprites are baked at footprint × pixels per tile, standing on the bottom edge.'),
