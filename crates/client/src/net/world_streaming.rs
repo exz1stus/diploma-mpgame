@@ -200,7 +200,7 @@ pub(crate) fn clear_streamed_world(world: &mut World) {
             world.despawn(entity);
         }
     }
-    world.remove_resource::<WorldPalette>();
+    world.remove_resource::<WorldInfo>();
 }
 
 #[cfg(test)]
@@ -297,15 +297,11 @@ mod tests {
         chunks.chunks.insert(ChunkPos { x: 0, y: -1 }, chunk);
         chunks.inbox.push_back(WorldMessage::ChunkLoad(snapshot(1)));
         world.insert_resource(chunks);
-        world.insert_resource(WorldPalette {
-            tile_colors: vec![[0, 0, 0, 255]],
-        });
 
         clear_streamed_world(&mut world);
 
         assert_eq!(world.resource::<StreamedChunks>().len(), 0);
         assert_eq!(world.resource::<StreamedChunks>().queued(), 0);
-        assert!(!world.contains_resource::<WorldPalette>());
         assert!(world.get_entity(chunk).is_err());
         assert!(world.get_entity(object).is_err());
     }
