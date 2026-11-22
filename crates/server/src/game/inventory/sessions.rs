@@ -1,5 +1,3 @@
-//! Session identity, replay protection, result caching, and request rate limits.
-
 use super::{Id, InventoryService, Result};
 use bevy::prelude::World;
 use bevy_renet::renet::ClientId;
@@ -90,7 +88,6 @@ impl InventoryService {
             self.apply(world, client, session, &command.action)
         };
 
-        // Cache successes and domain failures.
         session.last_counter = command.counter;
         session.cache.push_back(CachedOperation {
             counter: command.counter,
@@ -101,8 +98,6 @@ impl InventoryService {
         while session.cache.len() > self.config.rules.cached_results_per_session {
             session.cache.pop_front();
         }
-
-        // last_counter remains even when a cached result is evicted.
         result
     }
 }

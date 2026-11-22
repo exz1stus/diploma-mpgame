@@ -20,6 +20,7 @@ pub struct InventoryConfig {
     pub profiles: BTreeMap<String, InventoryProfile>,
     pub rules: RulesFile,
     pub ui: UiFile,
+    pub expedition: super::survival::ExpeditionRules,
 }
 
 impl InventoryConfig {
@@ -89,7 +90,7 @@ impl InventoryConfig {
             }
         }
 
-        for required in ["player", "enemy", "corpse", "wooden_chest"] {
+        for required in ["player", "wooden_chest"] {
             if !profiles.contains_key(required) {
                 return Err(format!("missing profile: {required}").into());
             }
@@ -139,7 +140,22 @@ impl InventoryConfig {
             return Err("every inventory profile needs a UI layout".into());
         }
 
+        let mission_source = match std::fs::read_to_string(directory.join("expedition.ron")) {
+            Ok(text) => text,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                // Upgrade pre-expedition catalogs in memory, preserving authored item definitions.
+                let defaults: ItemFile =
+                    ron::from_str(include_str!("../../../../docs/week7/items.ron"))?;
+                for item in defaults.items {
+                    item_map.entry(item.id.clone()).or_insert(item);
+                }
+                include_str!("../../../../docs/week7/expedition.ron").to_owned()
+            }
+            Err(error) => return Err(error.into()),
+        };
+        let expedition = super::survival::ExpeditionRules::parse(&mission_source, &item_map)?;
         Ok(Self {
+            expedition,
             items: item_map,
             profiles,
             rules,

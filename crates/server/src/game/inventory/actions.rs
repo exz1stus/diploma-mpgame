@@ -77,6 +77,7 @@ impl InventoryService {
                 }
 
                 let moved = ItemStack {
+                    charge: item.stack.charge,
                     item: item.stack.item.clone(),
                     quantity: *quantity,
                 };
@@ -192,6 +193,9 @@ impl InventoryService {
                 plan.outcome.moved_quantity = 1;
             }
 
+            InventoryAction::Expedition(action) => {
+                self.expedition_action(world, &mut plan, actor_id, actor_entity, origin, *action)?
+            }
             _ => unreachable!("nonmutating actions returned above"),
         }
 

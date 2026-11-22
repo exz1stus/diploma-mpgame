@@ -3,10 +3,7 @@ use super::{
     state::{ClientState, RemoteWorld},
 };
 use crate::{
-    game::{
-        commands::{PendingCommands, PredictedVisuals},
-        inventory::InventoryClient,
-    },
+    game::inventory::InventoryClient,
     networking::{
         diagnostics::NetworkDiagnostics, physics::RemoteCollisionProxies,
         reconciliation::ReconciliationStatus, simulation_clock::ClientSimulationClock,
@@ -108,16 +105,12 @@ pub fn reset_disconnected_client(
     mut simulation: ResMut<NetworkSimulation>,
     mut clock: ResMut<ClientSimulationClock>,
     mut reconciliation: ResMut<ReconciliationStatus>,
-    mut pending_commands: ResMut<PendingCommands>,
-    mut predicted_visuals: ResMut<PredictedVisuals>,
     mut collision_proxies: ResMut<RemoteCollisionProxies>,
     mut inventory: ResMut<InventoryClient>,
 ) {
     if !client.is_disconnected() {
         return;
     }
-    pending_commands.clear();
-    predicted_visuals.clear();
     *inventory = InventoryClient::default();
     for (_, entity) in collision_proxies.entities.drain() {
         commands.entity(entity).try_despawn();
@@ -145,7 +138,6 @@ pub fn release_incoming(
     mut clock: ResMut<ClientSimulationClock>,
     timing: Res<TimeSyncEstimates>,
     fixed_time: Res<Time<Fixed>>,
-    mut pending_commands: ResMut<PendingCommands>,
 ) {
     let now = time.elapsed_secs_f64();
 
@@ -179,7 +171,6 @@ pub fn release_incoming(
             &mut client_state,
             &mut remote_world,
             &registry,
-            &mut pending_commands,
             now,
         );
         if initialized {

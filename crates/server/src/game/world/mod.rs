@@ -39,12 +39,15 @@ impl std::ops::Deref for WorldGenerator {
 /// Bundled presets shipped with the server.
 const PRESETS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/src/game/worldgen_presets");
 
-pub(crate) fn plugin(app: &mut App) {
+pub(crate) fn install_preset(app: &mut App, world_size_chunks: Option<u32>) {
     let preset_name = app.world().get_resource::<AppConfig>().map_or_else(
         || "default".to_string(),
         |config| config.worldgen_preset.clone(),
     );
     let mut config = WorldGeneratorConfig::default();
+    if let Some(size) = world_size_chunks {
+        config.world_size_chunks = size;
+    }
     if let Some(seed) = std::env::var_os("WORLD_SEED") {
         config.seed = seed
             .to_str()

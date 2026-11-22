@@ -1,4 +1,3 @@
-use crate::game::commands::PredictedVisuals;
 use crate::game::world::{ChunkTiles, WorldObject, WorldPalette};
 use crate::networking::prediction::{Prediction, PredictionSettings};
 use crate::networking::{
@@ -135,8 +134,6 @@ pub fn render_player_visuals(
         Without<PlayerVisual>,
     >,
     mut visuals: Query<(&ChildOf, &mut Transform), With<PlayerVisual>>,
-
-    predicted_visuals: Res<PredictedVisuals>,
 ) {
     if !client_state.initiated {
         return;
@@ -166,12 +163,6 @@ pub fn render_player_visuals(
 
         debug.display_tick = display_tick;
         debug.sample = None;
-
-        visual_transform.scale = if predicted_visuals.is_hidden(identity.id) {
-            Vec3::ZERO
-        } else {
-            Vec3::ONE
-        };
 
         let root_position = root_transform.translation.truncate();
 
@@ -249,7 +240,7 @@ pub fn current_visual_position(world: &World, player: Entity) -> Vec2 {
     physics_position + visual_offset
 }
 
-/// Draw order of world layers; players and projectiles render at z >= 0.
+/// Draw order of world layers; players render at z >= 0.
 const CHUNK_Z: f32 = -10.0;
 const OBJECT_Z: f32 = -9.0;
 

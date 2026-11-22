@@ -52,6 +52,7 @@ pub enum InventoryAction {
     },
     CloseContainer,
     Refresh,
+    Expedition(super::survival::ExpeditionAction),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -62,6 +63,7 @@ pub struct InventoryCommand {
 }
 
 impl NetworkCommand for InventoryCommand {
+    // ID 1 is retired. Keep the inventory ID stable so old requests cannot be reinterpreted.
     const NETWORK_ID: u16 = 2;
 }
 
@@ -84,6 +86,10 @@ pub enum InventoryError {
     RateLimited,
     Overflow,
     InvalidItem,
+    NoPower,
+    MissingMaterials,
+    RequiresDiscovery,
+    Depleted,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -98,11 +104,12 @@ pub struct InventoryView {
     pub inventory: Inventory,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct InventoryState {
     pub player: Option<InventoryId>,
     pub open_container: Option<InventoryId>,
     pub health: Option<u16>,
+    pub expedition: Option<Box<super::survival::ExpeditionView>>,
     pub views: Vec<InventoryView>,
 }
 

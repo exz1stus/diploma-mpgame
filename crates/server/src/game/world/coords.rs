@@ -22,6 +22,7 @@ pub(crate) fn tile_to_world(tile: TilePos) -> Vec2 {
 pub(crate) struct WorldFrame {
     half_chunks: i64,
     chunk_size: i64,
+    side_tiles: i64,
 }
 
 impl WorldFrame {
@@ -29,6 +30,7 @@ impl WorldFrame {
         Self {
             half_chunks: i64::from(config.world_size_chunks / 2),
             chunk_size: i64::from(config.chunk_size),
+            side_tiles: i64::from(config.chunk_size) * i64::from(config.world_size_chunks),
         }
     }
 
@@ -43,6 +45,19 @@ impl WorldFrame {
         ChunkPos {
             x: pos.x - self.half_chunks,
             y: pos.y - self.half_chunks,
+        }
+    }
+
+    /// Resolve a physics position to a map tile. Beyond the map use the closest edge tile.
+    pub fn nearest_generator_tile(self, position: Vec2) -> TilePos {
+        let offset = (self.half_chunks * self.chunk_size) as f64;
+        let coordinate = |value: f32| {
+            ((f64::from(value) / f64::from(TILE_SIZE)).floor() + offset)
+                .clamp(0.0, (self.side_tiles - 1) as f64) as i64
+        };
+        TilePos {
+            x: coordinate(position.x),
+            y: coordinate(position.y),
         }
     }
 

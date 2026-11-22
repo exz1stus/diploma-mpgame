@@ -1,8 +1,5 @@
 use crate::{
-    game::{
-        commands::{PendingCommands, PredictedVisuals},
-        inventory::InventoryClient,
-    },
+    game::inventory::InventoryClient,
     networking::physics::clear_remote_collision_proxies,
     networking::replication_handlers::{
         handle_component_remove, handle_entity_despawn, handle_entity_spawn, handle_entity_update,
@@ -29,7 +26,6 @@ pub fn process_server_message(
     client_state: &mut ClientState,
     remote_world: &mut RemoteWorld,
     registry: &ReplicationRegistry,
-    pending_commands: &mut PendingCommands,
     now: f64,
 ) -> bool {
     let tick = message.tick;
@@ -38,9 +34,7 @@ pub fn process_server_message(
 
     match message.payload {
         ServerMessages::InitiateClientState { client_id, world } => {
-            pending_commands.clear();
             commands.queue(|world: &mut World| {
-                world.resource_mut::<PredictedVisuals>().clear();
                 *world.resource_mut::<InventoryClient>() = InventoryClient::default();
             });
             commands.queue(clear_remote_collision_proxies);
@@ -78,9 +72,6 @@ pub fn process_server_message(
         }
         ServerMessages::EntityDespawn(id) => {
             handle_entity_despawn(id, commands, remote_world);
-            commands.queue(move |world: &mut World| {
-                world.resource_mut::<PredictedVisuals>().forget(id);
-            });
         }
         ServerMessages::ComponentRemove {
             entity_id,
@@ -98,18 +89,17 @@ pub fn process_server_message(
         ServerMessages::Pong(_) => {}
         ServerMessages::NetworkCommandError(error) => {
             warn!("Server rejected network command: {error:?}");
-            pending_commands.resolve(message.sequence, Err(error), commands);
-        }
-
-        ServerMessages::NetworkCommandResult(result) => {
-            pending_commands.resolve(message.sequence, Ok(result), commands);
         }
 
         ServerMessages::Inventory(packet) => {
             commands.queue(move |world: &mut World| {
+                let catalog = world
+                    .resource::<shared::inventory::InventoryConfig>()
+                    .expedition
+                    .signature;
                 world
-                    .resource_mut::<crate::game::inventory::InventoryClient>()
-                    .receive(packet);
+                    .resource_mut::<InventoryClient>()
+                    .receive_catalog(packet, catalog);
             });
         }
     }

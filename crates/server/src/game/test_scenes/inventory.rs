@@ -33,6 +33,7 @@ pub(super) fn spawn(
         let mut inventory = service.config.inventory(&fixture.profile);
         for stack in fixture.contents {
             inventory.slots[usize::from(stack.slot)].stack = Some(ItemStack {
+                charge: 0,
                 item: stack.item,
                 quantity: stack.quantity,
             });
@@ -56,6 +57,7 @@ pub(super) fn spawn(
             GroundItem {
                 revision: 0,
                 stack: ItemStack {
+                    charge: 0,
                     item: fixture.item,
                     quantity: fixture.quantity,
                 },

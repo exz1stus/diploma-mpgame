@@ -312,7 +312,7 @@ pub fn menu_ui(
                                 );
 
                                 ui.add_space(16.0);
-                                ui.label("WASD: move · Mouse: aim and shoot · Escape: menu");
+                                ui.label("WASD: move · I: inventory · E: interact · Escape: menu");
                                 ui.add_space(16.0);
 
                                 if action(ui, "BACK") {

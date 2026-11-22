@@ -37,24 +37,28 @@ impl InventoryService {
             .filter_map(|(index, slot)| slot.stack.clone().map(|stack| (index as u16, stack)))
             .collect();
 
-        let origin = if stacks.is_empty() {
+        let keys: BTreeSet<_> = stacks
+            .iter()
+            .map(|(slot, _)| LockKey::Slot(id, *slot))
+            .collect();
+        let mut cargo: Vec<_> = stacks.into_iter().map(|(_, stack)| stack).collect();
+        if let Some(gear) = world.get::<shared::inventory::survival::LifeSupport>(entity) {
+            cargo.push(gear.tank.clone());
+            cargo.extend(gear.suit.clone());
+        }
+        let origin = if cargo.is_empty() {
             Vec2::ZERO
         } else {
             position(world, entity)?
         };
 
-        let keys: BTreeSet<_> = stacks
-            .iter()
-            .map(|(slot, _)| LockKey::Slot(id, *slot))
-            .collect();
-
         let _reservation = Reservations::acquire(&mut self.locks, &keys)?;
-        let ids = reserve_network_ids(world, stacks.len())?;
+        let ids = reserve_network_ids(world, cargo.len())?;
 
         // All validation/allocation completed before live mutation.
         world.entity_mut(entity).remove::<Inventory>();
 
-        for (ground_id, (_, stack)) in ids.into_iter().zip(stacks) {
+        for (ground_id, stack) in ids.into_iter().zip(cargo) {
             spawn_ground(world, ground_id, origin, GroundItem { revision: 0, stack });
         }
 

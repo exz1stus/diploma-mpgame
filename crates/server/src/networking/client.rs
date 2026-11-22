@@ -200,6 +200,7 @@ mod tests {
         .unwrap();
         let mut inventory = config.inventory("player");
         inventory.slots[0].stack = Some(ItemStack {
+            charge: 0,
             item: "wood".into(),
             quantity: 5,
         });

@@ -54,17 +54,23 @@ fn spawn_player_on_intiated(
     mut commands: Commands,
     players: Query<(), (With<Player>, With<CurrentMovementInput>)>,
     service: Res<InventoryService>,
+    mission: Option<Res<super::inventory::expedition::Expedition>>,
+    generator: Res<super::world::WorldGenerator>,
     demo: Option<Res<super::test_scenes::inventory::InventoryDemo>>,
 ) {
     let player_index = players.iter().count() as f32;
-    let spawn = Vec2::new(player_index * 80.0, 0.0);
+    let spawn = if mission.is_some() {
+        Vec2::from_angle(player_index * 2.4) * 45.0
+    } else {
+        Vec2::new(player_index * 80.0, 0.0)
+    };
     let max_health = service.config.rules.max_health;
     let health = if demo.is_some() {
         (max_health / 2).max(1)
     } else {
         max_health
     };
-    commands.network_spawn_with_ownership_and_policy(
+    let mut entity = commands.network_spawn_with_ownership_and_policy(
         event.client_id,
         DisconnectPolicy::Despawn,
         (
@@ -72,6 +78,13 @@ fn spawn_player_on_intiated(
             service.config.inventory("player"),
         ),
     );
+    if let Some(mission) = mission {
+        let environment = mission.environment_at(&service.config.expedition, &generator, spawn);
+        entity.insert(shared::inventory::survival::LifeSupport::new(
+            &service.config.expedition,
+            environment.celsius,
+        ));
+    }
 }
 
 #[cfg(test)]

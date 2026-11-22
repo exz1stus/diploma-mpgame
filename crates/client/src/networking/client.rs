@@ -1,8 +1,4 @@
 use crate::game::camera::follow_player_camera;
-use crate::game::commands::{
-    PendingCommands, PredictedVisuals, ShootAimState, draw_shoot_aim, send_shoot_command,
-    update_shoot_aim,
-};
 use crate::game::menu::toggle_menu;
 pub use crate::networking::network::NetworkSimulation;
 use crate::networking::physics::{
@@ -54,9 +50,6 @@ impl GameClient {
         app.init_resource::<TimeSyncEstimates>();
         app.init_resource::<ReconciliationStatus>();
 
-        app.init_resource::<PendingCommands>();
-        app.init_resource::<PredictedVisuals>();
-        app.init_resource::<ShootAimState>();
         app.insert_resource(Time::<Fixed>::from_hz(60.0));
         physics::configure(&mut app);
 
@@ -76,11 +69,8 @@ impl GameClient {
                 run_prediction,
                 smooth_prediction_visual,
                 render_player_visuals,
-                update_shoot_aim,
-                draw_shoot_aim,
                 log_prediction_status,
                 send_messages,
-                send_shoot_command,
                 release_outgoing,
             )
                 .chain()

@@ -18,6 +18,11 @@ pub(super) struct Plan {
     pub(super) ground: Option<GroundChange>,
     pub(super) spawn: Vec<(Id, Vec2, GroundItem)>,
     pub(super) health: Option<(Entity, u16)>,
+    pub(super) expedition: Option<(
+        super::expedition::Expedition,
+        Entity,
+        shared::inventory::survival::LifeSupport,
+    )>,
     pub(super) outcome: Outcome,
 }
 
@@ -64,6 +69,7 @@ impl Plan {
         }
 
         let moved = ItemStack {
+            charge: stack.charge,
             item: stack.item.clone(),
             quantity,
         };
@@ -102,6 +108,9 @@ impl Plan {
                     .get(usize::from(target.slot))
                     .ok_or(Error::NotFound)?;
 
+                if inventory.cargo_reserved(usize::from(target.slot)) {
+                    return Err(Error::InventoryFull);
+                }
                 if slot.revision != target.expected_revision {
                     return Err(Error::StaleSlot);
                 }
@@ -164,6 +173,7 @@ impl Plan {
 
                 None => {
                     slot.stack = Some(ItemStack {
+                        charge: stack.charge,
                         item: stack.item.clone(),
                         quantity: amount,
                     });
@@ -174,7 +184,7 @@ impl Plan {
             touched.push(index as u16);
         }
 
-        if remaining != 0 {
+        if remaining != 0 || inventory.used_slots() > inventory.slots.len() {
             // Only staged clones changed; the source remains untouched in World.
             return Err(Error::InventoryFull);
         }
@@ -184,6 +194,41 @@ impl Plan {
         }
 
         Ok(())
+    }
+
+    pub(super) fn spend(
+        &mut self,
+        world: &World,
+        id: Id,
+        item: &str,
+        mut quantity: u32,
+    ) -> Result<()> {
+        let inventory = self.inventory(world, id)?;
+        let sources: Vec<_> = inventory
+            .slots
+            .iter()
+            .enumerate()
+            .filter_map(|(i, slot)| {
+                let stack = slot.stack.as_ref().filter(|s| s.item == item)?;
+                Some((
+                    SlotRef {
+                        inventory: id,
+                        slot: i as u16,
+                        expected_revision: slot.revision,
+                    },
+                    stack.quantity,
+                ))
+            })
+            .collect();
+        for (source, available) in sources {
+            let amount = quantity.min(available);
+            self.take(world, source, amount)?;
+            quantity -= amount;
+            if quantity == 0 {
+                return Ok(());
+            }
+        }
+        Err(Error::MissingMaterials)
     }
 
     pub(super) fn finish(&mut self) -> Result<()> {
@@ -211,6 +256,11 @@ impl Plan {
         // Entity existence cannot change during this exclusive operation.
         for (_, (entity, inventory)) in self.inventories {
             world.entity_mut(entity).insert(inventory);
+        }
+
+        if let Some((mission, entity, gear)) = self.expedition {
+            world.insert_resource(mission);
+            world.entity_mut(entity).insert(gear);
         }
 
         if let Some((entity, health)) = self.health {

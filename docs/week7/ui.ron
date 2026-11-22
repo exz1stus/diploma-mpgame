@@ -5,8 +5,6 @@
     slot_gap_px: 6.0,
     layouts: [
         (profile: "player", columns: 5),
-        (profile: "enemy", columns: 4),
-        (profile: "corpse", columns: 4),
         (profile: "wooden_chest", columns: 3),
         (profile: "iron_chest", columns: 8),
     ],

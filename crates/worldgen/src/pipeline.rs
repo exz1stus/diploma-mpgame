@@ -69,13 +69,16 @@ pub fn assemble_world_generator(
             &biomes,
         )));
     }
-    if craters.density > 0.0 {
-        stages.push(Box::new(FeatureStage::new(
+    let crater_stage = (craters.density > 0.0).then(|| {
+        Arc::new(FeatureStage::new(
             config.seed ^ 0x4352_4154,
             craters,
             config.chunk_size,
             &biomes,
-        )));
+        ))
+    });
+    if let Some(stage) = &crater_stage {
+        stages.push(Box::new(stage.clone()));
     }
     if volcanoes.probability > 0.0 {
         stages.push(Box::new(FeatureStage::new(
@@ -88,5 +91,7 @@ pub fn assemble_world_generator(
     stages.push(Box::new(ClampHeightStage));
     stages.push(Box::new(TemperatureStage::new(temperature)));
     stages.push(Box::new(BiomeStage::new(Arc::new(biome_map))));
-    WorldGenerator::new(config, stages, biomes, tile_mapper, object_placer)
+    let mut generator = WorldGenerator::new(config, stages, biomes, tile_mapper, object_placer);
+    generator.craters = crater_stage;
+    generator
 }

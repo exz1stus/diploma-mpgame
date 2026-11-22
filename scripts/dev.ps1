@@ -10,7 +10,7 @@
 [CmdletBinding()]
 param(
     [Alias('n')][ValidateRange(0, [int]::MaxValue)][int]$ClientCount = 1,
-    [Alias('s')][ValidateSet('empty', 'circle')][string]$Scene = 'empty'
+    [Alias('s')][ValidateSet('survival', 'empty', 'circle', 'inventory')][string]$Scene = 'survival'
 )
 
 $ErrorActionPreference = 'Stop'

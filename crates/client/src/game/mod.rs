@@ -38,5 +38,4 @@ pub(crate) fn debug_zoom(
 }
 
 pub(crate) mod camera;
-pub(crate) mod commands;
 pub(crate) mod world;

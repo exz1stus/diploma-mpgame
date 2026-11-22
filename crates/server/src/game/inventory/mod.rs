@@ -2,6 +2,8 @@
 
 mod access;
 mod actions;
+pub(crate) mod expedition;
+mod expedition_terrain;
 mod lifecycle;
 mod locks;
 mod network;
@@ -26,11 +28,6 @@ pub(crate) use lifecycle::retire_entity;
 
 type Id = NetworkEntityId;
 type Result<T> = std::result::Result<T, InventoryError>;
-
-#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum InventorySet {
-    Lifecycle,
-}
 
 #[derive(Resource)]
 pub(crate) struct InventoryService {
@@ -59,11 +56,12 @@ impl Plugin for InventoryPlugin {
         app.insert_resource(InventoryService::new(
             InventoryConfig::load().expect("invalid inventory configuration"),
         ));
+        app.add_systems(FixedUpdate, expedition_terrain::prepare);
         app.add_systems(
             FixedPostUpdate,
-            network::step
+            (expedition::tick, network::step)
+                .chain()
                 .after(TickSet::SyncPositions)
-                .after(InventorySet::Lifecycle)
                 .before(ReplicationSet::Collect),
         );
     }

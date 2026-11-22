@@ -5,6 +5,7 @@ use bevy::prelude::*;
 
 #[derive(Clone, Copy)]
 enum TestScene {
+    Expedition,
     Circle,
     Inventory,
     Empty,
@@ -13,13 +14,20 @@ enum TestScene {
 pub(crate) struct TestScenesPlugin(TestScene);
 
 impl TestScenesPlugin {
+    pub(super) fn is_expedition(&self) -> bool {
+        matches!(self.0, TestScene::Expedition)
+    }
+
     pub(crate) fn from_env() -> Self {
         let scene = match std::env::var("TEST_SCENE").as_deref() {
             Ok("circle") => TestScene::Circle,
             Ok("inventory") => TestScene::Inventory,
-            Ok("empty") | Err(_) => TestScene::Empty,
+            Ok("survival") | Err(_) => TestScene::Expedition,
+            Ok("empty") => TestScene::Empty,
             Ok(name) => {
-                panic!("unknown TEST_SCENE '{name}'; available scenes: circle, inventory, empty")
+                panic!(
+                    "unknown TEST_SCENE '{name}'; available scenes: survival, circle, inventory, empty"
+                )
             }
         };
         Self(scene)
@@ -29,6 +37,9 @@ impl TestScenesPlugin {
 impl Plugin for TestScenesPlugin {
     fn build(&self, app: &mut App) {
         match self.0 {
+            TestScene::Expedition => {
+                app.add_systems(Startup, super::inventory::expedition::start);
+            }
             TestScene::Circle => {
                 app.add_systems(Startup, circle::spawn);
             }
