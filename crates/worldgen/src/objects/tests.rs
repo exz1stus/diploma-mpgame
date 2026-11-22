@@ -564,6 +564,33 @@ fn feature_spawns_stay_inside_their_feature_and_distance_band() {
 }
 
 #[test]
+fn feature_spawns_may_list_an_object_once_per_distance_band() {
+    use crate::FeatureKind;
+    let band = |min, max| {
+        let mut spawn = spawn("small", 0.1);
+        spawn.distance = Some(crate::Range { min, max });
+        spawn
+    };
+    let spawns = [band(0.0, 0.5), band(0.8, 1.2)];
+    let ids: Vec<u32> = feature_rules(FeatureKind::Crater, &spawns)
+        .map(|rule| rule.id)
+        .collect();
+    assert_eq!(ids[0], rule_id("feature", "crater", "small"));
+    assert_eq!(ids[1], repeated_rule_id("feature", "crater", "small", 1));
+    assert_ne!(ids[0], ids[1]);
+    let file = biomes_file(r#"(biomes: [(name: "plain", object_sets: [])])"#);
+    assert!(
+        ObjectPlacer::from_config(
+            &file,
+            &objects_file(),
+            &[(FeatureKind::Crater, &spawns)],
+            &biomes()
+        )
+        .is_ok()
+    );
+}
+
+#[test]
 fn distance_is_rejected_on_biome_and_set_spawns() {
     let file = biomes_file(
         r#"(biomes: [(name: "plain", object_sets: [], objects: [(object: "small", density: 0.1, distance: (min: 0.0, max: 1.0))])])"#,

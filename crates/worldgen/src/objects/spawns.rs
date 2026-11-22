@@ -54,19 +54,38 @@ pub fn spawn_rules(
 }
 
 /// A feature's spawns apply in any biome, but only inside that feature's territory.
+/// An object may be listed several times (e.g. one entry per distance band).
 pub fn feature_rules(
     kind: FeatureKind,
     spawns: &[ObjectSpawn],
 ) -> impl Iterator<Item = ObjectRule> {
-    spawns.iter().map(move |spawn| ObjectRule {
-        feature: Some(kind),
-        ..rule("feature", kind.name(), spawn, Vec::new())
+    spawns.iter().enumerate().map(move |(index, spawn)| {
+        let repeat = repeat_index(&spawns[..index], &spawn.object);
+        ObjectRule {
+            id: repeated_rule_id("feature", kind.name(), &spawn.object, repeat),
+            feature: Some(kind),
+            ..rule("feature", kind.name(), spawn, Vec::new())
+        }
     })
 }
 
 /// Stable rule ID: changes only when the source or object is renamed.
 pub fn rule_id(source_kind: &str, source: &str, object: &str) -> u32 {
-    hash_name(&format!("{source_kind}/{source}/{object}")) as u32
+    repeated_rule_id(source_kind, source, object, 0)
+}
+
+/// Rule ID of the `repeat`-th entry of the same object in one source; the first keeps
+/// the plain [`rule_id`].
+pub fn repeated_rule_id(source_kind: &str, source: &str, object: &str, repeat: usize) -> u32 {
+    match repeat {
+        0 => hash_name(&format!("{source_kind}/{source}/{object}")) as u32,
+        n => hash_name(&format!("{source_kind}/{source}/{object}#{n}")) as u32,
+    }
+}
+
+/// How many earlier spawns list the same object.
+fn repeat_index(earlier: &[ObjectSpawn], object: &str) -> usize {
+    earlier.iter().filter(|spawn| spawn.object == object).count()
 }
 
 fn check_set_references(biomes: &BiomesFile, objects: &ObjectsFile) -> Result<(), ObjectsError> {

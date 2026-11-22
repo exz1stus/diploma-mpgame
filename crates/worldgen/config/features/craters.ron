@@ -12,12 +12,21 @@
     // hit (terrain or basin), darker on their floors. Crater objects spawn by territory below.
     biome_map: [],
     // Spawned only inside crater territory, whatever the biome.
-    // distance: from the crater centre, where 1.0 is the rim.
+    // distance: from the crater centre, where 1.0 is the rim; territory ends at 1.5.
+    // Added to the biome's own spawns. Same size law as objects.ron (large_rock ~0.18x rock):
+    // most rocks on the rim and near ejecta, thinning outward, some on the low floor.
     objects: [
-        (object: "large_rock", density: 0.003, distance: (min: 0.8, max: 1.2)),
-        (object: "rock", density: 0.002, distance: (min: 0.0, max: 0.8)),
-        // Ores (spiky rocks) only near crater floors, now and then.
-        (object: "iron_ore", density: 0.0006, height: (min: 0.0, max: 0.5), distance: (min: 0.0, max: 0.7)),
+        // Rim and near ejecta blanket.
+        (object: "rock", density: 0.0025, distance: (min: 0.85, max: 1.2)),
+        (object: "large_rock", density: 0.00045, max_height_difference: Some(0.04), distance: (min: 0.85, max: 1.2)),
+        // Far ejecta.
+        (object: "rock", density: 0.001, distance: (min: 1.2, max: 1.5)),
+        (object: "large_rock", density: 0.00018, max_height_difference: Some(0.04), distance: (min: 1.2, max: 1.5)),
+        // Low crater floor.
+        (object: "rock", density: 0.0015, distance: (min: 0.0, max: 0.6)),
+        (object: "large_rock", density: 0.00025, max_height_difference: Some(0.04), distance: (min: 0.0, max: 0.6)),
+        // Ores (spiky rocks) on the deepest floors only, rare.
+        (object: "iron_ore", density: 0.00008, height: (min: 0.0, max: 0.5), distance: (min: 0.0, max: 0.5)),
         // Crystals on the floors of cold craters (frost and snow climates; craters are colder).
         (object: "crystal", density: 0.0003, temperature: (min: -1000.0, max: -6.0), distance: (min: 0.0, max: 0.7)),
     ],

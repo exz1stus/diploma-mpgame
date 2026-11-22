@@ -14,23 +14,27 @@
         // Rare ice crystal on the floors of cold craters (features/craters.ron).
         (name: "crystal", footprint: (width: 1, height: 1)),
     ],
+    // Rock sizes follow a boulder size-frequency power law, density ~ diameter^-2.5:
+    // pebbles (decal) >> rock (1 tile) > large_rock (2 tiles, ~0.18x rock) > iron_ore.
+    // Open ground is mostly pebbles with an occasional rock; rocks gather around craters
+    // (features/craters.ron), which add to these densities.
     sets: {
         "common_rocks": [
-            (object: "rock", density: 0.001),
-            (object: "large_rock", density: 0.0005, max_height_difference: Some(0.04)),
+            (object: "rock", density: 0.0003),
+            (object: "large_rock", density: 0.00005, max_height_difference: Some(0.04)),
         ],
         // Loose stones on exposed ground: none on frozen ground (below -6 °C) or high ridges.
         "pebbles": [
-            (object: "pebbles", density: 0.01, height: (min: 0.0, max: 0.8), temperature: (min: -6.0, max: 1000.0)),
+            (object: "pebbles", density: 0.015, height: (min: 0.0, max: 0.8), temperature: (min: -6.0, max: 1000.0)),
         ],
         // Frozen ground (snow and frost): loose stones. Crystals grow in cold craters (craters.ron).
         "polar": [
-            (object: "pebbles", density: 0.01, height: (min: 0.0, max: 0.8)),
+            (object: "pebbles", density: 0.015, height: (min: 0.0, max: 0.8)),
         ],
         // Sulfur basins: sulfur spikes (large_rock, drawn as spikes on sulfur), and now and then a
         // plain rock.
         "sulfur_rocks": [
-            (object: "rock", density: 0.0006),
+            (object: "rock", density: 0.0003),
             (object: "large_rock", density: 0.002, max_height_difference: Some(0.04)),
         ],
     },
