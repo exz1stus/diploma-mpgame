@@ -30,6 +30,8 @@ fn inventory_ui(
     config: Res<InventoryConfig>,
     players: Query<(&NetworkIdentity, &NetworkPhysicsState), With<Player>>,
     ground: Query<(&shared::inventory::GroundItem, &NetworkPhysicsState)>,
+    info: Option<Res<crate::world::WorldInfo>>,
+    objects: Query<&crate::world::WorldObject>,
     mut inventory: ResMut<InventoryClient>,
 ) -> Result {
     let ctx = contexts.ctx_mut()?;
@@ -49,7 +51,24 @@ fn inventory_ui(
     if !inventory.visible {
         egui::DragAndDrop::clear_payload(ctx);
         if let Some(pos) = origin {
-            super::expedition::hud(ctx, &config, &inventory, pos);
+            let ore = inventory
+                .state
+                .expedition
+                .as_ref()
+                .filter(|v| v.scan > 0)
+                .and(info.as_ref())
+                .and_then(|info| {
+                    let iron = info.objects.iter().position(|k| k.name == "iron_ore")?;
+                    objects
+                        .iter()
+                        .filter(|o| usize::from(o.kind.0) == iron)
+                        .map(|o| shared::world::object_center(o.anchor, o.footprint))
+                        .min_by(|a, b| {
+                            pos.distance_squared(*a)
+                                .total_cmp(&pos.distance_squared(*b))
+                        })
+                });
+            super::expedition::hud(ctx, &config, &inventory, pos, ore);
         }
         return Ok(());
     }

@@ -5,9 +5,7 @@ use std::collections::{HashMap, VecDeque};
 
 use bevy::prelude::*;
 use bevy_renet::RenetClient;
-use shared::world::{
-    ChunkPos, ChunkSnapshot, TILE_SIZE, WORLD_CHANNEL, WorldMessage, chunk_span, decode,
-};
+use shared::world::{ChunkPos, ChunkSnapshot, WORLD_CHANNEL, WorldMessage, chunk_span, decode};
 
 use crate::{
     schedule::ClientSet,
@@ -160,12 +158,7 @@ fn spawn_chunk(commands: &mut Commands, snapshot: ChunkSnapshot) -> Entity {
         ))
         .id();
     for object in snapshot.objects {
-        let size = Vec2::new(
-            object.footprint.width as f32,
-            object.footprint.height as f32,
-        ) * TILE_SIZE;
-        let center =
-            Vec2::new(object.anchor.x as f32, object.anchor.y as f32) * TILE_SIZE + size / 2.0;
+        let center = shared::world::object_center(object.anchor, object.footprint);
         commands.spawn((
             WorldObject {
                 kind: object.kind,
@@ -208,7 +201,9 @@ mod tests {
     use super::*;
     use crate::world::ChunkContents;
     use bevy::ecs::system::RunSystemOnce;
-    use shared::world::{BiomeId, ChunkObject, Footprint, ObjectId, TilePos, TileSample};
+    use shared::world::{
+        BiomeId, ChunkObject, Footprint, ObjectId, TILE_SIZE, TilePos, TileSample,
+    };
 
     fn snapshot(x: i64) -> ChunkSnapshot {
         ChunkSnapshot {

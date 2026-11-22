@@ -193,6 +193,9 @@ impl InventoryService {
                 plan.outcome.moved_quantity = 1;
             }
 
+            InventoryAction::MineObject { anchor } => {
+                super::mining::mine(world, &self.config, &mut plan, actor_id, origin, *anchor)?;
+            }
             InventoryAction::Expedition(action) => {
                 self.expedition_action(world, &mut plan, actor_id, actor_entity, origin, *action)?
             }

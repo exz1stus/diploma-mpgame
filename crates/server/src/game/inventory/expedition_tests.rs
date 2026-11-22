@@ -1,4 +1,12 @@
 use super::*;
+use crate::game::world::{
+    self as game_world,
+    components::{ChunkTiles, InChunk, WorldObject, WorldObserver},
+    storage::{ChunkStorage, StoredChunk},
+    streaming::ChunkStreamer,
+};
+use worldgen::{ChunkPos, ObjectInstanceId, PlacedObject, TilePos};
+
 use crate::game::inventory::sessions::Session;
 use shared::{
     components::{DisconnectPolicy, Ownership, Player},
@@ -12,12 +20,34 @@ struct Crew {
     players: [Entity; 2],
     sessions: [Session; 2],
     counters: [u64; 2],
+    next_anchor: i64,
 }
 
 impl Crew {
     fn new() -> Self {
         let config = InventoryConfig::load().unwrap();
-        let mut world = World::new();
+        let mut app = App::new();
+        app.add_plugins(bevy::app::TaskPoolPlugin::default());
+        let generator = worldgen::WorldConfig::bundled().build().unwrap();
+        let size = generator.config().chunk_size;
+        let plain = generator.biomes().id("plain_mid").unwrap();
+        game_world::install(&mut app, std::sync::Arc::new(generator), 1);
+        app.world_mut()
+            .resource_mut::<ChunkStorage>()
+            .put(StoredChunk {
+                pos: ChunkPos { x: 0, y: 0 },
+                size,
+                tiles: vec![worldgen::TileSample::new(plain, 0.5); (size * size) as usize],
+                objects: vec![],
+            });
+        app.world_mut().spawn((
+            WorldObserver {
+                simulation_distance: 0,
+            },
+            Position(Vec2::ZERO),
+        ));
+        app.world_mut().run_schedule(FixedPreUpdate);
+        let mut world = std::mem::take(app.world_mut());
         world.init_resource::<NetworkEntityMap>();
         world.insert_resource(Expedition::new(&config.expedition, 0, 256_000));
         let players = std::array::from_fn(|i| {
@@ -44,6 +74,7 @@ impl Crew {
             service: InventoryService::new(config),
             sessions: [Session::new(1, 1, 0.0, 40), Session::new(1, 2, 0.0, 40)],
             counters: [0, 0],
+            next_anchor: 0,
         }
     }
     fn send(&mut self, i: usize, action: InventoryAction) -> Result<InventoryOutcome> {
@@ -72,6 +103,53 @@ impl Crew {
         self.stand(i, Vec2::new(p[0] as f32, p[1] as f32));
         for _ in 0..times {
             self.act(i, ExpeditionAction::WorkSite(id)).unwrap();
+        }
+    }
+    fn deposit(&mut self, kind: &str, biome: &str) -> TilePos {
+        let g = self.world.resource::<WorldGenerator>();
+        let id = g.object_placer().objects().id(kind).unwrap();
+        let footprint = g.object_placer().objects().get(id).unwrap().footprint;
+        let biome = g.biomes().id(biome).unwrap();
+        let size = i64::from(g.config().chunk_size);
+        let index = self.next_anchor;
+        self.next_anchor += 1;
+        let anchor = TilePos {
+            x: index % size,
+            y: index / size,
+        };
+        let chunk = self
+            .world
+            .resource::<ChunkStreamer>()
+            .loaded(ChunkPos { x: 0, y: 0 })
+            .unwrap();
+        self.world.get_mut::<ChunkTiles>(chunk).unwrap().tiles[index as usize].biome = biome;
+        self.world.spawn((
+            InChunk(chunk),
+            WorldObject {
+                placed: PlacedObject {
+                    id: ObjectInstanceId { rule_id: 1, anchor },
+                    kind: id,
+                    footprint,
+                },
+            },
+        ));
+        anchor
+    }
+    fn mine(&mut self, i: usize, kind: &str, biome: &str, count: usize) {
+        for _ in 0..count {
+            let anchor = self.deposit(kind, biome);
+            self.stand(
+                i,
+                shared::world::object_center(
+                    anchor,
+                    worldgen::Footprint {
+                        width: 1,
+                        height: 1,
+                    },
+                ),
+            );
+            self.send(i, InventoryAction::MineObject { anchor })
+                .unwrap();
         }
     }
     fn source(&self, i: usize, item: &str) -> SlotRef {
@@ -104,38 +182,35 @@ impl Crew {
 fn two_crew_members_can_complete_the_loop_through_inventory_commands() {
     use ExpeditionAction::*;
     let mut crew = Crew::new();
-    assert_eq!(crew.act(0, WorkSite(0)), Err(Error::OutOfRange));
+    assert_eq!(crew.act(0, WorkSite(0)), Err(Error::RequiresDiscovery));
     assert_eq!(crew.act(0, Fabricate(2)), Err(Error::RequiresDiscovery));
     let battery = crew.world.resource::<Expedition>().battery;
     assert_eq!(crew.act(0, Fabricate(0)), Err(Error::MissingMaterials));
     assert_eq!(crew.world.resource::<Expedition>().battery, battery);
-    crew.visit(0, 0, 2);
-    assert_eq!(crew.act(0, WorkSite(0)), Err(Error::Depleted));
+    crew.mine(0, "rock", "basalt_low", 5);
+    crew.mine(0, "iron_ore", "basalt_low", 6);
     crew.base(0, Fuel);
     crew.base(1, Scan);
-    for id in [1, 2] {
-        crew.visit(0, id, 2);
-    }
     crew.base(0, Fabricate(0));
     crew.base(1, Scan);
-
-    crew.visit(0, 3, 9);
-    crew.visit(0, 5, 2);
+    crew.mine(0, "iron_ore", "plain_mid", 9);
+    crew.mine(0, "large_rock", "plain_mid", 2);
     crew.base(0, Fabricate(1));
     crew.base(1, Scan);
-    crew.visit(0, 8, 1);
-    crew.visit(1, 8, 0);
-    assert_eq!(crew.act(1, WorkSite(8)), Err(Error::Depleted));
-    crew.visit(1, 9, 1);
+    crew.visit(0, 0, 1);
+    crew.visit(1, 0, 0);
+    assert_eq!(crew.act(1, WorkSite(0)), Err(Error::Depleted));
+    crew.visit(1, 1, 1);
     assert_eq!(crew.world.resource::<Expedition>().fragments, 3);
 
-    crew.visit(0, 4, 12);
-    crew.visit(0, 5, 2);
-    crew.visit(0, 6, 4);
+    crew.mine(0, "rock", "basalt_low", 4);
+    crew.mine(0, "iron_ore", "plain_mid", 12);
+    crew.mine(0, "large_rock", "plain_mid", 2);
+    crew.mine(0, "large_rock", "sulfur_ridge", 4);
     crew.recharge_station();
     crew.base(0, Fabricate(2));
-    crew.visit(0, 7, 5);
-    crew.visit(0, 3, 8);
+    crew.mine(0, "crystal", "snow_floor", 5);
+    crew.mine(0, "iron_ore", "plain_mid", 8);
     crew.base(0, Fabricate(3));
     let suit = crew.source(0, SUITS[1]);
     crew.act(0, Equip(suit)).unwrap();
@@ -143,10 +218,7 @@ fn two_crew_members_can_complete_the_loop_through_inventory_commands() {
     crew.recharge_station();
     crew.base(1, Scan);
     assert!(crew.world.resource::<Expedition>().polar_scan);
-    crew.visit(0, 10, 0);
-    assert_eq!(crew.act(0, WorkSite(10)), Err(Error::InventoryFull));
-    assert_eq!(crew.world.resource::<Expedition>().sites[10].remaining, 1);
-    crew.visit(1, 10, 1);
+    crew.visit(1, 2, 1);
     assert_eq!(
         crew.world
             .get::<Inventory>(crew.players[1])
@@ -154,8 +226,8 @@ fn two_crew_members_can_complete_the_loop_through_inventory_commands() {
             .used_slots(),
         14
     );
-    crew.visit(1, 4, 2);
-    crew.visit(1, 5, 1);
+    crew.mine(1, "iron_ore", "plain_mid", 2);
+    crew.mine(1, "large_rock", "plain_mid", 1);
     crew.base(1, Fabricate(4));
     assert!(crew.world.resource::<Expedition>().sos);
 }
@@ -275,7 +347,7 @@ fn charging_giving_and_swapping_preserve_individual_tanks() {
 #[test]
 fn night_requires_generation_and_duplicate_fuel_receipts_do_not_burn_extra_coal() {
     let mut crew = Crew::new();
-    crew.visit(0, 0, 1);
+    crew.mine(0, "rock", "plain_mid", 1);
     crew.stand(0, Vec2::ZERO);
     let daylight = crew.service.config.expedition.daylight;
     crew.world.resource_mut::<Expedition>().seconds = u32::from(daylight);
@@ -350,21 +422,80 @@ fn a_fixed_tick_rescues_the_player_and_spills_the_beacon_at_the_loss_site() {
 }
 
 #[test]
-fn the_default_pole_requires_more_than_one_full_t3_tank_one_way() {
-    let cfg = InventoryConfig::load().unwrap();
-    let half = i32::from(cfg.expedition.world_size_chunks / 2)
-        * worldgen::WorldGeneratorConfig::default().chunk_size as i32
+fn expedition_places_the_polar_module_inside_the_configured_world() {
+    let config = InventoryConfig::load().unwrap();
+    let generator = worldgen::WorldConfig::bundled().build().unwrap();
+    let cfg = generator.config();
+    let half = (u32::from(config.expedition.world_size_chunks) / 2 * cfg.chunk_size) as i32
         * shared::world::TILE_SIZE as i32;
-    let mission = Expedition::new(&cfg.expedition, 0, half);
-    let index = cfg
+    let mission = Expedition::new(&config.expedition, cfg.seed, half);
+    let pole = config
         .expedition
         .sites
         .iter()
-        .position(|s| s.kind == SiteKind::Pole)
+        .position(|site| site.kind == SiteKind::Pole)
         .unwrap();
-    let seconds = (mission.sites[index].position[1].unsigned_abs() as f32 - SITE_RADIUS) / 500.0;
-    assert!(seconds > f32::from(cfg.expedition.tank_seconds[2]));
-    assert!(seconds < 2.0 * f32::from(cfg.expedition.tank_seconds[2]));
+    let distance = mission.sites[pole].position[1].abs();
+    assert_eq!(distance, half - 512);
+    let seconds = (distance as f32 - SITE_RADIUS) / 500.0;
+    let tank = f32::from(config.expedition.tank_seconds[2]);
+    assert!(seconds > tank && seconds < 2.0 * tank);
+    assert!(
+        mission
+            .sites
+            .iter()
+            .all(|s| s.position.iter().all(|v| v.abs() < half))
+    );
+}
+
+#[test]
+fn mining_is_atomic_and_a_broken_object_stays_gone_after_reload() {
+    let mut crew = Crew::new();
+    let anchor = crew.deposit("iron_ore", "basalt_floor");
+    let mine = || InventoryAction::MineObject { anchor };
+    crew.stand(0, Vec2::splat(-1000.0));
+    assert_eq!(crew.send(0, mine()), Err(Error::OutOfRange));
+    crew.stand(0, Vec2::ZERO);
+    for slot in &mut crew
+        .world
+        .get_mut::<Inventory>(crew.players[0])
+        .unwrap()
+        .slots
+    {
+        slot.stack = Some(ItemStack {
+            item: "coal".into(),
+            quantity: 50,
+            charge: 0,
+        });
+    }
+    assert_eq!(crew.send(0, mine()), Err(Error::InventoryFull));
+    crew.send(1, mine()).unwrap();
+    assert_eq!(crew.send(1, mine()), Err(Error::NotFound));
+    assert_eq!(crew.send(0, mine()), Err(Error::NotFound));
+    let inv = crew.world.get::<Inventory>(crew.players[1]).unwrap();
+    assert_eq!(inv.slots[0].stack.as_ref().unwrap().quantity, 2);
+
+    let observer = crew
+        .world
+        .query_filtered::<Entity, With<WorldObserver>>()
+        .single(&crew.world)
+        .unwrap();
+    crew.world.despawn(observer);
+    crew.world.run_schedule(FixedPreUpdate);
+    crew.world.spawn((
+        WorldObserver {
+            simulation_distance: 0,
+        },
+        Position(Vec2::ZERO),
+    ));
+    crew.world.run_schedule(FixedPreUpdate);
+    assert!(
+        crew.world
+            .resource::<ChunkStreamer>()
+            .loaded(ChunkPos { x: 0, y: 0 })
+            .is_some()
+    );
+    assert_eq!(crew.send(1, mine()), Err(Error::NotFound));
 }
 
 #[test]

@@ -135,6 +135,7 @@ pub(super) fn hud(
     config: &InventoryConfig,
     client: &InventoryClient,
     pos: Vec2,
+    ore: Option<Vec2>,
 ) {
     let Some(view) = &client.state.expedition else {
         return;
@@ -155,6 +156,13 @@ pub(super) fn hud(
                     )
                 });
                 ui.label(format!("{name}   {}", direction(end - pos)));
+                if view.scan > 0 {
+                    if let Some(ore) = ore {
+                        ui.label(format!("Iron ore   {}", direction(ore - pos)));
+                    } else {
+                        ui.label("No iron ore in scanner range");
+                    }
+                }
                 if let Some(site) = near_site(view, pos) {
                     ui.label(format!(
                         "[E] {}",
@@ -162,6 +170,8 @@ pub(super) fn hud(
                     ));
                 } else if pos.length() <= SHIP_RADIUS {
                     ui.label("[I] Expedition • Ship stations");
+                } else {
+                    ui.label("[E] Break a nearby rock or deposit");
                 }
                 if let Some(p) = client.beacon_signal {
                     ui.colored_label(
@@ -190,19 +200,19 @@ pub(super) fn console(ui: &mut egui::Ui, config: &InventoryConfig, client: &mut 
     } else if view.final_suit_built {
         "Scan for the polar emergency module. Pack charged tanks and cryo crystals for the return."
     } else if view.t3_built {
-        "Gather cryo crystals on the glacial shelf and fabricate the crystal suit."
+        "Break crystals on cold crater floors and fabricate the crystal suit."
     } else if view.fragments == 3 {
         "Blueprint complete. Bring sulfur, quartz, basalt and iron to the workbench for a T3 tank."
     } else if view.scan == 3 {
         "Search the engineering and navigation wrecks for blueprint fragments."
     } else if view.scan_limit == 3 {
-        "Scan for the wrecks and the glacial shelf."
+        "Scan for the engineering and navigation wrecks."
     } else if view.scan == 2 {
-        "Mine quartz on the glass flats and build an insulated suit."
+        "Break boulders for quartz and build an insulated suit."
     } else if view.scan_limit == 2 {
-        "Scan for quartz and sulfur. Equip and fill your new tank aboard the ship."
+        "Fill your new tank. Find quartz in boulders and sulfur in sulfur spikes."
     } else {
-        "Mine coal before nightfall. Scan the nearby craters and collect 12 iron for a T2 tank."
+        "Press E beside rocks for coal and basalt. Break ore spikes on crater floors for 12 iron."
     };
     ui.colored_label(paint::ACCENT, objective);
     ui.label(format!(

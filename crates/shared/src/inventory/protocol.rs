@@ -53,6 +53,9 @@ pub enum InventoryAction {
     CloseContainer,
     Refresh,
     Expedition(super::survival::ExpeditionAction),
+    MineObject {
+        anchor: crate::world::TilePos,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

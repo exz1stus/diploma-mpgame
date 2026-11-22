@@ -11,10 +11,6 @@ pub(crate) fn chunk_at_world(position: Vec2, chunk_size: u32) -> ChunkPos {
     }
 }
 
-pub(crate) fn tile_to_world(tile: TilePos) -> Vec2 {
-    Vec2::new(tile.x as f32, tile.y as f32) * TILE_SIZE
-}
-
 /// Maps between game space and generator space. The generator's world spans chunks
 /// `0..world_size_chunks`; the game world is centered, so its middle is chunk (0, 0)
 /// and world position (0, 0). Only chunk generation sees generator coordinates.

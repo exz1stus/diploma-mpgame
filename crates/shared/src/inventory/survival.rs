@@ -17,7 +17,9 @@ pub const SUITS: [&str; 2] = ["suit_t1", "suit_t2"];
 pub struct ExpeditionRules {
     #[serde(skip)]
     pub signature: u64,
+    #[serde(default = "default_expedition_size")]
     pub world_size_chunks: u16,
+    pub mining: Vec<MiningRule>,
     pub daylight: u16,
     pub night: u16,
     pub coal_seconds: u16,
@@ -25,6 +27,17 @@ pub struct ExpeditionRules {
     pub tank_seconds: [u16; 3],
     pub recipes: Vec<Recipe>,
     pub sites: Vec<Site>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MiningRule {
+    pub object: String,
+    #[serde(default)]
+    pub scan: u8,
+    #[serde(default)]
+    pub biome_prefix: Option<String>,
+    pub yields: Vec<(String, u32)>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -44,11 +57,40 @@ pub struct Site {
     pub scan: u8,
     pub kind: SiteKind,
     pub uses: u16,
-    pub yields: Vec<(String, u32)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SiteKind {
+    Wreck,
+    Pole,
+}
+
+// Older catalog overrides contain fixed resource sites and a separate map size.
+// Keep their authored survival balance and wrecks when switching to generated deposits.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LegacyExpedition {
+    world_size_chunks: u16,
+    daylight: u16,
+    night: u16,
+    coal_seconds: u16,
+    crystal_seconds: u16,
+    tank_seconds: [u16; 3],
+    recipes: Vec<Recipe>,
+    sites: Vec<LegacySite>,
+}
+
+#[derive(Deserialize)]
+struct LegacySite {
+    name: String,
+    offset: (i32, i32),
+    scan: u8,
+    uses: u16,
+    kind: LegacyKind,
+}
+
+#[derive(Deserialize)]
+enum LegacyKind {
     Crater,
     Quartz,
     Sulfur,
@@ -57,12 +99,60 @@ pub enum SiteKind {
     Pole,
 }
 
+impl LegacyExpedition {
+    fn upgrade(self) -> Result<ExpeditionRules, ron::error::SpannedError> {
+        #[derive(Deserialize)]
+        struct Defaults {
+            mining: Vec<MiningRule>,
+        }
+        let defaults: Defaults =
+            ron::from_str(include_str!("../../../../docs/week7/expedition.ron"))?;
+        let sites = self
+            .sites
+            .into_iter()
+            .filter_map(|s| {
+                let kind = match s.kind {
+                    LegacyKind::Wreck => SiteKind::Wreck,
+                    LegacyKind::Pole => SiteKind::Pole,
+                    _ => return None,
+                };
+                Some(Site {
+                    name: s.name,
+                    offset: s.offset,
+                    scan: s.scan,
+                    uses: s.uses,
+                    kind,
+                })
+            })
+            .collect();
+        Ok(ExpeditionRules {
+            signature: 0,
+            world_size_chunks: self.world_size_chunks,
+            mining: defaults.mining,
+            daylight: self.daylight,
+            night: self.night,
+            coal_seconds: self.coal_seconds,
+            crystal_seconds: self.crystal_seconds,
+            tank_seconds: self.tank_seconds,
+            recipes: self.recipes,
+            sites,
+        })
+    }
+}
+
+fn default_expedition_size() -> u16 {
+    512
+}
+
 impl ExpeditionRules {
     pub(super) fn parse(
         source: &str,
         items: &BTreeMap<String, super::definitions::ItemDefinition>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        let mut rules: Self = ron::from_str(source)?;
+        let mut rules: Self = ron::from_str(source).or_else(|error| {
+            let old: LegacyExpedition = ron::from_str(source).map_err(|_| error)?;
+            old.upgrade()
+        })?;
         // Stable across whitespace and comments. Catalog indices are part of the wire protocol.
         rules.signature = postcard::to_allocvec(&rules)?
             .iter()
@@ -128,13 +218,17 @@ impl ExpeditionRules {
             return Err("expected two blueprint wrecks and one polar wreck".into());
         }
         for s in &rules.sites {
-            let wreck = matches!(s.kind, SiteKind::Wreck | SiteKind::Pole);
-            if s.scan > 3
-                || s.uses == 0
-                || (wreck && (s.uses != 1 || !s.yields.is_empty()))
-                || (!wreck && (s.yields.is_empty() || !s.yields.iter().all(valid_cost)))
-            {
+            if s.scan > 3 || s.uses != 1 {
                 return Err(format!("invalid expedition site {}", s.name).into());
+            }
+        }
+        for rule in &rules.mining {
+            if rule.scan > 3
+                || rule.object.is_empty()
+                || rule.yields.is_empty()
+                || !rule.yields.iter().all(valid_cost)
+            {
+                return Err(format!("invalid mining drops for {}", rule.object).into());
             }
         }
         Ok(rules)

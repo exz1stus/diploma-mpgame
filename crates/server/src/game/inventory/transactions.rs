@@ -15,6 +15,7 @@ use std::collections::{BTreeMap, BTreeSet};
 pub(super) struct Plan {
     inventories: BTreeMap<Id, (Entity, Inventory)>,
     pub(super) keys: BTreeSet<LockKey>,
+    pub(super) mined: Option<(Entity, Entity)>, // object and its owning chunk
     pub(super) ground: Option<GroundChange>,
     pub(super) spawn: Vec<(Id, Vec2, GroundItem)>,
     pub(super) health: Option<(Entity, u16)>,
@@ -265,6 +266,13 @@ impl Plan {
 
         if let Some((entity, health)) = self.health {
             world.entity_mut(entity).insert(Health(health));
+        }
+
+        if let Some((object, chunk)) = self.mined {
+            world.despawn(object);
+            world
+                .entity_mut(chunk)
+                .remove::<crate::net::world_streaming::EncodedChunk>();
         }
 
         match self.ground {

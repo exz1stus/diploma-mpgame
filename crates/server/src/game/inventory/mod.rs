@@ -3,9 +3,9 @@
 mod access;
 mod actions;
 pub(crate) mod expedition;
-mod expedition_terrain;
 mod lifecycle;
 mod locks;
+mod mining;
 mod network;
 mod sessions;
 mod transactions;
@@ -56,7 +56,6 @@ impl Plugin for InventoryPlugin {
         app.insert_resource(InventoryService::new(
             InventoryConfig::load().expect("invalid inventory configuration"),
         ));
-        app.add_systems(FixedUpdate, expedition_terrain::prepare);
         app.add_systems(
             FixedPostUpdate,
             (expedition::tick, network::step)
