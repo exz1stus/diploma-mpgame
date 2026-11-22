@@ -10,7 +10,7 @@ use shared::world::{ChunkPos, TILE_SIZE};
 use super::{
     atlas::{PixelRect, SheetPixels, load_sheet, sheet_settled},
     catalog::TileCatalog,
-    chunk_mesh::{Neighborhood, build_chunk_mesh, tile_data, tile_data_image},
+    chunk_mesh::{Neighborhood, build_chunk_mesh, tile_data, tile_data_image, tile_relief_image},
     config::PresentationConfig,
     layers::{TileLayers, TileVisual},
     material::{TerrainMaterial, TerrainParams},
@@ -44,6 +44,7 @@ pub struct ChunkGround {
     visuals: Vec<TileVisual>,
     data: Handle<Image>,
     tints: Handle<Image>,
+    relief: Handle<Image>,
 }
 
 /// Resolves tile textures for a newly streamed world and starts loading the sheet.
@@ -132,10 +133,12 @@ pub fn spawn_chunk_visuals(
         );
         let data = images.add(tile_data_image(tiles.size, built.layers));
         let tints = images.add(tile_data_image(tiles.size, built.tints));
+        let relief = images.add(tile_relief_image(tiles.size, built.relief));
         let material = materials.add(TerrainMaterial {
             tiles: textures.0.clone(),
             data: data.clone(),
             tints: tints.clone(),
+            relief: relief.clone(),
             params: TerrainParams::new(
                 chunk_origin(chunk.pos, tiles.size),
                 tiles.size,
@@ -146,6 +149,7 @@ pub fn spawn_chunk_visuals(
             visuals,
             data,
             tints,
+            relief,
         });
         commands.spawn((
             GroundMesh,
@@ -202,6 +206,9 @@ pub fn stitch_chunk_borders(
         }
         if let Some(mut image) = images.get_mut(&ground.tints) {
             image.data = Some(built.tints);
+        }
+        if let Some(mut image) = images.get_mut(&ground.relief) {
+            image.data = Some(built.relief);
         }
     }
 }

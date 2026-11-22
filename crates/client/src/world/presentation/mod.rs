@@ -7,7 +7,8 @@
 //! F5 or later from the settings UI, re-styles the loaded world ([`reload`]).
 //!
 //! Tile appearance is composed by [`TileLayer`]s. The plugin registers [`TextureLayer`],
-//! which picks each tile's texture and overlay layer; more layers are added with
+//! which picks each tile's texture and overlay layer, and [`HeightLayer`], which passes the
+//! terrain height on for shading; more layers are added with
 //! [`TileLayerAppExt::add_tile_layer`] from their own plugins, which must be added after
 //! this one. Neighboring textures are blended per pixel by `terrain.wgsl`, following the
 //! `layers` and `blend` settings in `tiles.ron`.
@@ -28,7 +29,9 @@ mod textures;
 use bevy::{asset::embedded_asset, prelude::*, sprite_render::Material2dPlugin};
 
 #[allow(unused_imports, reason = "API for future tile layer plugins")]
-pub use layers::{TextureLayer, TileContext, TileLayer, TileLayerAppExt, TileLayers, TileVisual};
+pub use layers::{
+    HeightLayer, TextureLayer, TileContext, TileLayer, TileLayerAppExt, TileLayers, TileVisual,
+};
 
 use catalog::ObjectCatalog;
 use config::PresentationConfig;
@@ -61,6 +64,7 @@ impl Plugin for WorldPresentationPlugin {
         .init_resource::<shadows::SunLight>()
         .init_resource::<shadows::ShadowAssets>()
         .add_tile_layer(TextureLayer)
+        .add_tile_layer(HeightLayer)
         .configure_sets(
             Update,
             (

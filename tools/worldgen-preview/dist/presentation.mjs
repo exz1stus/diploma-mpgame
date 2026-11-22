@@ -121,7 +121,12 @@ export function tilesRon(tiles) {
 // ao_strength (shade at the foot of higher layers, 0-1),
 // ao_width (its width in pixels), ao_south / ao_north (shade scale where the higher ground
 // lies north / south of the lower ground, 0-4), tint_radius (radius in tiles over which tints
-// are averaged within a layer; 0 keeps each biome one flat color).
+// are averaged within a layer; 0 keeps each biome one flat color), height_shade (brightness
+// per unit of terrain height away from height_reference, 0-10: lower ground darker, higher
+// brighter, so craters read as dark bowls), height_reference (the height drawn unchanged,
+// 0-1), slope_shade (light on slopes facing the north-west and shade on the others, 0-5);
+// the height and slope shading vary the light smoothly over the land, so repeated textures
+// do not read as tiles.
 (
     textures: ${ronMap(tiles.textures)},
     default_placeholder: ${quote(tiles.default_placeholder)},
@@ -140,6 +145,9 @@ export function tilesRon(tiles) {
         ao_south: ${number(blend.ao_south)},
         ao_north: ${number(blend.ao_north)},
         tint_radius: ${blend.tint_radius},
+        height_shade: ${number(blend.height_shade)},
+        height_reference: ${number(blend.height_reference)},
+        slope_shade: ${number(blend.slope_shade)},
     ),
 )
 `;

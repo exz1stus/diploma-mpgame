@@ -1,13 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildTileData, composeChunk, edgeNoise, lattice, sanitizeBlend } from './dist/terrain.mjs';
+import { buildTileData, composeChunk, edgeNoise, lattice, sanitizeBlend, SLOPE_BIAS } from './dist/terrain.mjs';
 import {
   bandedPresentation, cropRegion, defaultLayers, rampTint, hexRgb, migrateObjects, planetPresentation, PLANET_PALETTE, drawnTexture, objectsRon, parseRon,
   readAtlas, recolorImage, stackLayers, tileCatalog, tileRegion, tilesRon,
 } from './dist/presentation.mjs';
 
-// No edge noise, no height shadow, no tint smoothing.
-const NO_NOISE = { pixels_per_tile: 2, overlay_reach: 0, edge_noise: 0, noise_scale: 0.5, ao_strength: 0, ao_width: 0, ao_south: 1, ao_north: 1, tint_radius: 0 };
+// No edge noise, no height shadow, no tint smoothing, no terrain shading.
+const NO_NOISE = { pixels_per_tile: 2, overlay_reach: 0, edge_noise: 0, noise_scale: 0.5, ao_strength: 0, ao_width: 0, ao_south: 1, ao_north: 1, tint_radius: 0, height_shade: 0, height_reference: 0.65, slope_shade: 0 };
 const WHITE = [255, 255, 255];
 
 // Solid 2 × 2 textures: index i is gray level 40 * (i + 1).
@@ -38,8 +38,49 @@ test('the hash matches the shader\'s u32 arithmetic', () => {
 
 test('blend settings clamp like the client', () => {
   assert.deepEqual(sanitizeBlend({ pixels_per_tile: 0, overlay_reach: -1, edge_noise: NaN, noise_scale: 0, ao_width: 40, tint_radius: 99 }),
-    { pixels_per_tile: 1, overlay_reach: 0, edge_noise: 0.35, noise_scale: 0.05, ao_strength: 0.35, ao_width: 16, ao_south: 1.5, ao_north: 0.4, tint_radius: 12 });
+    { pixels_per_tile: 1, overlay_reach: 0, edge_noise: 0.35, noise_scale: 0.05, ao_strength: 0.35, ao_width: 16, ao_south: 1.5, ao_north: 0.4, tint_radius: 12, height_shade: 2, height_reference: 0.65, slope_shade: 1 });
   assert.equal(sanitizeBlend({ ao_south: 9 }).ao_south, 4);
+  assert.equal(sanitizeBlend({ height_shade: 99, slope_shade: -1 }).height_shade, 10);
+});
+
+const SIDE = 6; // dataSide(4)
+const reliefAt = (relief, x, y) => {
+  const at = ((y + 1) * SIDE + x + 1) * 3;
+  return [relief[at], relief[at + 1] - SLOPE_BIAS, relief[at + 2] - SLOPE_BIAS];
+};
+
+test('relief holds heights and central slopes across chunk borders, like the client', () => {
+  // Same case as chunk_mesh::tests::relief_holds_heights_and_central_slopes_across_chunk_borders:
+  // height rises 100 per tile eastward and 10 northward; only the east neighbor is loaded.
+  const data = buildTileData(4, (x, y) => (x < 0 || y < 0 || y >= 4 ? null : [0, 0, ...WHITE, 0, 1000 + 100 * x + 10 * y]));
+  assert.equal(data.relief.length, SIDE * SIDE * 3);
+  assert.deepEqual(reliefAt(data.relief, 1, 2), [1120, 100, 10]);
+  assert.deepEqual(reliefAt(data.relief, 3, 1), [1310, 100, 10], 'east slope reaches into the neighbor');
+  assert.equal(reliefAt(data.relief, 4, 1)[0], 1410, 'border cell');
+  assert.equal(reliefAt(data.relief, 0, 1)[1], 50, 'a missing west neighbor repeats the edge');
+});
+
+// One flat gray-120 texture over a 4 × 4 chunk whose tile heights (0 to 1) come from `heightAt`.
+function shaded(heightAt, blend) {
+  const data = buildTileData(4, (x, y) => [0, 0, ...WHITE, 0, Math.round(heightAt(x, y) * 65535)]);
+  const layers = { width: 2, height: 2, layers: [new Uint8Array(16).fill(120)] };
+  return composeChunk({ size: 4, originX: 0, originY: 0, data, textures: layers, blend: { ...NO_NOISE, ...blend } });
+}
+
+test('terrain height darkens low ground and brightens high ground around the reference', () => {
+  const settings = { height_shade: 2, height_reference: 0.5 };
+  assert.equal(pixel(shaded(() => 0.5, settings), 3, 3)[0], 120, 'the reference height is unchanged');
+  const ramp = shaded(x => 0.3 + 0.1 * x, settings);
+  const row = [...Array(ramp.width).keys()].map(x => pixel(ramp, x, 3)[0]);
+  assert.ok(row[0] < 120 && row[7] > 120, `low west, high east: ${row}`);
+  for (let x = 1; x < row.length; x++) assert.ok(row[x] >= row[x - 1], `brightness follows height smoothly: ${row}`);
+});
+
+test('slopes facing the north-west are lit and the others shaded', () => {
+  const settings = { slope_shade: 1 };
+  assert.equal(pixel(shaded(() => 0.5, settings), 3, 3)[0], 120, 'flat ground is unchanged');
+  assert.ok(pixel(shaded(x => 0.5 + 0.004 * x, settings), 3, 3)[0] > 120, 'rising eastward faces the west');
+  assert.ok(pixel(shaded((x, y) => 0.5 + 0.004 * y, settings), 3, 3)[0] < 120, 'rising northward faces the south');
 });
 
 test('textures repeat in world space with image rows top-down and world +Y up', () => {
@@ -235,7 +276,7 @@ test('the planet preset gives every kind five darker-to-lighter height layers', 
 });
 
 test('exported RON parses back and keeps every setting', () => {
-  const tiles = { textures: { ash: 'basalt' }, default_placeholder: '#FF00FF', placeholder_colors: { basalt: '#202020', 'odd "name"': '#000000' }, regions: { basalt: 'basalt_0' }, recolor: true, layers: { basalt: 3 }, tints: { ash: '#AA8866' }, blend: { pixels_per_tile: 16, overlay_reach: 0.2, edge_noise: 0.35, noise_scale: 0.5, ao_strength: 0.4, ao_width: 2, ao_south: 2, ao_north: 0.25, tint_radius: 6 } };
+  const tiles = { textures: { ash: 'basalt' }, default_placeholder: '#FF00FF', placeholder_colors: { basalt: '#202020', 'odd "name"': '#000000' }, regions: { basalt: 'basalt_0' }, recolor: true, layers: { basalt: 3 }, tints: { ash: '#AA8866' }, blend: { pixels_per_tile: 16, overlay_reach: 0.2, edge_noise: 0.35, noise_scale: 0.5, ao_strength: 0.4, ao_width: 2, ao_south: 2, ao_north: 0.25, tint_radius: 6, height_shade: 1.5, height_reference: 0.6, slope_shade: 2 } };
   assert.deepEqual(parseRon(tilesRon(tiles)), tiles);
   const objects = {
     default_placeholder: '#475A47',

@@ -21,6 +21,8 @@ pub struct TileVisual {
     pub tint: [u8; 3],
     /// The biome the tile is drawn as; biomes meet on crisp, noisy edges.
     pub biome: u16,
+    /// Terrain height, normalized × `u16::MAX`; the ground is shaded by it and its slope.
+    pub height: u16,
 }
 
 impl Default for TileVisual {
@@ -30,6 +32,7 @@ impl Default for TileVisual {
             overlay: 0,
             tint: [255; 3],
             biome: 0,
+            height: 0,
         }
     }
 }
@@ -127,6 +130,15 @@ impl TileLayer for TextureLayer {
         visual.overlay = context.catalog.overlay(visual.texture_layer);
         visual.tint = context.catalog.tint(sample);
         visual.biome = context.catalog.drawn(sample).0;
+    }
+}
+
+/// Passes each tile's terrain height on, for height and slope shading.
+pub struct HeightLayer;
+
+impl TileLayer for HeightLayer {
+    fn apply(&self, sample: TileSample, _context: &TileContext, visual: &mut TileVisual) {
+        visual.height = sample.height;
     }
 }
 

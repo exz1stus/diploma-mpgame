@@ -1,9 +1,9 @@
 //! Chunk geometry and per-chunk shader data.
 //!
 //! A chunk is one quad whose UVs are chunk-local tile coordinates. The tiles' visuals go to
-//! the shader as two small textures with a one-tile border taken from the neighboring
-//! chunks, so blending across chunk edges is seamless: tile data (texture and overlay
-//! layer) and smoothed tints.
+//! the shader as three small textures with a one-tile border taken from the neighboring
+//! chunks, so blending and shading across chunk edges are seamless: tile data (texture and
+//! overlay layer), smoothed tints, and relief (terrain height and slope).
 //!
 //! `tools/worldgen-preview/dist/terrain.mjs` (`buildTileData`) builds the same data.
 
@@ -80,7 +80,14 @@ pub struct TileData {
     /// that share its overlay layer, rounded to the nearest integer. Keeping the average
     /// within a layer stops lower ground's colors from bleeding up a step and vice versa.
     pub tints: Vec<u8>,
+    /// RGBA16 texels, little endian: (height, east slope + 32768, north slope + 32768, 0).
+    /// Slopes are central differences, (next - previous) / 2 in height units per tile,
+    /// truncated; at the border they reach into the neighbors, so shading is seamless.
+    pub relief: Vec<u8>,
 }
+
+/// Offset that stores a signed slope in an unsigned texel.
+pub const SLOPE_BIAS: i32 = 32768;
 
 pub fn tile_data(neighborhood: &Neighborhood, tint_radius: u32) -> TileData {
     let size = neighborhood.size as i32;
@@ -119,7 +126,32 @@ pub fn tile_data(neighborhood: &Neighborhood, tint_radius: u32) -> TileData {
             tints.push(255);
         }
     }
-    TileData { layers, tints }
+    TileData {
+        layers,
+        tints,
+        relief: relief_data(neighborhood),
+    }
+}
+
+/// [`TileData::relief`]: every data cell's height and its central-difference slopes.
+fn relief_data(neighborhood: &Neighborhood) -> Vec<u8> {
+    let side = tile_data_side(neighborhood.size) as i32;
+    let height = |x: i32, y: i32| i32::from(neighborhood.visual(x, y).height);
+    let slope = |next: i32, previous: i32| ((next - previous) / 2 + SLOPE_BIAS) as u16;
+    let mut relief = Vec::with_capacity((side * side * 8) as usize);
+    for cy in 0..side {
+        for cx in 0..side {
+            let (x, y) = (cx - 1, cy - 1);
+            let texel = [
+                height(x, y) as u16,
+                slope(height(x + 1, y), height(x - 1, y)),
+                slope(height(x, y + 1), height(x, y - 1)),
+                0,
+            ];
+            relief.extend(texel.iter().flat_map(|channel| channel.to_le_bytes()));
+        }
+    }
+    relief
 }
 
 fn byte(value: u32) -> u8 {
@@ -128,6 +160,15 @@ fn byte(value: u32) -> u8 {
 
 /// An integer texture of a chunk's tile data, read with `textureLoad`.
 pub fn tile_data_image(size: u32, data: Vec<u8>) -> Image {
+    tile_image(size, data, TextureFormat::Rgba8Uint)
+}
+
+/// The integer texture of a chunk's [`TileData::relief`].
+pub fn tile_relief_image(size: u32, data: Vec<u8>) -> Image {
+    tile_image(size, data, TextureFormat::Rgba16Uint)
+}
+
+fn tile_image(size: u32, data: Vec<u8>, format: TextureFormat) -> Image {
     let side = tile_data_side(size);
     Image::new(
         Extent3d {
@@ -137,7 +178,7 @@ pub fn tile_data_image(size: u32, data: Vec<u8>) -> Image {
         },
         TextureDimension::D2,
         data,
-        TextureFormat::Rgba8Uint,
+        format,
         RenderAssetUsages::RENDER_WORLD,
     )
 }
@@ -172,6 +213,7 @@ mod tests {
                 overlay: index,
                 tint,
                 biome: index as u16 + 300,
+                height: 0,
             })
             .collect()
     }
@@ -179,6 +221,52 @@ mod tests {
     fn texel(data: &[u8], side: usize, x: i32, y: i32) -> &[u8] {
         let index = (y + 1) as usize * side + (x + 1) as usize;
         &data[index * 4..index * 4 + 4]
+    }
+
+    /// (height, east slope, north slope) of tile (x, y) in relief data.
+    fn relief(data: &[u8], side: usize, x: i32, y: i32) -> (u16, i32, i32) {
+        let index = ((y + 1) as usize * side + (x + 1) as usize) * 8;
+        let channel = |c: usize| u16::from_le_bytes([data[index + 2 * c], data[index + 2 * c + 1]]);
+        (
+            channel(0),
+            i32::from(channel(1)) - SLOPE_BIAS,
+            i32::from(channel(2)) - SLOPE_BIAS,
+        )
+    }
+
+    #[test]
+    fn relief_holds_heights_and_central_slopes_across_chunk_borders() {
+        // Height rises 100 per tile eastward, and 10 per tile northward.
+        let ramp = |offset: i32| {
+            (0..16)
+                .map(|index| TileVisual {
+                    height: (1000 + 100 * (offset + index % 4) + 10 * (index / 4)) as u16,
+                    ..default()
+                })
+                .collect::<Vec<_>>()
+        };
+        let center = ramp(0);
+        let east = ramp(4);
+        let neighbor = |offset: IVec2| (offset == IVec2::X).then_some(east.as_slice());
+        let data = tile_data(
+            &Neighborhood {
+                size: 4,
+                center: &center,
+                neighbor: &neighbor,
+            },
+            0,
+        );
+        let side = tile_data_side(4) as usize;
+        assert_eq!(data.relief.len(), side * side * 8);
+        assert_eq!(relief(&data.relief, side, 1, 2), (1120, 100, 10));
+        assert_eq!(
+            relief(&data.relief, side, 3, 1),
+            (1310, 100, 10),
+            "east slope reaches into the neighbor"
+        );
+        assert_eq!(relief(&data.relief, side, 4, 1).0, 1410, "border cell");
+        // West has no neighbor: the edge repeats, so the slope there is one-sided.
+        assert_eq!(relief(&data.relief, side, 0, 1).1, 50);
     }
 
     #[test]

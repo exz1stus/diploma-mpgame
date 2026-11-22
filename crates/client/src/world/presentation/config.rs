@@ -69,6 +69,11 @@ impl TextureTable {
 /// Biomes: within a layer, biomes meet on crisp, noisy edges too (without shading); texture
 /// and tint change together. The ground is multiplied by its biome's tint
 /// (`TileTable::tints`), optionally averaged over neighboring tiles of the same layer.
+///
+/// Terrain height: every pixel is shaded by the terrain height and slope interpolated from
+/// the nearest tile centers, so craters read as dark bowls with lit and shaded walls, and
+/// the light varies smoothly over the land instead of repeating with the textures. The
+/// worldgen preview's flat view uses the same formula (`protocol.mjs`, `displayFactor`).
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct TileBlend {
@@ -94,6 +99,14 @@ pub struct TileBlend {
     /// Tints are averaged over the same-layer tiles of a (2r + 1)² box with this radius r
     /// (0 to 12), softening colors inside a biome; 0 keeps every biome one flat color.
     pub tint_radius: u32,
+    /// Brightness per unit of normalized height away from `height_reference` (0 to 10):
+    /// lower ground is darker, higher ground brighter, within 0.25 to 1.75 times; 0 is off.
+    pub height_shade: f32,
+    /// Normalized height drawn at its own brightness (0 to 1).
+    pub height_reference: f32,
+    /// Light on slopes facing the north-west, shade on slopes facing away (0 to 5), up to
+    /// ±40 %; 0 is off.
+    pub slope_shade: f32,
 }
 
 /// Largest tint smoothing radius; chunks must be wider than it.
@@ -111,6 +124,9 @@ impl Default for TileBlend {
             ao_south: 1.5,
             ao_north: 0.4,
             tint_radius: 0,
+            height_shade: 2.0,
+            height_reference: 0.65,
+            slope_shade: 1.0,
         }
     }
 }
@@ -136,6 +152,9 @@ impl TileBlend {
             ao_south: clamp(self.ao_south, 0.0, 4.0, fallback.ao_south),
             ao_north: clamp(self.ao_north, 0.0, 4.0, fallback.ao_north),
             tint_radius: self.tint_radius.min(MAX_TINT_RADIUS),
+            height_shade: clamp(self.height_shade, 0.0, 10.0, fallback.height_shade),
+            height_reference: clamp(self.height_reference, 0.0, 1.0, fallback.height_reference),
+            slope_shade: clamp(self.slope_shade, 0.0, 5.0, fallback.slope_shade),
         }
     }
 }

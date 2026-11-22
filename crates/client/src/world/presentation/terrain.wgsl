@@ -10,7 +10,12 @@
 //   like height steps but without shading;
 // - temperature: the ground is multiplied by the winning biome's tint, interpolated from its
 //   tiles' tints (chunk_mesh::tile_data can average them within a layer to soften colors
-//   inside a biome).
+//   inside a biome);
+// - terrain height: the terrain height and slope, interpolated bilinearly from the tiles'
+//   (chunk_mesh::TileData::relief), shade the ground: lower ground darker and higher ground
+//   brighter around height_reference, and slopes facing the north-west lit, the others
+//   shaded, so craters read as bowls and the light varies over the land rather than
+//   repeating with the textures. Same formula as the preview's flat view (displayFactor).
 // Positions are snapped to the texture pixel grid so everything stays pixel-art crisp.
 //
 // tools/worldgen-preview/dist/terrain.mjs implements the same algorithm; keep them in sync.
@@ -21,6 +26,7 @@
 @group(#{MATERIAL_BIND_GROUP}) @binding(1) var tile_data: texture_2d<u32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(2) var tile_tints: texture_2d<u32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(3) var<uniform> params: TerrainParams;
+@group(#{MATERIAL_BIND_GROUP}) @binding(4) var tile_relief: texture_2d<u32>;
 
 struct TerrainParams {
     // Global tile coordinates of the chunk's minimum corner, chunk size, pixels per tile.
@@ -29,7 +35,31 @@ struct TerrainParams {
     blend: vec4<f32>,
     // Height shadow strength, height shadow width in pixels, south scale, north scale.
     shade: vec4<f32>,
+    // Height shade, height reference, slope shade, unused.
+    relief: vec4<f32>,
 };
+
+// Slope shading: brightness per unit of slope (height per tile) toward the north-west, and its
+// limit. Matches RELIEF_GAIN and RELIEF_LIMIT in the preview's protocol.mjs.
+const RELIEF_GAIN: f32 = 50.0;
+const RELIEF_LIMIT: f32 = 0.4;
+const SLOPE_BIAS: f32 = 32768.0;
+const HEIGHT_UNIT: f32 = 65535.0;
+
+// (height, east slope, north slope) of a relief texel, in normalized height (per tile).
+fn relief_at(at: vec2<i32>) -> vec3<f32> {
+    let texel = vec3<f32>(textureLoad(tile_relief, at, 0).rgb);
+    return vec3(texel.x, texel.y - SLOPE_BIAS, texel.z - SLOPE_BIAS) / HEIGHT_UNIT;
+}
+
+// Brightness from the terrain: height around the reference, times light on north-west slopes.
+fn terrain_light(relief: vec3<f32>) -> f32 {
+    let height = clamp(1.0 + params.relief.x * (relief.x - params.relief.y), 0.25, 1.75);
+    // Facing the north-west: rising toward the east, falling toward the north (+Y).
+    let slope = relief.y - relief.z;
+    let lit = 1.0 + clamp(slope * RELIEF_GAIN * params.relief.z, -RELIEF_LIMIT, RELIEF_LIMIT);
+    return height * lit;
+}
 
 fn lattice(x: i32, y: i32, seed: u32) -> f32 {
     var h = (bitcast<u32>(x) * 0x27d4eb2du) ^ (bitcast<u32>(y) * 0x165667b1u)
@@ -101,8 +131,10 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     var biome_of: array<u32, 4>;
     var tint_of: array<vec3<f32>, 4>;
     let coverage = weights(f);
+    var relief = vec3(0.0);
     for (var i = 0; i < 4; i++) {
         let at = clamp(corner + offsets[i], vec2(0), vec2(size + 1));
+        relief += relief_at(at) * coverage[i];
         let data = textureLoad(tile_data, at, 0);
         layer_of[i] = data.r;
         level_of[i] = data.g;
@@ -213,5 +245,6 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
             light = 1.0 - min(1.0, params.shade.x * side) * min(width, steps) / width;
         }
     }
+    light *= terrain_light(relief);
     return vec4(color * srgb_to_linear(tint / 255.0) * light, 1.0);
 }

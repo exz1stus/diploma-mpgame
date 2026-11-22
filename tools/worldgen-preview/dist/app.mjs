@@ -227,14 +227,16 @@ function terrainMessage(cx, cy, sources) {
     if (sample?.status !== 1) return null;
     const texture = drawnTexture(look.catalog, sample.biomeId, sample.groundId);
     const biome = drawnBiome(look.catalog, sample.biomeId, sample.groundId);
-    return [texture, look.catalog.overlay[texture] ?? 0, ...look.catalog.tints[biome], biome];
+    // Height quantized like the client receives it (TileSample::height).
+    const height = Math.round(Math.min(1, Math.max(0, sample.height)) * 65535);
+    return [texture, look.catalog.overlay[texture] ?? 0, ...look.catalog.tints[biome], biome, height];
   }, look.blend.tint_radius);
   // Outside-world padding and unclassified tiles (which the client never receives) stay empty.
   const hidden = new Uint8Array(size * size);
   for (let i = 0; i < size * size; i++) hidden[i] = sources[4].bytes[i * SAMPLE_BYTES] === 1 ? 0 : 1;
   return {
     size, originX: cx * size, originY: cy * size, textures: look.stack, blend: look.blend,
-    data: { layer: data.layer.buffer, level: data.level.buffer, biome: data.biome.buffer, tint: data.tint.buffer }, hidden: hidden.buffer,
+    data: { layer: data.layer.buffer, level: data.level.buffer, biome: data.biome.buffer, tint: data.tint.buffer, relief: data.relief.buffer }, hidden: hidden.buffer,
   };
 }
 
@@ -270,7 +272,7 @@ function fetchTerrainVisible(minX, minY, maxX, maxY) {
     const revision = look.revision;
     const message = terrainMessage(cx, cy, sources);
     const imageSide = config.size * imagePixelsPerTile(config.size, look.blend);
-    composeTerrainImage(message, [message.data.layer, message.data.level, message.data.biome, message.data.tint, message.hidden])
+    composeTerrainImage(message, [message.data.layer, message.data.level, message.data.biome, message.data.tint, message.data.relief, message.hidden])
       .then(image => {
         if (terrainActive.get(id) !== token || cache.get(id) !== sources[4]) { image.close(); return; }
         const previous = terrainCache.get(id);

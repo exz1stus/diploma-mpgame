@@ -13,13 +13,24 @@
 //   like height steps but without shading;
 // - temperature: the ground is multiplied by the winning biome's tint. Each tile's tint can be
 //   averaged over the tiles of its layer in a (2r + 1)² box (tint_radius r) to soften colors
-//   inside a biome; with r = 0 every biome is one flat color.
+//   inside a biome; with r = 0 every biome is one flat color;
+// - terrain height: the terrain height and slope, interpolated bilinearly from the tiles',
+//   shade the ground (terrainLight): lower ground darker and higher ground brighter around
+//   height_reference, slopes facing the north-west lit and the others shaded, so craters read
+//   as bowls and the light varies over the land instead of repeating with the textures.
 // Positions snap to the texture pixel grid.
 
 export const DEFAULT_BLEND = Object.freeze({
   pixels_per_tile: 16, overlay_reach: 0.15, edge_noise: 0.35, noise_scale: 0.5,
   ao_strength: 0.35, ao_width: 3, ao_south: 1.5, ao_north: 0.4, tint_radius: 0,
+  height_shade: 2, height_reference: 0.65, slope_shade: 1,
 });
+
+// Slope shading gain and limit, and the relief encoding (chunk_mesh::TileData::relief).
+const RELIEF_GAIN = 50;
+const RELIEF_LIMIT = 0.4;
+export const SLOPE_BIAS = 32768;
+const HEIGHT_UNIT = 65535;
 
 export const MAX_TINT_RADIUS = 12;
 
@@ -33,6 +44,9 @@ export const BLEND_CONTROLS = [
   { key: 'ao_south', label: 'Shadow scale, south side', min: 0, max: 4, step: 0.05 },
   { key: 'ao_north', label: 'Shadow scale, north side', min: 0, max: 4, step: 0.05 },
   { key: 'tint_radius', label: 'Tint smoothing radius (tiles)', min: 0, max: MAX_TINT_RADIUS, step: 1 },
+  { key: 'height_shade', label: 'Terrain height shade', min: 0, max: 10, step: 0.1 },
+  { key: 'height_reference', label: 'Height drawn unchanged', min: 0, max: 1, step: 0.01 },
+  { key: 'slope_shade', label: 'Slope shade (lit from the north-west)', min: 0, max: 5, step: 0.1 },
 ];
 
 // Same clamping as TileBlend::sanitized in the client.
@@ -51,7 +65,18 @@ export function sanitizeBlend(blend = {}) {
     ao_south: value('ao_south', 0, 4),
     ao_north: value('ao_north', 0, 4),
     tint_radius: Math.round(value('tint_radius', 0, MAX_TINT_RADIUS)),
+    height_shade: value('height_shade', 0, 10),
+    height_reference: value('height_reference', 0, 1),
+    slope_shade: value('slope_shade', 0, 5),
   };
+}
+
+// terrain.wgsl terrain_light: brightness from the normalized height and the east and north
+// slopes (height per tile) at a pixel.
+export function terrainLight(height, east, north, settings) {
+  const shade = Math.max(0.25, Math.min(1.75, 1 + settings.height_shade * (height - settings.height_reference)));
+  const slope = east - north;
+  return shade * (1 + Math.max(-RELIEF_LIMIT, Math.min(RELIEF_LIMIT, slope * RELIEF_GAIN * settings.slope_shade)));
 }
 
 export function lattice(x, y, seed) {
@@ -103,12 +128,13 @@ function toSrgb(linear) {
 export function dataSide(size) { return size + 2; }
 
 // Tile data for one chunk, like chunk_mesh::tile_data in the client. `tileAt(x, y)` gives
-// [textureLayer, overlayLayer, r, g, b, biome] (r, g, b: the biome tint; biome: the drawn
-// biome's ID, which decides biome edges) for chunk-local tiles up to
-// one chunk away, or null for tiles of missing neighbors, which repeat the chunk's nearest own
-// tile. Returns per data cell (tiles -1..=size): texture layer, overlay layer, biome, and the tint
-// averaged over the tiles of the (2r + 1)² box around the tile that share its overlay layer,
-// rounded to the nearest integer.
+// [textureLayer, overlayLayer, r, g, b, biome, height] (r, g, b: the biome tint; biome: the
+// drawn biome's ID, which decides biome edges; height: normalized × 65535, 0 when omitted) for
+// chunk-local tiles up to one chunk away, or null for tiles of missing neighbors, which repeat
+// the chunk's nearest own tile. Returns per data cell (tiles -1..=size): texture layer, overlay
+// layer, biome, the tint averaged over the tiles of the (2r + 1)² box around the tile that
+// share its overlay layer, rounded to the nearest integer, and relief: (height, east slope +
+// SLOPE_BIAS, north slope + SLOPE_BIAS), slopes being (next - previous) / 2, truncated.
 export function buildTileData(size, tileAt, tintRadius = 0) {
   const radius = Math.max(0, Math.min(size - 1, Math.round(tintRadius)));
   const side = dataSide(size);
@@ -123,9 +149,16 @@ export function buildTileData(size, tileAt, tintRadius = 0) {
   const level = new Uint8Array(side * side);
   const biome = new Uint16Array(side * side);
   const tint = new Uint8Array(side * side * 3);
+  const relief = new Uint16Array(side * side * 3);
+  const height = (x, y) => Math.min(65535, Math.max(0, Math.round(tile(x, y)[6] ?? 0)));
+  const slope = (next, previous) => Math.trunc((next - previous) / 2) + SLOPE_BIAS;
   for (let cy = 0; cy < side; cy++) for (let cx = 0; cx < side; cx++) {
     const value = tile(cx - 1, cy - 1);
     const index = cy * side + cx;
+    const [x, y] = [cx - 1, cy - 1];
+    relief[index * 3] = height(x, y);
+    relief[index * 3 + 1] = slope(height(x + 1, y), height(x - 1, y));
+    relief[index * 3 + 2] = slope(height(x, y + 1), height(x, y - 1));
     layer[index] = Math.min(255, value[0]);
     level[index] = Math.min(255, value[1]);
     biome[index] = Math.min(65535, value[5] ?? 0);
@@ -140,13 +173,26 @@ export function buildTileData(size, tileAt, tintRadius = 0) {
     tint[index * 3 + 1] = Math.floor((g + half) / count);
     tint[index * 3 + 2] = Math.floor((b + half) / count);
   }
-  return { layer, level, biome, tint };
+  return { layer, level, biome, tint, relief };
 }
 
 // Pixels per tile of a composed chunk image: the texture resolution, capped so an image
 // stays at most 1024 px wide. Lower resolutions sample the texture like GPU minification.
 export function imagePixelsPerTile(size, blend) {
   return Math.max(1, Math.min(sanitizeBlend(blend).pixels_per_tile, Math.floor(1024 / size)));
+}
+
+// terrain.wgsl relief_at, weighted over the four corner cells: [height, east slope, north
+// slope] in normalized height (per tile).
+function interpolatedRelief(relief, cell, coverage) {
+  let height = 0; let east = 0; let north = 0;
+  for (let i = 0; i < 4; i++) {
+    const at = cell[i] * 3;
+    height += relief[at] * coverage[i];
+    east += (relief[at + 1] - SLOPE_BIAS) * coverage[i];
+    north += (relief[at + 2] - SLOPE_BIAS) * coverage[i];
+  }
+  return [height / HEIGHT_UNIT, east / HEIGHT_UNIT, north / HEIGHT_UNIT];
 }
 
 // textures: { width, height, layers: [Uint8Array RGBA] }. Rows of the returned RGBA image
@@ -255,6 +301,7 @@ export function composeChunk({ size, originX, originY, data, textures, blend, hi
         const steps = Math.ceil(shadow - gap * ppt);
         if (shadow > 0 && steps > 0) light = 1 - Math.min(1, aoStrength * sideScale) * Math.min(shadow, steps) / shadow;
       }
+      light *= terrainLight(...interpolatedRelief(data.relief, cell, coverage), settings);
       const out = (py * width + px) * 4;
       pixels[out] = toSrgb(TO_LINEAR[texel[source]] * srgbToLinear(tr / 255) * light);
       pixels[out + 1] = toSrgb(TO_LINEAR[texel[source + 1]] * srgbToLinear(tg / 255) * light);

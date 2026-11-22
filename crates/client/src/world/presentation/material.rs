@@ -23,6 +23,9 @@ pub struct TerrainMaterial {
     pub tints: Handle<Image>,
     #[uniform(3)]
     pub params: TerrainParams,
+    /// The chunk's terrain heights and slopes (see [`super::chunk_mesh::TileData::relief`]).
+    #[texture(4, sample_type = "u_int")]
+    pub relief: Handle<Image>,
 }
 
 #[derive(ShaderType, Clone, Copy, Debug, PartialEq)]
@@ -33,6 +36,8 @@ pub struct TerrainParams {
     pub blend: Vec4,
     /// Height shadow strength, height shadow width in pixels, south scale, north scale.
     pub shade: Vec4,
+    /// Height shade, height reference, slope shade, unused.
+    pub relief: Vec4,
 }
 
 impl TerrainParams {
@@ -56,6 +61,12 @@ impl TerrainParams {
                 blend.ao_width as f32,
                 blend.ao_south,
                 blend.ao_north,
+            ),
+            relief: Vec4::new(
+                blend.height_shade,
+                blend.height_reference,
+                blend.slope_shade,
+                0.0,
             ),
         }
     }
@@ -109,5 +120,6 @@ mod tests {
         assert_eq!(params.chunk, Vec4::new(-64.0, 32.0, 32.0, 16.0));
         assert_eq!(params.blend.y, 0.5);
         assert_eq!(params.shade, Vec4::new(0.35, 3.0, 1.5, 0.4));
+        assert_eq!(params.relief, Vec4::new(2.0, 0.65, 1.0, 0.0));
     }
 }
