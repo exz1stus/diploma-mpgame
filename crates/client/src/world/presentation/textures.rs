@@ -39,36 +39,7 @@ pub fn stack_layers(entries: &[TextureEntry], textures: &[Option<&Image>]) -> Im
             None => data.extend(solid_layer(entry.placeholder, layer_bytes)),
         }
     }
-    for layer in data.chunks_exact_mut(layer_bytes) {
-        bake_pixel_heights(layer);
-    }
     array_image(size, entries.len().max(1) as u32, data)
-}
-
-/// Height of a flat texture's pixels, and the middle of the height range.
-const FLAT_HEIGHT: u8 = 128;
-
-/// Writes every pixel's height into its alpha: its brightness (r + g + b) relative to the
-/// layer's mean, scaled so the layer's furthest pixel from the mean reaches 0 or 255. Every
-/// texture spans the full range whatever its contrast; flat ones stay at [`FLAT_HEIGHT`].
-/// The worldgen preview (`terrain.mjs`, `pixelHeights`) computes the same bytes.
-pub fn bake_pixel_heights(layer: &mut [u8]) {
-    let brightness = |px: &[u8]| f64::from(u16::from(px[0]) + u16::from(px[1]) + u16::from(px[2]));
-    let count = (layer.len() / 4).max(1) as f64;
-    let mean = layer.chunks_exact(4).map(brightness).sum::<f64>() / count;
-    let spread = layer
-        .chunks_exact(4)
-        .map(|px| (brightness(px) - mean).abs())
-        .fold(0.0, f64::max);
-    for px in layer.chunks_exact_mut(4) {
-        px[3] = if spread < 0.5 {
-            FLAT_HEIGHT
-        } else {
-            (127.5 + 127.5 * (brightness(px) - mean) / spread)
-                .round()
-                .clamp(0.0, 255.0) as u8
-        };
-    }
 }
 
 /// Makes art neutral so tints color it: every pixel becomes `color` scaled by its red channel
@@ -180,34 +151,17 @@ mod tests {
         assert_eq!(image.texture_descriptor.size.depth_or_array_layers, 3);
         assert_eq!(image.size(), UVec2::splat(2));
         let data = image.data.unwrap();
-        // Flat layers: alpha holds the middle height.
         assert_eq!(
             &data[0..4],
-            &[255, 0, 0, 128],
+            &[255, 0, 0, 255],
             "missing file uses placeholder"
         );
-        assert_eq!(&data[16..20], &[1, 2, 3, 128], "real texture is copied");
+        assert_eq!(&data[16..20], &[1, 2, 3, 255], "real texture is copied");
         assert_eq!(
             &data[32..36],
-            &[255, 0, 0, 128],
+            &[255, 0, 0, 255],
             "wrong size uses placeholder"
         );
-    }
-
-    #[test]
-    fn pixel_heights_span_the_full_range_around_the_mean() {
-        // Brightness 0, 30, 30, 60: mean 30, spread 30.
-        let mut layer = vec![
-            0, 0, 0, 255, 10, 10, 10, 255, 30, 0, 0, 255, 20, 20, 20, 255,
-        ];
-        bake_pixel_heights(&mut layer);
-        let heights: Vec<_> = layer.chunks(4).map(|px| px[3]).collect();
-        assert_eq!(heights, [0, 128, 128, 255]);
-        assert_eq!(&layer[4..7], &[10, 10, 10], "colors are kept");
-        // Low contrast art still spans the range: 100 vs 103.
-        let mut faint = vec![100, 0, 0, 255, 103, 0, 0, 255];
-        bake_pixel_heights(&mut faint);
-        assert_eq!((faint[3], faint[7]), (0, 255));
     }
 
     #[test]
@@ -244,7 +198,7 @@ mod tests {
     fn placeholder_only_catalogs_use_one_pixel_layers() {
         let image = stack_layers(&[entry("a", Srgba::WHITE)], &[None]);
         assert_eq!(image.size(), UVec2::ONE);
-        assert_eq!(image.data.unwrap(), [255, 255, 255, 128]);
+        assert_eq!(image.data.unwrap(), [255, 255, 255, 255]);
         let empty = stack_layers(&[], &[]);
         assert_eq!(empty.texture_descriptor.size.depth_or_array_layers, 1);
     }

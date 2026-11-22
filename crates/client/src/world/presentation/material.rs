@@ -1,6 +1,5 @@
 //! The chunk ground material. One instance per chunk: it shares the tile texture array and
-//! adds the chunk's tile data and position (see `terrain.wgsl`). The array's alpha holds pixel
-//! heights ([`super::textures::bake_pixel_heights`]).
+//! adds the chunk's tile data and position (see `terrain.wgsl`).
 
 use bevy::{
     prelude::*, render::render_resource::AsBindGroup, render::render_resource::ShaderType,
@@ -30,7 +29,7 @@ pub struct TerrainMaterial {
 pub struct TerrainParams {
     /// Global tile coordinates of the chunk's minimum corner, chunk size, pixels per tile.
     pub chunk: Vec4,
-    /// Pixel depth, overlay reach, edge noise, noise scale.
+    /// Unused, overlay reach, edge noise, noise scale.
     pub blend: Vec4,
     /// Height shadow strength, height shadow width in pixels, south scale, north scale.
     pub shade: Vec4,
@@ -47,7 +46,7 @@ impl TerrainParams {
                 blend.pixels_per_tile as f32,
             ),
             blend: Vec4::new(
-                blend.pixel_depth,
+                0.0,
                 blend.overlay_reach,
                 blend.edge_noise,
                 blend.noise_scale,
@@ -108,7 +107,6 @@ mod tests {
         };
         let params = TerrainParams::new(IVec2::new(-64, 32), 32, blend);
         assert_eq!(params.chunk, Vec4::new(-64.0, 32.0, 32.0, 16.0));
-        assert_eq!(params.blend.x, 0.2, "pixel depth");
         assert_eq!(params.blend.y, 0.5);
         assert_eq!(params.shade, Vec4::new(0.35, 3.0, 1.5, 0.4));
     }

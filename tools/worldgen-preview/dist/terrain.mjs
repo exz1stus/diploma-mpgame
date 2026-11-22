@@ -13,15 +13,11 @@
 //   like height steps but without shading;
 // - temperature: the ground is multiplied by the winning biome's tint. Each tile's tint can be
 //   averaged over the tiles of its layer in a (2r + 1)² box (tint_radius r) to soften colors
-//   inside a biome; with r = 0 every biome is one flat color;
-// - pixel depth: every texture pixel has a height (pixelHeights, as the client bakes it into
-//   the tile array's alpha). A higher layer's coverage gains pixel_depth times its pixel's
-//   height over the lowest ground's pixel here, and a biome's score pixel_depth times its
-//   pixel's height, so raised pixels reach past an edge and low ones give way.
+//   inside a biome; with r = 0 every biome is one flat color.
 // Positions snap to the texture pixel grid.
 
 export const DEFAULT_BLEND = Object.freeze({
-  pixels_per_tile: 16, overlay_reach: 0.15, edge_noise: 0.35, noise_scale: 0.5, pixel_depth: 0.2,
+  pixels_per_tile: 16, overlay_reach: 0.15, edge_noise: 0.35, noise_scale: 0.5,
   ao_strength: 0.35, ao_width: 3, ao_south: 1.5, ao_north: 0.4, tint_radius: 0,
 });
 
@@ -32,7 +28,6 @@ export const BLEND_CONTROLS = [
   { key: 'overlay_reach', label: 'Overlay reach (tiles)', min: 0, max: 0.5, step: 0.01 },
   { key: 'edge_noise', label: 'Edge noise (height and biome)', min: 0, max: 1, step: 0.01 },
   { key: 'noise_scale', label: 'Edge noise scale (tiles)', min: 0.05, max: 64, step: 0.05 },
-  { key: 'pixel_depth', label: 'Pixel depth: texture relief at edges (tiles)', min: 0, max: 1, step: 0.01 },
   { key: 'ao_strength', label: 'Height shadow strength', min: 0, max: 1, step: 0.05 },
   { key: 'ao_width', label: 'Height shadow width (pixels)', min: 0, max: 16, step: 1 },
   { key: 'ao_south', label: 'Shadow scale, south side', min: 0, max: 4, step: 0.05 },
@@ -51,7 +46,6 @@ export function sanitizeBlend(blend = {}) {
     overlay_reach: value('overlay_reach', 0, 0.5),
     edge_noise: value('edge_noise', 0, 1),
     noise_scale: value('noise_scale', 0.05, 64),
-    pixel_depth: value('pixel_depth', 0, 1),
     ao_strength: value('ao_strength', 0, 1),
     ao_width: Math.round(value('ao_width', 0, 16)),
     ao_south: value('ao_south', 0, 4),
@@ -155,24 +149,6 @@ export function imagePixelsPerTile(size, blend) {
   return Math.max(1, Math.min(sanitizeBlend(blend).pixels_per_tile, Math.floor(1024 / size)));
 }
 
-// textures::bake_pixel_heights: every pixel's height byte, its brightness (r + g + b) relative
-// to the layer's mean, scaled so the furthest pixel from the mean reaches 0 or 255; flat
-// layers are 128 throughout.
-export function pixelHeights(layer) {
-  const count = Math.max(1, layer.length >> 2);
-  const brightness = new Float64Array(count);
-  let sum = 0;
-  for (let i = 0; i < count; i++) {
-    brightness[i] = layer[i * 4] + layer[i * 4 + 1] + layer[i * 4 + 2];
-    sum += brightness[i];
-  }
-  const mean = sum / count;
-  let spread = 0;
-  for (let i = 0; i < count; i++) spread = Math.max(spread, Math.abs(brightness[i] - mean));
-  return Uint8Array.from(brightness, value => (spread < 0.5
-    ? 128 : Math.min(255, Math.max(0, Math.round(127.5 + 127.5 * (value - mean) / spread)))));
-}
-
 // textures: { width, height, layers: [Uint8Array RGBA] }. Rows of the returned RGBA image
 // run from the chunk's bottom (row 0 = local y 0), matching the preview's y-up drawing.
 // `hidden(x, y)` marks chunk tiles outside the world; they stay transparent.
@@ -180,19 +156,15 @@ export function composeChunk({ size, originX, originY, data, textures, blend, hi
   const settings = sanitizeBlend(blend);
   const { pixels_per_tile: ppt, overlay_reach: reach, edge_noise: amplitude, noise_scale: scale } = settings;
   const { ao_strength: aoStrength, ao_width: aoWidth, ao_south: aoSouth, ao_north: aoNorth } = settings;
-  const depth = settings.pixel_depth;
   const outPx = imagePixelsPerTile(size, blend);
   const width = size * outPx;
   const side = dataSide(size);
   const { width: tw, height: th, layers } = textures;
-  const heights = layers.map(pixelHeights);
   const pixels = new Uint8ClampedArray(width * width * 4);
   const levelOf = new Int32Array(4);
   const biomeOf = new Int32Array(4);
   const cell = new Int32Array(4);
   const coverage = new Float64Array(4);
-  const heightOf = new Float64Array(4);
-  const relief = new Float64Array(4);
   for (let py = 0; py < width; py++) {
     const localTileY = Math.floor(py / outPx);
     const texelY = Math.floor((originY + (py + 0.5) / outPx) * ppt);
@@ -219,17 +191,8 @@ export function composeChunk({ size, originX, originY, data, textures, blend, hi
       }
       coverage[0] = (1 - fx) * (1 - fy); coverage[1] = fx * (1 - fy); coverage[2] = (1 - fx) * fy; coverage[3] = fx * fy;
 
-      // Pixel depth: each corner's texture height here; relief over the lowest ground's.
-      const texelIndex = rowY * tw + (((texelX % tw) + tw) % tw);
-      let lowest = 0;
-      for (let i = 0; i < 4; i++) {
-        heightOf[i] = (heights[data.layer[cell[i]]] ?? heights[0])[texelIndex] / 255;
-        if (levelOf[i] < levelOf[lowest]) lowest = i;
-      }
-      for (let i = 0; i < 4; i++) relief[i] = depth * (heightOf[i] - heightOf[lowest]);
-
       // Height: the highest covering layer, and how close the nearest higher edge is.
-      let chosen = levelOf[lowest];
+      let chosen = Math.min(levelOf[0], levelOf[1], levelOf[2], levelOf[3]);
       let gap = Infinity;
       let gapLevel = -1;
       if (levelOf[0] !== chosen || levelOf[1] !== chosen || levelOf[2] !== chosen || levelOf[3] !== chosen) {
@@ -237,13 +200,13 @@ export function composeChunk({ size, originX, originY, data, textures, blend, hi
         for (let i = 0; i < 4; i++) {
           const level = levelOf[i];
           if (level <= chosen) continue;
-          let covered = relief[i];
+          let covered = 0;
           for (let j = 0; j < 4; j++) if (levelOf[j] >= level) covered += coverage[j];
           if (covered > threshold) chosen = level;
         }
         for (let i = 0; i < 4; i++) {
           if (levelOf[i] <= chosen) continue;
-          let covered = relief[i];
+          let covered = 0;
           for (let j = 0; j < 4; j++) if (levelOf[j] >= levelOf[i]) covered += coverage[j];
           if (threshold - covered < gap) { gap = threshold - covered; gapLevel = levelOf[i]; }
         }
@@ -259,12 +222,12 @@ export function composeChunk({ size, originX, originY, data, textures, blend, hi
         if (!first) continue;
         let covered = 0;
         for (let j = 0; j < 4; j++) if (levelOf[j] === chosen && biomeOf[j] === biomeOf[i]) covered += coverage[j];
-        const score = covered + depth * heightOf[i] + amplitude * biomeNoise(pointX, pointY, scale, biomeOf[i]);
+        const score = covered + amplitude * biomeNoise(pointX, pointY, scale, biomeOf[i]);
         if (score > best) { best = score; winner = i; }
       }
 
       // The winning biome's texture, and its tiles' tints interpolated bilinearly.
-      const source = texelIndex * 4;
+      const source = (rowY * tw + (((texelX % tw) + tw) % tw)) * 4;
       const texel = layers[data.layer[cell[winner]]] ?? layers[0];
       let tr = 0; let tg = 0; let tb = 0; let tintTotal = 0;
       for (let i = 0; i < 4; i++) {

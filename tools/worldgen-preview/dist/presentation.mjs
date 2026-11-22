@@ -118,8 +118,6 @@ export function tilesRon(tiles) {
 // blend: pixels_per_tile (texture pixels per tile; textures repeat in world space),
 // overlay_reach (how far a higher layer reaches over a lower neighbor, 0-0.5 tiles),
 // edge_noise (irregularity of height and biome edges, 0-1), noise_scale (its size in tiles),
-// pixel_depth (how far texture pixels' heights, their brightness within the texture, move
-// height and biome edges, 0-1 tiles: raised pixels reach past an edge, low ones give way),
 // ao_strength (shade at the foot of higher layers, 0-1),
 // ao_width (its width in pixels), ao_south / ao_north (shade scale where the higher ground
 // lies north / south of the lower ground, 0-4), tint_radius (radius in tiles over which tints
@@ -137,7 +135,6 @@ export function tilesRon(tiles) {
         overlay_reach: ${number(blend.overlay_reach)},
         edge_noise: ${number(blend.edge_noise)},
         noise_scale: ${number(blend.noise_scale)},
-        pixel_depth: ${number(blend.pixel_depth)},
         ao_strength: ${number(blend.ao_strength)},
         ao_width: ${blend.ao_width},
         ao_south: ${number(blend.ao_south)},
