@@ -1,0 +1,165 @@
+// How object kinds are drawn. Exported by the worldgen preview (tools/worldgen-preview).
+// Art comes from atlas.ron `sprites`; one variant per object is picked from its anchor tile,
+// so every client draws the same world.
+//
+// recolor: Some("#RRGGBB") makes the art of tinted kinds neutral in this color first (each sprite
+//   keeps its light and shade, relative to its own average), so the tint alone colors it. None
+//   keeps the art's own colors (use for art that is already neutral).
+// tints: biome name -> color the art of tinted kinds standing there is multiplied by; kept apart
+//   from the ground tints so objects stand out. Feature biomes without an entry use their ground
+//   biome's; other unlisted biomes stay white.
+//
+// shadow: sun shadows of standing objects (the sun follows the world clock, clock.ron):
+//   opacity (darkness under a high sun, 0-1), max_length (longest shadow, in object heights,
+//   for a low sun), fade_degrees (sun elevation over which shadows fade out toward dusk), depth
+//   (how deep objects are, as a fraction of their height: the least a shadow spreads, so side
+//   light does not flatten it to a line). Shadows darken whole terrain texels.
+// occlusion: ambient occlusion in whole terrain texels, like the tiles' height shading:
+//   opacity (ground darkness next to an object, 0-1), reach (texels it fades over around
+//   standing art, 1-6), decal_reach (around ground decals like pebbles, 0-6), base_rows (bottom
+//   rows of standing art that darken so it sits in the ground, 0-8), base_opacity (0-1).
+//
+// surfaces: biome name -> surface. A kind's `sprites` choose art per surface, so a rock on
+//   basalt looks like basalt. Feature biomes without an entry use their ground biome's.
+//
+// kinds: object kind -> style; every field is optional.
+//   sprite:      atlas sprite where `sprites` lists no art for the surface (default: kind name)
+//   sprites:     surface -> atlas sprite
+//   jitter:      largest nudge of the foot off its footprint's south-edge center, in tiles
+//                (0 to 0.5); it only moves north, east and west, staying on the footprint
+//   flip:        mirror half of the objects; only for art without painted light (default: off)
+//   scale:       (min, max) size multiplier, picked per object; anything but 1 puts the art's
+//                pixels off the terrain pixel grid the art otherwise snaps to
+//   layer:       Sorted (stands; drawn by foot position with players) or Ground (flat decal)
+//   tinted:      false keeps the art's own colors: no recolor and no biome tint (default: true)
+//   shadow:      false casts no sun shadow (default: true; ground decals never cast one)
+//   occlusion:   false skips the ambient occlusion at the lower edge (default: true)
+//   tint:        Some("#RRGGBB") multiplies the art
+//   placeholder: Some("#RRGGBB") rectangle drawn while the kind has no sprite
+// Art is drawn at its pixel size, `tiles.ron` blend.pixels_per_tile pixels per tile.
+(
+    default_placeholder: "#475A47",
+    // Object tints per biome, floor to ridge: darker or grayer than the ground so objects
+    // stand out (polar rocks bluish gray instead of snow white); sulfur spikes stay close to
+    // their ground so they blend in.
+    tints: {
+        "plain_floor": "#4A4846",
+        "plain_low": "#575552",
+        "plain_mid": "#64625E",
+        "plain_upland": "#716F6B",
+        "plain_ridge": "#7E7C78",
+        "desert_floor": "#5A5650",
+        "desert_low": "#67625C",
+        "desert_mid": "#736E67",
+        "desert_upland": "#807A73",
+        "desert_ridge": "#8C867E",
+        "sulfur_floor": "#655A2C",
+        "sulfur_low": "#7F7135",
+        "sulfur_mid": "#97863F",
+        "sulfur_upland": "#AC9A4A",
+        "sulfur_ridge": "#BDAD5A",
+        "basalt_floor": "#4A4D52",
+        "basalt_low": "#53565B",
+        "basalt_mid": "#5C5F64",
+        "basalt_upland": "#65686D",
+        "basalt_ridge": "#6E7176",
+        "snow_floor": "#7A8592",
+        "snow_low": "#818C99",
+        "snow_mid": "#8893A0",
+        "snow_upland": "#8F9AA7",
+        "snow_ridge": "#96A1AE",
+        "frost_floor": "#65707C",
+        "frost_low": "#6C7783",
+        "frost_mid": "#737E8A",
+        "frost_upland": "#7A8591",
+        "frost_ridge": "#818C98",
+    },
+    recolor: Some("#EEEEEE"),
+    shadow: (opacity: 0.45, max_length: 1.2, fade_degrees: 8.0, depth: 0.4),
+    occlusion: (opacity: 0.5, reach: 4, decal_reach: 1, base_rows: 2, base_opacity: 0.3),
+    surfaces: {
+        "plain_floor": "regolith",
+        "plain_low": "regolith",
+        "plain_mid": "regolith",
+        "plain_upland": "regolith",
+        "plain_ridge": "regolith",
+        "desert_floor": "regolith",
+        "desert_low": "regolith",
+        "desert_mid": "regolith",
+        "desert_upland": "regolith",
+        "desert_ridge": "regolith",
+        "sulfur_floor": "sulfur",
+        "sulfur_low": "sulfur",
+        "sulfur_mid": "sulfur",
+        "sulfur_upland": "sulfur",
+        "sulfur_ridge": "sulfur",
+        "basalt_floor": "basalt",
+        "basalt_low": "basalt",
+        "basalt_mid": "basalt",
+        "basalt_upland": "basalt",
+        "basalt_ridge": "basalt",
+        "snow_floor": "polar",
+        "snow_low": "polar",
+        "snow_mid": "polar",
+        "snow_upland": "polar",
+        "snow_ridge": "polar",
+        "frost_floor": "polar",
+        "frost_low": "polar",
+        "frost_mid": "polar",
+        "frost_upland": "polar",
+        "frost_ridge": "polar",
+    },
+    kinds: {
+        "rock": (
+            sprite: Some("regolith_rock"),
+            sprites: {
+                "regolith": "regolith_rock",
+                "basalt": "basalt_stone",
+            },
+            jitter: 0.3,
+            placeholder: Some("#5A5550"),
+        ),
+        "large_rock": (
+            sprite: Some("regolith_boulder"),
+            sprites: {
+                "regolith": "regolith_boulder",
+                "basalt": "basalt_stalagmite",
+                "sulfur": "sulfur_spike",
+            },
+            jitter: 0.25,
+            placeholder: Some("#4A4642"),
+        ),
+        "iron_ore": (
+            sprite: Some("regolith_spike"),
+            sprites: {
+                "regolith": "regolith_spike",
+                "basalt": "basalt_spire",
+                "sulfur": "sulfur_spike_large",
+            },
+            jitter: 0.25,
+            placeholder: Some("#7A4A35"),
+        ),
+        "pebbles": (
+            sprite: Some("regolith_pebbles"),
+            sprites: {
+                "regolith": "regolith_pebbles",
+                "basalt": "basalt_pebbles",
+                "sulfur": "sulfur_pebbles",
+                "polar": "polar_pebbles",
+            },
+            jitter: 0.4,
+            layer: Ground,
+            // Flat and tiny: no occlusion halo, it reads as too strong.
+            occlusion: false,
+            placeholder: Some("#77726B"),
+        ),
+        // Rare, on the floors of cold craters (worldgen features/craters.ron); keeps its own
+        // colors to stand out.
+        "crystal": (
+            sprite: Some("polar_crystal"),
+            tinted: false,
+            jitter: 0.25,
+            placeholder: Some("#9FB8D8"),
+        ),
+    },
+)

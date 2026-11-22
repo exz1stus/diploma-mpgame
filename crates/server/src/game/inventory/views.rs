@@ -3,7 +3,7 @@ use super::{
     access::{lookup, position, public_inventory},
     sessions::Session,
 };
-use crate::networking::{
+use crate::net::{
     messages::{BufferedServerMessage, MessageBuffer, MessageTarget},
     server::TickCounter,
 };

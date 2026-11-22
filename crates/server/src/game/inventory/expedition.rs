@@ -3,7 +3,7 @@ use super::{
 };
 use crate::{
     game::world::{WorldGenerator, coords::WorldFrame},
-    networking::entity::{NetworkCommandsExt, reserve_network_ids},
+    net::entity::{NetworkCommandsExt, reserve_network_ids},
 };
 use avian2d::prelude::{LinearVelocity, Position};
 use bevy::prelude::*;

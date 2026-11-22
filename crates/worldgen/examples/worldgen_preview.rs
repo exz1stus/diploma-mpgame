@@ -8,10 +8,9 @@ use std::{
 };
 
 use worldgen::{
-    BasinGenerator, BiomeMap, BiomeRepository, CraterGenerator, ElevationNoise, NoiseConfig,
-    NoiseSource, ObjectRepository, PlanetParams, TemperatureCoefficients, TemperatureModel,
-    TemperatureRegionsNoise, TileData, TileMapper, TilePos, VolcanoGenerator, WorldGenerator,
-    WorldGeneratorConfig, WorldGeography, build_world_generator,
+    BasinSettings, BiomeMap, BiomeMapDefinition, BiomeRepository, ConfigSource, CraterGenerator,
+    FbmNoise, NoiseConfig, PlanetParams, TemperatureCoefficients, TerrainSources, TilePos,
+    VolcanoGenerator, WorldConfig, WorldGenerator, WorldGeneratorConfig,
 };
 
 #[derive(serde::Serialize)]
@@ -26,14 +25,15 @@ struct Control {
 }
 
 fn controls() -> Vec<Control> {
-    let world = WorldGeneratorConfig::default();
-    let temperature = TemperatureCoefficients::default();
-    let planet = PlanetParams::default();
-    let elevation = ElevationNoise::default_config();
-    let region = TemperatureRegionsNoise::default_config();
-    let craters = CraterGenerator::default();
-    let basins = BasinGenerator::new(ElevationNoise::new(world.seed));
-    let volcanoes = VolcanoGenerator::default();
+    let config = WorldConfig::bundled();
+    let world = config.world.dimensions();
+    let temperature = config.world.climate.coefficients;
+    let planet = config.world.climate.planet;
+    let elevation = config.world.elevation;
+    let region = config.world.climate.region_noise;
+    let craters = config.craters;
+    let basins = config.basins;
+    let volcanoes = config.volcanoes;
     let mut controls = Vec::new();
     let mut add = |key, label, group, default, min, max, step| {
         controls.push(Control {
@@ -65,12 +65,12 @@ fn controls() -> Vec<Control> {
         "1",
     );
     add(
-        "frequency",
-        "Terrain coordinate scale",
+        "terrain_scale",
+        "Terrain scale (noises and features)",
         "World",
-        Some(0.025),
-        0.000001,
-        1.0,
+        Some(config.world.terrain_scale),
+        0.05,
+        20.0,
         "any",
     );
     add(
@@ -335,10 +335,55 @@ fn controls() -> Vec<Control> {
         "any",
     );
     add(
+        "basin_shape_noise",
+        "Outline irregularity",
+        "Impact basins",
+        Some(basins.shape_noise),
+        0.0,
+        0.6,
+        "any",
+    );
+    add(
+        "basin_edge_noise",
+        "Edge detail",
+        "Impact basins",
+        Some(basins.edge_noise),
+        0.0,
+        0.5,
+        "any",
+    );
+    add(
+        "basin_edge_scale",
+        "Edge detail size (tiles)",
+        "Impact basins",
+        Some(basins.edge_noise_scale),
+        4.0,
+        4096.0,
+        "any",
+    );
+    add(
+        "basin_edge_octaves",
+        "Edge detail octaves",
+        "Impact basins",
+        Some(basins.edge_octaves as f64),
+        1.0,
+        12.0,
+        "1",
+    );
+    add(
+        "basin_edge_ridged",
+        "Ridged edges (0 or 1)",
+        "Impact basins",
+        Some(f64::from(u8::from(basins.edge_ridged))),
+        0.0,
+        1.0,
+        "1",
+    );
+    add(
         "basin_coarse_octaves",
         "Smoothing octaves",
         "Impact basins",
-        Some(2.0),
+        Some(basins.smoothing_octaves as f64),
         1.0,
         12.0,
         "1",
@@ -441,189 +486,182 @@ fn controls() -> Vec<Control> {
     controls
 }
 
+/// The world config with the preview's URL controls applied, plus the adapter-only seed
+/// overrides (which default to the seeds the game uses).
 struct PreviewSettings {
-    biomes: BiomeRepository,
-    biome_map: BiomeMap,
-    config: WorldGeneratorConfig,
-    frequency: f64,
+    world: WorldConfig,
     elevation_seed: u64,
-    elevation: NoiseConfig,
     region_seed: u64,
-    region: NoiseConfig,
-    temperature: TemperatureCoefficients,
-    planet: PlanetParams,
-    craters: CraterGenerator,
-    basins: BasinGenerator,
-    volcanoes: VolcanoGenerator,
 }
 
 impl PreviewSettings {
     fn from_params(params: &HashMap<&str, &str>) -> Result<Self, String> {
-        let mut values = HashMap::new();
-        for control in controls() {
-            let value = if params.contains_key(control.key) {
-                Some(parse::<f64>(params, control.key)?)
-            } else {
-                control.default
-            };
-            if let Some(value) = value {
-                if !value.is_finite()
-                    || value < control.min
-                    || value > control.max
-                    || (control.step == "1" && value.fract() != 0.0)
-                {
-                    return Err(format!(
-                        "Invalid {}: expected {} to {}{}",
-                        control.key,
-                        control.min,
-                        control.max,
-                        if control.step == "1" {
-                            " (integer)"
-                        } else {
-                            ""
-                        }
-                    ));
-                }
-                values.insert(control.key, value);
-            }
-        }
-        let config = WorldGeneratorConfig {
-            seed: values["seed"] as u64,
-            chunk_size: values["size"] as u32,
-            ..Default::default()
-        };
-        let noise = |prefix: &str| NoiseConfig {
-            frequency: values[format!("{prefix}_frequency").as_str()],
-            octaves: values[format!("{prefix}_octaves").as_str()] as usize,
-            lacunarity: values[format!("{prefix}_lacunarity").as_str()],
-            persistence: values[format!("{prefix}_persistence").as_str()],
-        };
-        let craters = CraterGenerator {
-            cell_size: values["crater_cell_size"] as i64,
-            min_radius: values["crater_min_radius"],
-            max_radius: values["crater_max_radius"],
-            density: values["crater_density"],
-            temperature_offset: values["crater_temperature_offset"],
-            ..Default::default()
-        };
-        if craters.min_radius > craters.max_radius
-            || craters.max_radius * 1.5 > craters.cell_size as f64
-        {
-            return Err(
-                "Crater radii must satisfy minimum <= maximum and maximum * 1.5 <= cell size"
-                    .into(),
-            );
-        }
-        let elevation = noise("elevation");
-        let elevation_seed = values
-            .get("elevation_seed")
-            .map_or(config.seed, |seed| *seed as u64);
-        let mut coarse_elevation = elevation;
-        coarse_elevation.octaves = (values["basin_coarse_octaves"] as usize).min(elevation.octaves);
-        let mut basins = BasinGenerator::new(PreviewNoise {
-            source: ElevationNoise::with_config(elevation_seed, coarse_elevation),
-            frequency: values["frequency"],
-        });
-        basins.cell_size = values["basin_cell_size"] as i64;
-        basins.probability = values["basin_probability"];
-        basins.min_radius = values["basin_min_radius"];
-        basins.max_radius = values["basin_max_radius"];
-        basins.min_depth = values["basin_min_depth"];
-        basins.max_depth = values["basin_max_depth"];
-        basins.min_rim_height = values["basin_min_rim_height"];
-        basins.max_rim_height = values["basin_max_rim_height"];
-        basins.smoothing = values["basin_smoothing"];
-        basins.temperature_offset = values["basin_temperature_offset"];
-        if basins.min_radius > basins.max_radius
-            || basins.max_radius * 1.5 > basins.cell_size as f64
-            || basins.min_depth > basins.max_depth
-            || basins.min_rim_height > basins.max_rim_height
-        {
-            return Err("Basin minimums must not exceed maximums, and maximum radius * 1.5 must fit within the cell size".into());
-        }
-        let volcanoes = VolcanoGenerator {
-            cell_size: values["volcano_cell_size"] as i64,
-            probability: values["volcano_probability"],
-            min_radius: values["volcano_min_radius"],
-            max_radius: values["volcano_max_radius"],
-            min_height: values["volcano_min_height"],
-            max_height: values["volcano_max_height"],
-            caldera_ratio: values["volcano_caldera_ratio"],
-            caldera_depth: values["volcano_caldera_depth"],
-            temperature_offset: values["volcano_temperature_offset"],
-            ..Default::default()
-        };
-        if volcanoes.min_radius > volcanoes.max_radius
-            || volcanoes.max_radius > volcanoes.cell_size as f64
-            || volcanoes.min_height > volcanoes.max_height
-        {
-            return Err("Volcano minimums must not exceed maximums, and maximum radius must fit within the cell size".into());
-        }
-        let biomes = BiomeRepository::parse();
-        let biome_map = selected_biomes(params, &biomes)?.1;
+        let values = control_values(params)?;
+        // The preset supplies biomes, maps and objects; controls set the numeric settings.
+        let (_, mut world) = selected_preset(params)?;
+        apply_world_controls(&mut world, &values);
+        apply_crater_controls(&mut world.craters, &values)?;
+        apply_basin_controls(&mut world.basins, &values)?;
+        apply_volcano_controls(&mut world.volcanoes, &values)?;
+        let seed = world.world.seed;
         Ok(Self {
-            biomes,
-            biome_map,
-            config,
-            frequency: values["frequency"],
-            elevation_seed,
-            elevation,
+            world,
+            elevation_seed: values
+                .get("elevation_seed")
+                .map_or(seed, |seed| *seed as u64),
             region_seed: values
                 .get("region_seed")
-                .map_or(config.seed ^ 0x5445_4d50, |seed| *seed as u64),
-            region: noise("region"),
-            temperature: TemperatureCoefficients {
-                base: values["temperature_base"],
-                solar: values["temperature_solar"],
-                altitude: values["temperature_altitude"],
-                region: values["temperature_region"],
-            },
-            planet: PlanetParams {
-                orbit: values["orbit"],
-                axial_tilt_deg: values["axial_tilt"],
-            },
-            craters,
-            basins,
-            volcanoes,
+                .map_or(seed ^ 0x5445_4d50, |seed| *seed as u64),
         })
     }
 }
 
-// Preview controls are an adapter concern, separate from the world configuration.
-struct PreviewNoise {
-    source: ElevationNoise,
-    frequency: f64,
+/// Every control's value: from the query, else its default. Rejects out-of-range values.
+fn control_values(params: &HashMap<&str, &str>) -> Result<HashMap<&'static str, f64>, String> {
+    let mut values = HashMap::new();
+    for control in controls() {
+        let value = if params.contains_key(control.key) {
+            Some(parse::<f64>(params, control.key)?)
+        } else {
+            control.default
+        };
+        let Some(value) = value else { continue };
+        let integer = control.step == "1";
+        if !value.is_finite()
+            || value < control.min
+            || value > control.max
+            || (integer && value.fract() != 0.0)
+        {
+            return Err(format!(
+                "Invalid {}: expected {} to {}{}",
+                control.key,
+                control.min,
+                control.max,
+                if integer { " (integer)" } else { "" }
+            ));
+        }
+        values.insert(control.key, value);
+    }
+    Ok(values)
 }
 
-impl NoiseSource for PreviewNoise {
-    fn sample(&self, x: f64, y: f64) -> f64 {
-        self.source.sample(x * self.frequency, y * self.frequency)
+fn noise_controls(values: &HashMap<&str, f64>, prefix: &str) -> NoiseConfig {
+    NoiseConfig {
+        frequency: values[format!("{prefix}_frequency").as_str()],
+        octaves: values[format!("{prefix}_octaves").as_str()] as usize,
+        lacunarity: values[format!("{prefix}_lacunarity").as_str()],
+        persistence: values[format!("{prefix}_persistence").as_str()],
     }
 }
 
+fn apply_world_controls(config: &mut WorldConfig, values: &HashMap<&str, f64>) {
+    let world = &mut config.world;
+    world.seed = values["seed"] as u64;
+    world.chunk_size = values["size"] as u32;
+    world.terrain_scale = values["terrain_scale"];
+    world.elevation = noise_controls(values, "elevation");
+    world.climate.region_noise = noise_controls(values, "region");
+    world.climate.coefficients = TemperatureCoefficients {
+        base: values["temperature_base"],
+        solar: values["temperature_solar"],
+        altitude: values["temperature_altitude"],
+        region: values["temperature_region"],
+    };
+    world.climate.planet = PlanetParams {
+        orbit: values["orbit"],
+        axial_tilt_deg: values["axial_tilt"],
+    };
+}
+
+fn apply_crater_controls(
+    craters: &mut CraterGenerator,
+    values: &HashMap<&str, f64>,
+) -> Result<(), String> {
+    craters.cell_size = values["crater_cell_size"] as i64;
+    craters.min_radius = values["crater_min_radius"];
+    craters.max_radius = values["crater_max_radius"];
+    craters.density = values["crater_density"];
+    craters.temperature_offset = values["crater_temperature_offset"];
+    if craters.min_radius > craters.max_radius
+        || craters.max_radius * 1.5 > craters.cell_size as f64
+    {
+        return Err(
+            "Crater radii must satisfy minimum <= maximum and maximum * 1.5 <= cell size".into(),
+        );
+    }
+    Ok(())
+}
+
+fn apply_basin_controls(
+    basins: &mut BasinSettings,
+    values: &HashMap<&str, f64>,
+) -> Result<(), String> {
+    basins.cell_size = values["basin_cell_size"] as i64;
+    basins.probability = values["basin_probability"];
+    basins.min_radius = values["basin_min_radius"];
+    basins.max_radius = values["basin_max_radius"];
+    basins.min_depth = values["basin_min_depth"];
+    basins.max_depth = values["basin_max_depth"];
+    basins.min_rim_height = values["basin_min_rim_height"];
+    basins.max_rim_height = values["basin_max_rim_height"];
+    basins.smoothing = values["basin_smoothing"];
+    basins.shape_noise = values["basin_shape_noise"];
+    basins.edge_noise = values["basin_edge_noise"];
+    basins.edge_noise_scale = values["basin_edge_scale"];
+    basins.edge_octaves = values["basin_edge_octaves"] as usize;
+    basins.edge_ridged = values["basin_edge_ridged"] == 1.0;
+    basins.smoothing_octaves = values["basin_coarse_octaves"] as usize;
+    basins.temperature_offset = values["basin_temperature_offset"];
+    if basins.min_radius > basins.max_radius
+        || basins.max_radius * 1.5 > basins.cell_size as f64
+        || basins.min_depth > basins.max_depth
+        || basins.min_rim_height > basins.max_rim_height
+    {
+        return Err("Basin minimums must not exceed maximums, and maximum radius * 1.5 must fit within the cell size".into());
+    }
+    Ok(())
+}
+
+fn apply_volcano_controls(
+    volcanoes: &mut VolcanoGenerator,
+    values: &HashMap<&str, f64>,
+) -> Result<(), String> {
+    volcanoes.cell_size = values["volcano_cell_size"] as i64;
+    volcanoes.probability = values["volcano_probability"];
+    volcanoes.min_radius = values["volcano_min_radius"];
+    volcanoes.max_radius = values["volcano_max_radius"];
+    volcanoes.min_height = values["volcano_min_height"];
+    volcanoes.max_height = values["volcano_max_height"];
+    volcanoes.caldera_ratio = values["volcano_caldera_ratio"];
+    volcanoes.caldera_depth = values["volcano_caldera_depth"];
+    volcanoes.temperature_offset = values["volcano_temperature_offset"];
+    if volcanoes.min_radius > volcanoes.max_radius
+        || volcanoes.max_radius > volcanoes.cell_size as f64
+        || volcanoes.min_height > volcanoes.max_height
+    {
+        return Err("Volcano minimums must not exceed maximums, and maximum radius must fit within the cell size".into());
+    }
+    Ok(())
+}
+
+/// The generator the game builds from the same config (`TerrainSources::from_config`), with
+/// the preview's seed overrides; noise is sampled at plain tile coordinates, as in the game.
 fn preview_generator(settings: &PreviewSettings) -> WorldGenerator {
-    let source = ElevationNoise::with_config(settings.elevation_seed, settings.elevation);
-    build_world_generator(
-        settings.config,
-        settings.biomes.clone(),
-        settings.biome_map.clone(),
-        PreviewNoise {
-            source,
-            frequency: settings.frequency,
-        },
-        TemperatureModel::with_config(
-            settings.temperature,
-            TemperatureRegionsNoise::with_config(settings.region_seed, settings.region),
-            WorldGeography::new(
-                settings.config.chunk_size,
-                settings.config.world_size_chunks,
-            ),
-            settings.planet,
-        ),
-        settings.craters.clone(),
-        settings.basins.clone(),
-        settings.volcanoes.clone(),
-    )
+    let world = &settings.world.world;
+    let noise = |config| FbmNoise::new(settings.elevation_seed, config);
+    // `build_with` scales the features; the noise sources get `terrain_scale` here.
+    let elevation = world.scaled_elevation();
+    settings
+        .world
+        .build_with(TerrainSources {
+            elevation: Box::new(noise(elevation)),
+            basin_floor: Box::new(noise(settings.world.basins.floor_noise(elevation))),
+            temperature_regions: Box::new(FbmNoise::new(
+                settings.region_seed,
+                world.scaled_region_noise(),
+            )),
+        })
+        .expect("validated preview controls produce a valid world config")
 }
 
 fn main() -> std::io::Result<()> {
@@ -761,9 +799,12 @@ fn metadata(query: &str, build: u128) -> Result<String, String> {
     let params = params(query);
     let config = request_config(&params)?;
     let side = world_side(config)?;
-    let biomes = BiomeRepository::parse();
-    let (biome_file, biome_map) = selected_biomes(&params, &biomes)?;
-    let mapper = TileMapper::parse(&biomes);
+    let (biome_file, preset) = selected_preset(&params)?;
+    let biomes = preset_biomes(&preset)?;
+    let biome_map = preset
+        .biome_map
+        .resolve(&biomes)
+        .map_err(|error| format!("{biome_file}: {error}"))?;
     let map_rules = |map: &BiomeMap| -> Vec<serde_json::Value> {
         map.rules()
             .iter()
@@ -775,54 +816,81 @@ fn metadata(query: &str, build: u128) -> Result<String, String> {
             .collect()
     };
     let mut feature_maps = serde_json::Map::new();
-    for (name, definition) in [
-        (
-            "Basins",
-            BasinGenerator::new(ElevationNoise::new(config.seed)).biome_map,
-        ),
-        ("Craters", CraterGenerator::default().biome_map),
-        ("Volcanoes", VolcanoGenerator::default().biome_map),
-    ] {
+    // One map per basin type ("Basins (sulfur)", ...), or "Basins" without types.
+    let basin_maps: Vec<(String, BiomeMapDefinition)> = if preset.basins.variants.is_empty() {
+        vec![("Basins".into(), preset.basins.biome_map.clone())]
+    } else {
+        preset
+            .basins
+            .variants
+            .iter()
+            .map(|variant| {
+                (
+                    format!("Basins ({})", variant.name),
+                    variant.biome_map.clone(),
+                )
+            })
+            .collect()
+    };
+    for (name, definition) in basin_maps.into_iter().chain([
+        ("Craters".to_owned(), preset.craters.biome_map),
+        ("Volcanoes".to_owned(), preset.volcanoes.biome_map),
+    ]) {
         let map = definition
             .resolve(&biomes)
             .map_err(|error| error.to_string())?;
-        feature_maps.insert(name.into(), serde_json::json!(map_rules(&map)));
+        feature_maps.insert(name, serde_json::json!(map_rules(&map)));
     }
     Ok(serde_json::json!({
-        "build": build.to_string(), "protocol": 6,
+        "build": build.to_string(), "protocol": PROTOCOL,
         "world": { "width": side, "height": side }, "controls": controls(),
         "biome_files": biome_files()?, "biome_file": biome_file, "biomes": biomes.biomes(),
         "biome_rules": map_rules(&biome_map), "feature_biome_maps": feature_maps,
-        "tile_palette": mapper.palette().tiles(), "tile_rules": mapper.rules(),
-        "object_types": ObjectRepository::parse().objects(),
+        "object_types": preset.objects.kinds,
     })
     .to_string())
 }
 
-fn biome_directory() -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/biomes/maps")
-}
+/// Selectable presets, listed as "biome files" for older frontends: `default.ron` is the
+/// bundled config (`config/`), `old.ron` the `config/presets/old/` folder (the previous
+/// default). A preset supplies biomes, the terrain and feature biome maps, and objects.
+const DEFAULT_PRESET: &str = "default.ron";
+const PRESETS: [&str; 2] = [DEFAULT_PRESET, "old.ron"];
 
 fn biome_files() -> Result<Vec<String>, String> {
-    let mut files = Vec::new();
-    for entry in std::fs::read_dir(biome_directory()).map_err(|error| error.to_string())? {
-        let entry = entry.map_err(|error| error.to_string())?;
-        if entry
-            .file_type()
-            .map_err(|error| error.to_string())?
-            .is_file()
-            && entry.path().extension().is_some_and(|ext| ext == "ron")
-        {
-            files.push(
-                entry
-                    .file_name()
-                    .into_string()
-                    .map_err(|_| "Invalid biome filename")?,
-            );
-        }
-    }
-    files.sort();
-    Ok(files)
+    Ok(PRESETS.map(str::to_owned).to_vec())
+}
+
+fn presets_dir() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("config/presets")
+}
+
+/// The selected preset's file name and config, validated so its maps resolve.
+fn selected_preset(params: &HashMap<&str, &str>) -> Result<(String, WorldConfig), String> {
+    let filename = decode_query_value(params.get("biome").unwrap_or(&DEFAULT_PRESET))?;
+    // Keep previously shared preview URLs working after the default map rename.
+    let filename = if filename == "biomes.ron" {
+        DEFAULT_PRESET.to_owned()
+    } else {
+        filename
+    };
+    let source = match filename.as_str() {
+        DEFAULT_PRESET => ConfigSource::bundled(),
+        "old.ron" => ConfigSource::with_overrides(presets_dir().join("old"))
+            .map_err(|error| format!("{filename}: {error}"))?,
+        _ => return Err(format!("Choose a preset: {}", PRESETS.join(", "))),
+    };
+    let config = WorldConfig::load(&source).map_err(|error| format!("{filename}: {error}"))?;
+    let biomes = preset_biomes(&config)?;
+    config
+        .biome_map
+        .resolve(&biomes)
+        .map_err(|error| format!("{filename}: {error}"))?;
+    Ok((filename, config))
+}
+
+fn preset_biomes(config: &WorldConfig) -> Result<BiomeRepository, String> {
+    BiomeRepository::from_definitions(&config.biomes.biomes).map_err(|error| error.to_string())
 }
 
 fn decode_query_value(value: &str) -> Result<String, String> {
@@ -845,52 +913,13 @@ fn decode_query_value(value: &str) -> Result<String, String> {
     String::from_utf8(decoded).map_err(|_| "Invalid biome filename encoding".into())
 }
 
-fn selected_biomes(
-    params: &HashMap<&str, &str>,
-    repository: &BiomeRepository,
-) -> Result<(String, BiomeMap), String> {
-    let filename = decode_query_value(params.get("biome").unwrap_or(&"default.ron"))?;
-    // Keep previously shared preview URLs working after the default map rename.
-    let filename = if filename == "biomes.ron" {
-        "default.ron".to_owned()
-    } else {
-        filename
-    };
-    if !biome_files()?.contains(&filename) {
-        return Err("Choose a RON map from src/biomes/maps".into());
-    }
-    let source = std::fs::read_to_string(biome_directory().join(&filename))
-        .map_err(|error| format!("Cannot read {filename}: {error}"))?;
-    let biomes =
-        BiomeMap::from_ron(&source, repository).map_err(|error| format!("{filename}: {error}"))?;
-    Ok((filename, biomes))
-}
+/// Wire protocol version reported by `/api/meta`; bump it with the record layout.
+const PROTOCOL: u32 = 7;
 
-fn color_rgb(color: &str) -> Result<[u8; 3], String> {
-    let hex = color
-        .strip_prefix('#')
-        .ok_or_else(|| format!("Invalid tile color: {color}"))?;
-    let expanded;
-    let hex = if hex.len() == 3 && hex.is_ascii() {
-        expanded = hex.chars().flat_map(|c| [c, c]).collect::<String>();
-        expanded.as_str()
-    } else {
-        hex
-    };
-    if hex.len() != 6 || !hex.is_ascii() {
-        return Err(format!("Expected #RGB or #RRGGBB tile color, got {color}"));
-    }
-    let mut rgb = [0; 3];
-    for (index, channel) in rgb.iter_mut().enumerate() {
-        *channel = u8::from_str_radix(&hex[index * 2..index * 2 + 2], 16)
-            .map_err(|_| format!("Invalid tile color: {color}"))?;
-    }
-    Ok(rgb)
-}
-
-// Wire record: status u8 (0=unclassified, 1=color, 2=territory without a tile,
-// 255=outside), RGB u8[3], normalized height f32 LE, Celsius temperature f32 LE,
-// biome ID u16 LE, global tile ID u16 LE. Tile ID is valid for status 1.
+// Wire record: status u8 (0 = unclassified, 1 = classified, 255 = outside the world),
+// 3 reserved zero bytes, normalized height f32 LE, Celsius temperature f32 LE, biome ID u16 LE,
+// ground biome ID u16 LE. Appearance belongs to the client: the frontend resolves textures
+// from the biome and ground IDs with its editable copy of the client presentation files.
 fn region_bytes(query: &str) -> Result<Vec<u8>, String> {
     let params = params(query);
     let min_x: i32 = parse(&params, "min_x")?;
@@ -899,7 +928,7 @@ fn region_bytes(query: &str) -> Result<Vec<u8>, String> {
     let max_y: i32 = parse(&params, "max_y")?;
     let lod: u32 = parse(&params, "lod")?;
     let settings = PreviewSettings::from_params(&params)?;
-    let config = settings.config;
+    let config = settings.world.world.dimensions();
     let width = i64::from(max_x) - i64::from(min_x) + 1;
     let height = i64::from(max_y) - i64::from(min_y) + 1;
     let tile_count = width
@@ -918,10 +947,6 @@ fn region_bytes(query: &str) -> Result<Vec<u8>, String> {
         return Err("Region lies outside the world".into());
     }
     let generator = preview_generator(&settings);
-    let mapper = generator.tile_mapper();
-    for tile in mapper.palette().tiles() {
-        color_rgb(&tile.color)?;
-    }
     let offset = if lod == 0 { 0 } else { stride / 2 };
     let mut output = Vec::with_capacity(tile_count as usize * SAMPLE_BYTES);
     for cy in min_y..=max_y {
@@ -942,30 +967,13 @@ fn region_bytes(query: &str) -> Result<Vec<u8>, String> {
                         y: (base_y + offset).min(side - 1) as i64,
                     };
                     let tile = generator.draft_at(pos);
-                    let mapped = tile.biome.and_then(|biome| {
-                        mapper.map(&TileData {
-                            height: tile.height,
-                            temperature: tile.temperature,
-                            biome,
-                        })
-                    });
-                    if let Some(mapped) = mapped {
-                        output.push(1);
-                        output.extend_from_slice(&color_rgb(
-                            &mapper.palette().get(mapped).unwrap().color,
-                        )?);
-                    } else {
-                        output.extend_from_slice(&[
-                            if tile.biome.is_some() { 2 } else { 0 },
-                            0,
-                            0,
-                            0,
-                        ]);
-                    }
+                    output.extend_from_slice(&[u8::from(tile.biome.is_some()), 0, 0, 0]);
+                    let biome = tile.biome.map_or(0, |id| id.0);
+                    let ground = tile.ground.map_or(biome, |id| id.0);
                     output.extend_from_slice(&(tile.height as f32).to_le_bytes());
                     output.extend_from_slice(&(tile.temperature as f32).to_le_bytes());
-                    output.extend_from_slice(&tile.biome.map_or(0, |id| id.0).to_le_bytes());
-                    output.extend_from_slice(&mapped.map_or(0, |tile| tile.id).to_le_bytes());
+                    output.extend_from_slice(&biome.to_le_bytes());
+                    output.extend_from_slice(&ground.to_le_bytes());
                 }
             }
         }
@@ -997,9 +1005,15 @@ mod tests {
         for (tile, record) in chunk.tiles.iter().zip(region.chunks_exact(SAMPLE_BYTES)) {
             assert_eq!(record[0], 1);
             assert_eq!(
-                tile.id,
+                tile.biome.0,
+                u16::from_le_bytes(record[12..14].try_into().unwrap())
+            );
+            assert_eq!(
+                tile.ground.0,
                 u16::from_le_bytes(record[14..16].try_into().unwrap())
             );
+            let height = f32::from_le_bytes(record[4..8].try_into().unwrap());
+            assert!((tile.height() - height).abs() < 1e-4);
         }
     }
 
@@ -1030,7 +1044,7 @@ mod tests {
     const BASIN_QUERY: &str = "min_x=0&max_x=0&min_y=0&max_y=0&lod=9&size=16&seed=42&crater_density=0&basin_cell_size=4096&basin_probability=1&basin_min_radius=800&basin_max_radius=1500&basin_min_depth=0.06&basin_max_depth=0.18&basin_min_rim_height=0.005&basin_max_rim_height=0.02&basin_smoothing=0.8";
 
     #[test]
-    fn crater_and_basin_api_markers_use_default_terrain_appearance() {
+    fn crater_and_basin_territories_report_their_biome_and_the_ground_tiles() {
         for query in [
             "min_x=0&max_x=0&min_y=0&max_y=0&lod=7&size=16&seed=42&crater_density=4&basin_probability=0&volcano_probability=0",
             BASIN_QUERY,
@@ -1038,38 +1052,17 @@ mod tests {
             let query = format!(
                 "{query}&volcano_probability=0&temperature_base=0&temperature_solar=0&temperature_region=0&temperature_altitude=0"
             );
-            let settings = PreviewSettings::from_params(&params(&query)).unwrap();
             let bytes = region_bytes(&query).unwrap();
-            let mapper = TileMapper::parse(&settings.biomes);
             let mut marked = 0;
             for record in bytes.chunks_exact(SAMPLE_BYTES) {
                 assert_eq!(record[0], 1);
-                let height = f32::from_le_bytes(record[4..8].try_into().unwrap()) as f64;
-                let temperature = f32::from_le_bytes(record[8..12].try_into().unwrap()) as f64;
-                let biome =
-                    worldgen::BiomeId(u16::from_le_bytes(record[12..14].try_into().unwrap()));
-                if biome.index() >= 32 {
+                let biome = u16::from_le_bytes(record[12..14].try_into().unwrap());
+                if biome >= 32 {
                     marked += 1;
                 }
-                let tile = worldgen::Tile {
-                    id: u16::from_le_bytes(record[14..16].try_into().unwrap()),
-                };
-                let default_biome = settings
-                    .biome_map
-                    .determine_biome(temperature, height)
-                    .unwrap();
-                let expected = mapper
-                    .map(&TileData {
-                        height,
-                        temperature,
-                        biome: default_biome,
-                    })
-                    .unwrap();
-                assert_eq!(tile, expected);
-                assert_eq!(
-                    record[1..4],
-                    color_rgb(&mapper.palette().get(tile).unwrap().color).unwrap()
-                );
+                let ground = u16::from_le_bytes(record[14..16].try_into().unwrap());
+                assert!(ground < 32, "crater and basin ground is a terrain biome");
+                assert_eq!(record[1..4], [0, 0, 0]);
             }
             assert!(
                 marked > 0,
@@ -1194,20 +1187,37 @@ mod tests {
         }
     }
 
+    /// The preview is the truth: with default controls it generates exactly what the server
+    /// generates from the bundled config.
     #[test]
-    fn basin_smoothing_uses_the_same_elevation_seed_and_coordinate_scale() {
+    fn the_preview_generates_what_the_game_generates() {
+        let preview = preview_generator(&PreviewSettings::from_params(&HashMap::new()).unwrap());
+        let game = WorldConfig::bundled().build().unwrap();
+        for (x, y) in [(0, 0), (100, 120), (249, 3)] {
+            let pos = worldgen::ChunkPos { x, y };
+            assert_eq!(
+                preview.chunk_at(pos).unwrap(),
+                game.chunk_at(pos).unwrap(),
+                "{pos:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn basin_smoothing_uses_the_same_elevation_seed_and_frequency() {
         let query = format!(
-            "{BASIN_QUERY}&elevation_seed=123&frequency=0.125&basin_min_depth=0&basin_max_depth=0&basin_min_rim_height=0&basin_max_rim_height=0&basin_smoothing=1"
+            "{BASIN_QUERY}&elevation_seed=123&elevation_frequency=0.00025&basin_min_depth=0&basin_max_depth=0&basin_min_rim_height=0&basin_max_rim_height=0&basin_smoothing=1"
         );
         let disabled = region_bytes(&format!("{query}&basin_probability=0")).unwrap();
         let matching_source = region_bytes(&format!("{query}&basin_coarse_octaves=12")).unwrap();
-        // Asking for more coarse octaves than elevation has is capped to match.
+        // Asking for more coarse octaves than elevation has is capped to match. Terrain
+        // metrics must be identical; basin territory still changes biome (and its color).
         for (a, b) in disabled
             .chunks_exact(SAMPLE_BYTES)
             .zip(matching_source.chunks_exact(SAMPLE_BYTES))
         {
-            assert_eq!(&a[..12], &b[..12]);
-            assert_eq!(&a[14..], &b[14..]);
+            assert_eq!(a[0], b[0]);
+            assert_eq!(&a[4..12], &b[4..12]);
         }
         let coarse = region_bytes(&format!("{query}&basin_coarse_octaves=1")).unwrap();
         assert_ne!(disabled, coarse);
@@ -1268,7 +1278,6 @@ mod tests {
             "elevation_octaves=2",
             "elevation_lacunarity=2",
             "elevation_persistence=0.8",
-            "frequency=0.1",
         ] {
             let changed = first_metrics(&format!("{EQUATOR_QUERY}&{setting}"));
             assert_ne!(changed.0, original.0, "{setting} must affect elevation");
@@ -1377,42 +1386,42 @@ mod tests {
             f32::from_le_bytes(bytes[8..12].try_into().unwrap()),
             tile.temperature as f32
         );
-        let mapper = TileMapper::parse(generator.biomes());
-        let mapped = tile.biome.and_then(|biome| {
-            mapper.map(&TileData {
-                height: tile.height,
-                temperature: tile.temperature,
-                biome,
-            })
-        });
-        if let Some(mapped) = mapped {
-            assert_eq!(bytes[0], 1);
-            assert_eq!(
-                bytes[1..4],
-                color_rgb(&mapper.palette().get(mapped).unwrap().color).unwrap()
-            );
-            assert_eq!(
-                u16::from_le_bytes(bytes[14..16].try_into().unwrap()),
-                mapped.id
-            );
-            assert_eq!(
-                u16::from_le_bytes(bytes[12..14].try_into().unwrap()),
-                tile.biome.unwrap().0
-            );
-        } else {
-            assert_eq!(bytes[0], if tile.biome.is_some() { 2 } else { 0 });
+        match tile.biome {
+            Some(biome) => {
+                assert_eq!(bytes[0], 1);
+                assert_eq!(bytes[1..4], [0, 0, 0]);
+                assert_eq!(
+                    u16::from_le_bytes(bytes[12..14].try_into().unwrap()),
+                    biome.0
+                );
+                assert_eq!(
+                    u16::from_le_bytes(bytes[14..16].try_into().unwrap()),
+                    tile.ground.unwrap_or(biome).0
+                );
+            }
+            None => assert_eq!(bytes[0], 0),
         }
     }
 
     #[test]
-    fn exact_region_preserves_generator_colors_and_metrics() {
-        let bytes =
-            region_bytes("min_x=0&min_y=0&max_x=1&max_y=0&lod=0&size=4&seed=42&frequency=0.025")
-                .unwrap();
-        assert_eq!(bytes.len(), 2 * 4 * 4 * SAMPLE_BYTES);
-        let generator = preview_generator(
-            &PreviewSettings::from_params(&params("seed=42&size=4&frequency=0.025")).unwrap(),
+    fn terrain_scale_control_reaches_the_generator() {
+        let query = "min_x=0&max_x=0&min_y=0&max_y=0&lod=0&size=4&seed=42";
+        let scaled_query = format!("{query}&terrain_scale=2");
+        let settings = PreviewSettings::from_params(&params(&scaled_query)).unwrap();
+        assert_eq!(settings.world.world.terrain_scale, 2.0);
+        assert_ne!(
+            region_bytes(query).unwrap(),
+            region_bytes(&scaled_query).unwrap()
         );
+        assert!(region_bytes(&format!("{query}&terrain_scale=0")).is_err());
+    }
+
+    #[test]
+    fn exact_region_preserves_generator_colors_and_metrics() {
+        let bytes = region_bytes("min_x=0&min_y=0&max_x=1&max_y=0&lod=0&size=4&seed=42").unwrap();
+        assert_eq!(bytes.len(), 2 * 4 * 4 * SAMPLE_BYTES);
+        let generator =
+            preview_generator(&PreviewSettings::from_params(&params("seed=42&size=4")).unwrap());
         for chunk in 0..2 {
             for y in 0..4 {
                 for x in 0..4 {
@@ -1432,12 +1441,9 @@ mod tests {
 
     #[test]
     fn coarser_region_samples_representative_global_tile() {
-        let bytes =
-            region_bytes("min_x=1&min_y=1&max_x=1&max_y=1&lod=2&size=4&seed=0&frequency=0.025")
-                .unwrap();
-        let generator = preview_generator(
-            &PreviewSettings::from_params(&params("size=4&frequency=0.025")).unwrap(),
-        );
+        let bytes = region_bytes("min_x=1&min_y=1&max_x=1&max_y=1&lod=2&size=4&seed=0").unwrap();
+        let generator =
+            preview_generator(&PreviewSettings::from_params(&params("size=4")).unwrap());
         assert_record(&bytes[..SAMPLE_BYTES], &generator, TilePos { x: 18, y: 18 });
     }
 
@@ -1452,13 +1458,11 @@ mod tests {
             serde_json::from_str(&metadata("size=4", 123).unwrap()).unwrap();
         assert_eq!(meta["world"]["width"], side);
         assert_eq!(meta["world"]["height"], side);
-        assert!(
-            region_bytes("min_x=-1&min_y=0&max_x=0&max_y=0&lod=0&size=4&frequency=0.025").is_err()
-        );
+        assert!(region_bytes("min_x=-1&min_y=0&max_x=0&max_y=0&lod=0&size=4").is_err());
         let outside = side / 4;
         assert!(
             region_bytes(&format!(
-                "min_x={outside}&max_x={outside}&min_y=0&max_y=0&lod=0&size=4&frequency=0.025"
+                "min_x={outside}&max_x={outside}&min_y=0&max_y=0&lod=0&size=4"
             ))
             .is_err()
         );
@@ -1471,11 +1475,9 @@ mod tests {
             ..Default::default()
         })
         .unwrap();
-        let bytes =
-            region_bytes("min_x=0&max_x=0&min_y=0&max_y=0&lod=13&size=4&frequency=0.025").unwrap();
-        let generator = preview_generator(
-            &PreviewSettings::from_params(&params("size=4&frequency=0.025")).unwrap(),
-        );
+        let bytes = region_bytes("min_x=0&max_x=0&min_y=0&max_y=0&lod=13&size=4").unwrap();
+        let generator =
+            preview_generator(&PreviewSettings::from_params(&params("size=4")).unwrap());
         assert_record(
             &bytes[..SAMPLE_BYTES],
             &generator,
@@ -1488,19 +1490,11 @@ mod tests {
     }
 
     #[test]
-    fn color_strings_are_parsed_without_changing_the_palette() {
-        assert_eq!(color_rgb("#38476a").unwrap(), [56, 71, 106]);
-        assert_eq!(color_rgb("#abc").unwrap(), [170, 187, 204]);
-        assert!(color_rgb("#zzzzzz").is_err());
-        assert!(color_rgb("#ééé").is_err());
-    }
-
-    #[test]
-    fn selected_file_supplies_biomes_separately_from_tile_mapping() {
+    fn selected_file_supplies_biomes_and_object_types() {
         let default_meta: serde_json::Value =
             serde_json::from_str(&metadata("", 123).unwrap()).unwrap();
         assert_eq!(default_meta["biome_file"], "default.ron");
-        assert_eq!(default_meta["protocol"], 6);
+        assert_eq!(default_meta["protocol"], PROTOCOL);
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&metadata("biome=biomes.ron", 123).unwrap())
                 .unwrap()["biome_file"],
@@ -1548,20 +1542,12 @@ mod tests {
                 && biome.get("temperature").is_none()
                 && biome.get("palette").is_none()
         ));
-        let mapper = TileMapper::parse(generator.biomes());
-        assert_eq!(
-            meta["tile_palette"],
-            serde_json::to_value(mapper.palette().tiles()).unwrap()
-        );
+        assert!(meta.get("tile_palette").is_none() && meta.get("tile_rules").is_none());
         assert_eq!(
             meta["object_types"],
             serde_json::to_value(generator.object_placer().objects().objects()).unwrap()
         );
-        assert_eq!(
-            meta["tile_rules"],
-            serde_json::to_value(mapper.rules()).unwrap()
-        );
-        assert_eq!(meta["biome_rules"].as_array().unwrap().len(), 32);
+        assert_eq!(meta["biome_rules"].as_array().unwrap().len(), 20);
         for name in ["Basins", "Craters", "Volcanoes"] {
             let rules = meta["feature_biome_maps"][name].as_array().unwrap();
             assert!(rules.len() >= 2);
@@ -1598,10 +1584,20 @@ mod tests {
             );
         }
         assert_eq!(
-            selected_biomes(&params("biome=default%2Eron"), &BiomeRepository::parse())
-                .unwrap()
-                .0,
+            selected_preset(&params("biome=default%2Eron")).unwrap().0,
             "default.ron"
         );
+        let (name, old) = selected_preset(&params("biome=old.ron")).unwrap();
+        assert_eq!(name, "old.ron");
+        assert!(
+            old.biomes
+                .biomes
+                .iter()
+                .any(|biome| biome.name == "weathered_basalt")
+        );
+        let old_meta: serde_json::Value =
+            serde_json::from_str(&metadata("biome=old.ron", 123).unwrap()).unwrap();
+        assert_eq!(old_meta["biome_rules"].as_array().unwrap().len(), 32);
+        assert_eq!(old_meta["biome_file"], "old.ron");
     }
 }

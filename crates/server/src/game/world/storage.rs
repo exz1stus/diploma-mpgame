@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use bevy_ecs::resource::Resource;
 use serde::{Deserialize, Serialize};
-use worldgen::{ChunkData, ChunkPos, PlacedObject, Tile};
+use worldgen::{ChunkData, ChunkPos, PlacedObject, TileSample};
 
 use super::{coords::WorldFrame, objects::SavedComponents};
 
@@ -12,7 +12,7 @@ use super::{coords::WorldFrame, objects::SavedComponents};
 pub(crate) struct StoredChunk {
     pub pos: ChunkPos,
     pub size: u32,
-    pub tiles: Vec<Tile>,
+    pub tiles: Vec<TileSample>,
     /// Only objects anchored in this chunk; objects crossing borders are owned by one chunk.
     pub objects: Vec<StoredObject>,
 }
@@ -167,12 +167,13 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<StoredChunk, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use worldgen::BiomeId;
 
     fn chunk(x: i64) -> StoredChunk {
         StoredChunk {
             pos: ChunkPos { x, y: 0 },
             size: 2,
-            tiles: vec![Tile { id: x as u16 }; 4],
+            tiles: vec![TileSample::new(BiomeId(x as u16), 0.5); 4],
             objects: Vec::new(),
         }
     }
@@ -181,7 +182,7 @@ mod tests {
     fn archive_encoding_round_trips_and_compresses_uniform_tiles() {
         let mut chunk = chunk(3);
         chunk.size = 32;
-        chunk.tiles = vec![Tile { id: 300 }; 32 * 32];
+        chunk.tiles = vec![TileSample::new(BiomeId(300), 0.25); 32 * 32];
         let encoded = encode(&chunk);
         let raw = postcard::to_allocvec(&chunk).unwrap();
         assert!(

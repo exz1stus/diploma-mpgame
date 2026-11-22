@@ -1,18 +1,26 @@
-use std::{collections::HashMap, sync::Arc};
-
-use crate::{
-    BiomeRepository, ChunkData, ChunkPos, GenerationError, GenerationStage, ObjectPlacer, Tile,
-    TileData, TileDraft, TileMapper, TilePos, TileRect, WorldGeneratorConfig,
+use std::{
+    collections::{HashMap, hash_map::Entry},
+    sync::Arc,
 };
 
+use crate::{
+    BiomeRepository, ChunkData, ChunkPos, GenerationError, GenerationStage, ObjectKind,
+    ObjectPlacer, PlanetParams, TileData, TileDraft, TilePos, TileRect, TileSample,
+    WorldGeneratorConfig, WorldManifest,
+};
+
+pub(crate) type CraterStage = crate::FeatureStage<crate::ScaledFeatures<crate::CraterGenerator>>;
+
+/// Samples terrain through ordered stages and serves complete chunks.
+/// Immutable and shareable between worker threads.
 pub struct WorldGenerator {
-    pub(crate) craters: Option<Arc<crate::FeatureStage<crate::CraterGenerator>>>,
+    pub(crate) craters: Option<Arc<CraterStage>>,
     config: WorldGeneratorConfig,
     bounds: TileRect,
     stages: Vec<Box<dyn GenerationStage>>,
     biomes: Arc<BiomeRepository>,
-    tile_mapper: TileMapper,
     object_placer: ObjectPlacer,
+    planet: PlanetParams,
 }
 
 impl WorldGenerator {
@@ -20,7 +28,6 @@ impl WorldGenerator {
         config: WorldGeneratorConfig,
         stages: Vec<Box<dyn GenerationStage>>,
         biomes: Arc<BiomeRepository>,
-        tile_mapper: TileMapper,
         object_placer: ObjectPlacer,
     ) -> Self {
         let bounds = config
@@ -32,9 +39,15 @@ impl WorldGenerator {
             bounds,
             stages,
             biomes,
-            tile_mapper,
             object_placer,
+            planet: PlanetParams::default(),
         }
+    }
+
+    /// The planet the world lies on, for the sun (see [`crate::SunPosition`]).
+    pub fn with_planet(mut self, planet: PlanetParams) -> Self {
+        self.planet = planet;
+        self
     }
 
     pub fn draft_at(&self, pos: TilePos) -> TileDraft {
@@ -45,8 +58,7 @@ impl WorldGenerator {
         draft
     }
 
-    /// Sample completed terrain data in global coordinates, independently of chunk bounds.
-    /// Pass the result to a TileMapper to select a global tile ID.
+    /// Completed terrain data in global coordinates, independently of chunk bounds.
     /// Panics if no stage assigned a biome for the generated height and temperature.
     pub fn tile_data_at(&self, pos: TilePos) -> TileData {
         self.try_tile_data_at(pos)
@@ -55,60 +67,32 @@ impl WorldGenerator {
 
     /// Fallible terrain sampling, also usable for diagnostics outside world bounds.
     pub fn try_tile_data_at(&self, pos: TilePos) -> Result<TileData, GenerationError> {
-        let draft = self.draft_at(pos);
-        Ok(TileData {
-            height: draft.height,
-            temperature: draft.temperature,
-            biome: draft.biome.ok_or(GenerationError::NoBiome(pos))?,
-        })
+        self.draft_at(pos)
+            .try_finish()
+            .ok_or(GenerationError::NoBiome(pos))
     }
 
-    /// Sample and map a ground tile inside the finite world.
-    pub fn tile_at(&self, pos: TilePos) -> Result<Tile, GenerationError> {
+    /// One tile of the finite world, as stored in chunks.
+    pub fn sample_at(&self, pos: TilePos) -> Result<TileSample, GenerationError> {
         if !self.bounds.contains(pos) {
             return Err(GenerationError::TileOutsideWorld(pos));
         }
-        self.tile_mapper
-            .map(&self.try_tile_data_at(pos)?)
-            .ok_or(GenerationError::NoTile(pos))
+        Ok(TileSample::from_data(&self.try_tile_data_at(pos)?))
     }
 
     /// Generate one complete chunk, independently of other requests or worker order.
     /// Objects crossing its bounds are included with their global instance IDs.
     pub fn chunk_at(&self, chunk_pos: ChunkPos) -> Result<ChunkData, GenerationError> {
-        let count = i64::from(self.config.world_size_chunks);
-        if !(0..count).contains(&chunk_pos.x) || !(0..count).contains(&chunk_pos.y) {
-            return Err(GenerationError::ChunkOutsideWorld(chunk_pos));
-        }
-        let size = i64::from(self.config.chunk_size);
-        let min = TilePos {
-            x: chunk_pos.x * size,
-            y: chunk_pos.y * size,
-        };
-        let bounds = TileRect {
-            min,
-            max: TilePos {
-                x: min.x + size,
-                y: min.y + size,
-            },
-        };
+        let bounds = self.chunk_bounds(chunk_pos)?;
         let mut terrain: HashMap<TilePos, TileData> = HashMap::new();
         let mut sample = |pos| match terrain.entry(pos) {
-            std::collections::hash_map::Entry::Occupied(entry) => Ok(entry.get().clone()),
-            std::collections::hash_map::Entry::Vacant(entry) => {
-                let data = self.try_tile_data_at(pos)?;
-                Ok(entry.insert(data).clone())
-            }
+            Entry::Occupied(entry) => Ok(entry.get().clone()),
+            Entry::Vacant(entry) => Ok(entry.insert(self.try_tile_data_at(pos)?).clone()),
         };
-        let mut tiles = Vec::new();
-        for pos in bounds.positions() {
-            let data = sample(pos)?;
-            tiles.push(
-                self.tile_mapper
-                    .map(&data)
-                    .ok_or(GenerationError::NoTile(pos))?,
-            );
-        }
+        let tiles = bounds
+            .positions()
+            .map(|pos| sample(pos).map(|data| TileSample::from_data(&data)))
+            .collect::<Result<_, _>>()?;
         let objects = self
             .object_placer
             .place_in(bounds, self.config, &mut sample)?;
@@ -118,6 +102,31 @@ impl WorldGenerator {
             tiles,
             objects,
         })
+    }
+
+    /// Names behind the IDs in chunk data, for consumers that present the world.
+    pub fn manifest(&self) -> WorldManifest {
+        WorldManifest {
+            chunk_size: self.config.chunk_size,
+            world_size_chunks: self.config.world_size_chunks,
+            biomes: self
+                .biomes
+                .biomes()
+                .iter()
+                .map(|biome| biome.name.clone())
+                .collect(),
+            objects: self
+                .object_placer
+                .objects()
+                .objects()
+                .iter()
+                .map(|object| ObjectKind {
+                    name: object.name.clone(),
+                    footprint: object.footprint,
+                })
+                .collect(),
+            planet: self.planet,
+        }
     }
 
     /// Generated impact centers owned by this chunk, in generator tile coordinates.
@@ -141,10 +150,6 @@ impl WorldGenerator {
         &self.biomes
     }
 
-    pub fn tile_mapper(&self) -> &TileMapper {
-        &self.tile_mapper
-    }
-
     pub fn object_placer(&self) -> &ObjectPlacer {
         &self.object_placer
     }
@@ -152,16 +157,34 @@ impl WorldGenerator {
     pub fn config(&self) -> WorldGeneratorConfig {
         self.config
     }
+
+    fn chunk_bounds(&self, chunk_pos: ChunkPos) -> Result<TileRect, GenerationError> {
+        let count = i64::from(self.config.world_size_chunks);
+        if !(0..count).contains(&chunk_pos.x) || !(0..count).contains(&chunk_pos.y) {
+            return Err(GenerationError::ChunkOutsideWorld(chunk_pos));
+        }
+        let size = i64::from(self.config.chunk_size);
+        let min = TilePos {
+            x: chunk_pos.x * size,
+            y: chunk_pos.y * size,
+        };
+        Ok(TileRect {
+            min,
+            max: TilePos {
+                x: min.x + size,
+                y: min.y + size,
+            },
+        })
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{
-        BasinGenerator, BiomeMap, BiomeMapDefinition, BiomeStage, ClampHeightStage,
-        CraterGenerator, ElevationStage, NoiseSource, PlanetParams, TemperatureCoefficients,
-        TemperatureModel, TemperatureStage, VolcanoGenerator, WorldGeneratorConfig, WorldGeography,
-        build_world_generator,
+        BiomeMap, BiomeMapDefinition, BiomeStage, ClampHeightStage, ElevationStage, NoiseSource,
+        PlanetParams, TemperatureCoefficients, TemperatureModel, TemperatureStage, TerrainSources,
+        WorldGeneratorConfig, WorldGeography,
     };
 
     #[test]
@@ -177,7 +200,7 @@ mod tests {
             }
         }
 
-        let biomes = Arc::new(BiomeRepository::parse());
+        let biomes = Arc::new(crate::old_preset::biomes());
         let stages: Vec<Box<dyn GenerationStage>> = vec![
             Box::new(ElevationStage::new(FlatNoise)),
             Box::new(ConeStage(Arc::new(BiomeMap::from_ron(
@@ -186,35 +209,64 @@ mod tests {
             ).unwrap()))),
             Box::new(ClampHeightStage),
             Box::new(TemperatureStage::new(TemperatureModel::with_config(
-                TemperatureCoefficients {
-                    base: 0.0,
-                    solar: 0.0,
-                    region: 0.0,
-                    altitude: 10.0,
-                },
+                cooling_only(),
                 FlatNoise,
                 WorldGeography::new(16, 4),
                 PlanetParams::default(),
             ))),
-            Box::new(BiomeStage::new(Arc::new(BiomeMap::parse(&biomes)))),
+            Box::new(BiomeStage::new(Arc::new(crate::old_preset::map(&biomes)))),
         ];
         let generator = WorldGenerator::new(
             WorldGeneratorConfig::default(),
             stages,
             Arc::clone(&biomes),
-            TileMapper::parse(&biomes),
             ObjectPlacer::empty(),
         );
         let cone = generator.tile_data_at(TilePos { x: 0, y: 0 });
         assert_eq!(cone.height, 1.0);
         assert_eq!(cone.temperature, 2.0);
         assert_eq!(cone.biome, biomes.id("volcano").unwrap());
-        let mapper = crate::TileMapper::parse(&biomes);
-        assert_eq!(mapper.map(&cone), mapper.palette().tile("volcano_3"));
+        assert_eq!(
+            Some(cone.ground),
+            crate::old_preset::map(&biomes).determine_biome(2.0, 1.0),
+            "the feature biome sits on the terrain biome"
+        );
         let plain = generator.tile_data_at(TilePos { x: 1, y: 0 });
         assert_eq!(plain.height, 0.5);
         assert_eq!(plain.temperature, -5.0);
         assert_ne!(plain.biome, cone.biome);
+        assert_eq!(plain.ground, plain.biome);
+    }
+
+    #[test]
+    fn samples_and_manifest_describe_chunk_ids_by_name() {
+        let generator = volcanic_world(16, 0.0);
+        let manifest = generator.manifest();
+        assert_eq!(manifest.chunk_size, 16);
+        assert_eq!(manifest.world_size_chunks, 4);
+        let chunk = generator.chunk_at(ChunkPos { x: 1, y: 2 }).unwrap();
+        assert_eq!(chunk.tiles.len(), 16 * 16);
+        for sample in &chunk.tiles {
+            assert_eq!(
+                manifest.biome_name(sample.biome),
+                Some("dark_crater_floors")
+            );
+            assert!((sample.height() - 0.5).abs() < 1e-4);
+        }
+        assert_eq!(
+            generator.sample_at(TilePos { x: 20, y: 40 }).unwrap(),
+            chunk.tiles[8 * 16 + 4]
+        );
+        for object in &chunk.objects {
+            assert_eq!(
+                manifest.object(object.kind).unwrap().footprint,
+                object.footprint
+            );
+        }
+        assert!(matches!(
+            generator.sample_at(TilePos { x: 64, y: 0 }),
+            Err(GenerationError::TileOutsideWorld(_))
+        ));
     }
 
     struct FlatNoise;
@@ -224,52 +276,44 @@ mod tests {
         }
     }
 
+    fn cooling_only() -> TemperatureCoefficients {
+        TemperatureCoefficients {
+            base: 0.0,
+            solar: 0.0,
+            region: 0.0,
+            altitude: 10.0,
+        }
+    }
+
+    fn flat_sources() -> TerrainSources {
+        TerrainSources {
+            elevation: Box::new(FlatNoise),
+            basin_floor: Box::new(FlatNoise),
+            temperature_regions: Box::new(FlatNoise),
+        }
+    }
+
     fn volcanic_world(chunk_size: u32, probability: f64) -> WorldGenerator {
-        let mut basins = BasinGenerator::new(FlatNoise);
-        basins.probability = 0.0;
-        let biomes = BiomeRepository::parse();
-        let biome_map = BiomeMap::from_ron(
+        let mut config = crate::old_preset::config();
+        config.world.seed = 42;
+        config.world.chunk_size = chunk_size;
+        config.world.world_size_chunks = 64 / chunk_size;
+        config.world.climate.coefficients = cooling_only();
+        config.biome_map = BiomeMapDefinition::from_ron(
             r#"[
                 (biome: "dark_crater_floors", height: (min: 0.0, max: 0.55), temperature: (min: -100.0, max: 100.0)),
                 (biome: "volcano", height: (min: 0.55, max: 1.0), temperature: (min: -100.0, max: 100.0)),
             ]"#,
-            &biomes,
-        ).unwrap();
-        build_world_generator(
-            WorldGeneratorConfig {
-                seed: 42,
-                chunk_size,
-                world_size_chunks: 64 / chunk_size,
-                ..Default::default()
-            },
-            biomes,
-            biome_map,
-            FlatNoise,
-            TemperatureModel::with_config(
-                TemperatureCoefficients {
-                    base: 0.0,
-                    solar: 0.0,
-                    region: 0.0,
-                    altitude: 10.0,
-                },
-                FlatNoise,
-                WorldGeography::new(chunk_size, 64 / chunk_size),
-                PlanetParams::default(),
-            ),
-            CraterGenerator {
-                density: 0.0,
-                ..Default::default()
-            },
-            basins,
-            VolcanoGenerator {
-                cell_size: 64,
-                probability,
-                biome_map: BiomeMapDefinition::default(),
-                min_radius: 48.0,
-                max_radius: 64.0,
-                ..Default::default()
-            },
         )
+        .unwrap();
+        config.basins.probability = 0.0;
+        config.craters.density = 0.0;
+        config.volcanoes.cell_size = 64;
+        config.volcanoes.probability = probability;
+        config.volcanoes.biome_map = BiomeMapDefinition::default();
+        config.volcanoes.min_radius = 48.0;
+        config.volcanoes.max_radius = 64.0;
+        config.build_with(flat_sources()).unwrap()
     }
 
     #[test]

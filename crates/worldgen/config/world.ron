@@ -1,0 +1,25 @@
+// World dimensions and the terrain/climate models every chunk is sampled from.
+(
+    // Bump when generation output changes for the same seed (invalidates saved chunks).
+    generator_version: 7,
+    seed: 0,
+    world_size_chunks: 250,
+    chunk_size: 32,
+    // Horizontal terrain size: every noise and feature (cells, radii) is this many times
+    // larger. Heights, climate coefficients and objects are unaffected.
+    terrain_scale: 0.5,
+    // fBm elevation, normalized to [0, 1] before terrain features.
+    elevation: (frequency: 0.00005, octaves: 7, lacunarity: 3.0, persistence: 0.5),
+    // Daily-average temperature in °C.
+    climate: (
+        coefficients: (
+            base: -30.0,    // at zero solar exposure, height and regional noise
+            solar: 150.0,   // heating per unit of daily sun exposure
+            altitude: 6.5,  // cooling per unit of normalized height
+            region: 10.0,   // amplitude of regional noise
+        ),
+        region_noise: (frequency: 0.001, octaves: 7, lacunarity: 3.0, persistence: 0.5),
+        // orbit in [0, 1): 0 equinox, 0.25 northern summer, 0.75 northern winter.
+        planet: (orbit: 0.25, axial_tilt_deg: 5.0),
+    ),
+)

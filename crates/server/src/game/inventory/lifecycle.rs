@@ -5,7 +5,7 @@ use super::{
     access::position,
     locks::{LockKey, Reservations},
 };
-use crate::networking::entity::{network_spawn_reserved, reserve_network_ids};
+use crate::net::entity::{network_spawn_reserved, reserve_network_ids};
 use avian2d::physics_transform::Position;
 use bevy::prelude::*;
 use shared::{

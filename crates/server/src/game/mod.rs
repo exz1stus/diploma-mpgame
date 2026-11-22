@@ -15,6 +15,6 @@ pub(crate) fn plugin(app: &mut App) {
             .expedition
             .world_size_chunks
     });
-    world::install_preset(app, map_size.map(u32::from));
+    world::install_world(app, map_size.map(u32::from));
     app.add_plugins((scene, player::plugin));
 }

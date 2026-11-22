@@ -1,6 +1,7 @@
 use rand::{Rng, RngExt};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
+use super::first_failure;
 use crate::features::feature::{FeatureGenerator, TerrainFeature};
 use crate::{BiomeMapDefinition, TileDraft, TilePos};
 
@@ -15,6 +16,15 @@ pub struct Crater {
 }
 
 impl TerrainFeature for Crater {
+    fn scaled(self, scale: f64) -> Self {
+        Self {
+            x: self.x * scale,
+            y: self.y * scale,
+            radius: self.radius * scale,
+            ..self
+        }
+    }
+
     fn center(&self) -> (f64, f64) {
         (self.x, self.y)
     }
@@ -23,7 +33,7 @@ impl TerrainFeature for Crater {
         self.radius * 1.5
     }
 
-    fn apply(&self, pos: TilePos, tile: &mut TileDraft) -> bool {
+    fn apply(&self, pos: TilePos, tile: &mut TileDraft) -> Option<f64> {
         let x = pos.x as f64;
         let y = pos.y as f64;
         let dx = x - self.x;
@@ -32,7 +42,7 @@ impl TerrainFeature for Crater {
         let r = (dx * dx + dy * dy).sqrt() / self.radius;
 
         if r >= 1.5 {
-            return false;
+            return None;
         }
 
         let bowl = -self.depth * (1.0 - r * r).max(0.0).powi(2);
@@ -41,11 +51,11 @@ impl TerrainFeature for Crater {
 
         tile.height = tile.height + bowl + rim;
         tile.temperature_offset += self.temperature_offset * (1.0 - r / 1.5).powi(2);
-        true
+        Some(r)
     }
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CraterGenerator {
     pub cell_size: i64,
@@ -54,18 +64,42 @@ pub struct CraterGenerator {
     /// Expected craters per cell, in [0, 4]. Zero disables crater generation.
     pub density: f64,
     pub temperature_offset: f64,
+    /// Biome rules for the territory, evaluated on final height and temperature.
+    /// Empty or omitted: the feature only shapes terrain and keeps the terrain biome.
+    #[serde(default)]
     pub biome_map: BiomeMapDefinition,
+    /// Objects spawned only inside this feature's territory, in any biome.
+    #[serde(default)]
+    pub objects: Vec<crate::ObjectSpawn>,
 }
 
 impl Default for CraterGenerator {
     fn default() -> Self {
-        Self::from_ron(include_str!("crater.ron")).expect("bundled crater definition must be valid")
+        crate::config::parse_ron(crate::ConfigFile::Craters.bundled())
+            .expect("bundled crater settings must be valid")
     }
 }
 
 impl CraterGenerator {
-    pub fn from_ron(source: &str) -> Result<Self, ron::error::SpannedError> {
-        ron::from_str(source)
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        first_failure(&[
+            (self.cell_size > 0, "cell_size must be positive"),
+            (
+                self.min_radius.is_finite()
+                    && self.min_radius > 0.0
+                    && self.max_radius.is_finite()
+                    && self.max_radius >= self.min_radius,
+                "radii must satisfy 0 < min_radius <= max_radius",
+            ),
+            (
+                self.density.is_finite() && (0.0..=4.0).contains(&self.density),
+                "density must be in [0, 4]",
+            ),
+            (
+                self.temperature_offset.is_finite(),
+                "temperature_offset must be finite",
+            ),
+        ])
     }
 }
 
@@ -76,8 +110,8 @@ impl FeatureGenerator for CraterGenerator {
         self.biome_map.clone()
     }
 
-    fn cell_size(&self) -> i64 {
-        self.cell_size
+    fn cell_size(&self) -> f64 {
+        self.cell_size as f64
     }
 
     fn max_influence_radius(&self) -> f64 {

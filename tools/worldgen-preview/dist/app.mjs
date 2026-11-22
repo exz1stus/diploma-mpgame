@@ -1,8 +1,14 @@
 import { zoomMetrics, fitWorldZoom, clampCamera } from './zoom.mjs';
-import { SAMPLE_BYTES, readSample, MAP_MODES, readMapMode } from './protocol.mjs';
+import { PROTOCOL, SAMPLE_BYTES, readSample, sampleColor, MAP_MODES, readMapMode, DISPLAY_CONTROLS, readDisplay } from './protocol.mjs';
 import { settingsError, readSettings, settingsQuery } from './settings.mjs';
-import { biomeForSample, tileForSample, renderBiomes } from './biomes.mjs';
+import { biomeForSample, renderBiomes } from './biomes.mjs';
 import { collectObjects, drawObjects, objectAt, objectKey, objectStyle, objectsVisibleAt, readObjectChunk, renderObjectLegend } from './objects.mjs';
+import { buildTileData, imagePixelsPerTile } from './terrain.mjs';
+import { drawnBiome, drawnTexture } from './presentation.mjs';
+import { PresentationEditor } from './editor.mjs';
+
+// The map is drawn with +Y up, like the client: world drawing runs under a vertically
+// mirrored canvas transform, and screen positions convert through flipY.
 
 const canvas = document.querySelector('#map');
 const viewport = document.querySelector('.viewport');
@@ -32,6 +38,17 @@ const apiBase = (params.get('api') || '').replace(/\/$/, '');
 const objectsToggle = document.querySelector('#show-objects');
 const objectStatus = document.querySelector('#object-status');
 objectsToggle.checked = params.get('objects') !== '0';
+const texturesToggle = document.querySelector('#show-textures');
+texturesToggle.checked = params.get('textures') !== '0';
+// Textured chunk images, keyed like LOD 0 sample chunks. Each entry remembers the sample
+// chunks it was composed from and is rebuilt when a neighbor arrives or the presentation changes.
+const terrainCache = new Map();
+const terrainActive = new Map();
+// The edited client presentation: catalogs, texture array, blend settings, object looks.
+let look = null;
+let display = readDisplay(params);
+let displayRevision = 0;
+let terrainError = '';
 let objectTypes = [];
 let visibleObjects = [];
 const objectCache = new Map();
@@ -44,15 +61,23 @@ const biomeSelect = document.querySelector('#biome-file');
 let biomeFiles = [];
 let biomeFile = '';
 let biomes = [];
-let tilePalette = [];
-let tileRules = [];
 let biomeMaps = {};
 const biomeMapView = document.querySelector('#biome-map-view');
 
+const rgbHex = rgb => `#${[...rgb].map(value => value.toString(16).padStart(2, '0')).join('')}`;
+
+// Each biome is a chart "tile" colored like its texture; biomes drawn as their ground are gray.
 function renderBiomeMap() {
+  const palette = biomes.map((biome, id) => {
+    const own = look?.catalog.ownTiles[id];
+    return { name: own ? biome.name : `${biome.name} (ground)`, color: own ? rgbHex(sampleColor(look.palette, id, id)) : '#52616b' };
+  });
+  const rules = biomes.map((_, id) => ({ tile: id, biome: id, height: { min: 0, max: 1 }, temperature: { min: -Number.MAX_VALUE, max: Number.MAX_VALUE } }));
   renderBiomes(document.querySelector('#biome-chart'), document.querySelector('#biome-legend'),
-    document.querySelector('#biome-chart-readout'), biomeMaps[biomeMapView.value] || [], tilePalette, tileRules);
+    document.querySelector('#biome-chart-readout'), biomeMaps[biomeMapView.value] || [], palette, rules);
 }
+
+const flipY = screenY => viewport.clientHeight - screenY;
 
 biomeMapView.addEventListener('change', renderBiomeMap);
 let biomeReady = false;
@@ -75,19 +100,209 @@ let decoderCursor = 0;
 let decoderId = 0;
 for (const worker of decoders) worker.onmessage = ({ data }) => {
   const job = decoderJobs.get(data.id);
-  if (!job) { for (const image of Object.values(data.images || {})) image.close(); return; }
+  if (!job) { for (const image of Object.values(data.images || {})) image.close(); data.image?.close(); return; }
   decoderJobs.delete(data.id);
   if (data.error) job.reject(new Error(data.error));
+  else if (data.image) job.resolve(data.image);
   else job.resolve({ bytes: new Uint8Array(data.buffer), images: data.images });
 };
 
-function decode(buffer, size) {
+function decode(buffer, size, lod) {
   return new Promise((resolve, reject) => {
     const id = ++decoderId;
     decoderJobs.set(id, { resolve, reject });
-    decoders[decoderCursor++ % decoders.length].postMessage({ id, buffer, size }, [buffer]);
+    decoders[decoderCursor++ % decoders.length].postMessage({ id, buffer, size, display, stride: 2 ** lod, palette: look?.palette ?? null }, [buffer]);
   });
 }
+
+// Display coefficients only change colors: decode cached samples again instead of refetching.
+async function redecode(chunk, lod) {
+  const revision = displayRevision;
+  const next = await decode(chunk.bytes.slice().buffer, config.size, lod);
+  // Chunks evicted meanwhile were closed and have no images left.
+  if (revision !== displayRevision || !Object.keys(chunk.images).length) { closeChunk(next); return; }
+  for (const image of Object.values(chunk.images)) image.close();
+  chunk.images = next.images;
+  invalidate();
+}
+
+function applyDisplay() {
+  const next = {};
+  for (const control of DISPLAY_CONTROLS) {
+    const value = Number(displayInputs[control.key].value);
+    if (!Number.isFinite(value) || value < control.min || value > control.max) {
+      labels.validation.textContent = `${control.label}: enter a number from ${control.min} to ${control.max}.`;
+      return;
+    }
+    next[control.key] = value;
+  }
+  labels.validation.textContent = inputError;
+  display = next;
+  recolorFlat();
+  updateUrl();
+}
+
+// Flat images bake display coefficients and presentation colors: decode cached samples again.
+function recolorFlat() {
+  displayRevision++;
+  for (const source of [cache, staleCache]) for (const [id, chunk] of source) {
+    redecode(chunk, Number(id.split(':')[0])).catch(() => {});
+  }
+  invalidate();
+}
+
+// The surface and object tint (objects.ron) under a tile, from the cached LOD 0 samples; null
+// while unloaded.
+function underAt(x, y) {
+  const size = config.size;
+  const cx = Math.floor(x / size);
+  const cy = Math.floor(y / size);
+  const chunk = cache.get(key(cx, cy, 0));
+  const sample = chunk ? readSample(chunk.bytes, (y - cy * size) * size + x - cx * size) : null;
+  if (sample?.status !== 1 || !look) return null;
+  const { biomeId, groundId } = sample;
+  return { surface: look.objects.surface(biomeId, groundId), tint: look.objects.tint(biomeId, groundId) };
+}
+
+function applyLook(next) {
+  look = next;
+  recolorFlat();
+  renderBiomeMap();
+  renderObjectLegend(document.querySelector('#object-legend'), objectTypes, look?.objects);
+}
+
+const editor = new PresentationEditor(document.querySelector('#presentation-editor'), applyLook);
+
+const displayInputs = {};
+{
+  const section = document.querySelector('#display-settings');
+  for (const control of DISPLAY_CONTROLS) {
+    const label = document.createElement('label');
+    label.className = 'field';
+    const text = document.createElement('span');
+    text.textContent = control.label;
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.id = `display-${control.key}`;
+    input.min = control.min; input.max = control.max; input.step = control.step;
+    input.value = display[control.key];
+    input.addEventListener('change', applyDisplay);
+    displayInputs[control.key] = input;
+    label.append(text, input);
+    section.insertBefore(label, section.querySelector('.settings-hint'));
+  }
+  document.querySelector('#reset-display').addEventListener('click', () => {
+    for (const control of DISPLAY_CONTROLS) displayInputs[control.key].value = control.default;
+    applyDisplay();
+  });
+}
+function composeTerrainImage(message, transfer) {
+  return new Promise((resolve, reject) => {
+    const id = ++decoderId;
+    decoderJobs.set(id, { resolve, reject });
+    decoders[decoderCursor++ % decoders.length].postMessage({ ...message, id, type: 'terrain' }, transfer);
+  });
+}
+
+function terrainSources(cx, cy) {
+  const sources = [];
+  for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) sources.push(cache.get(key(cx + dx, cy + dy, 0)) || null);
+  return sources;
+}
+
+function terrainCurrent(entry, sources) {
+  return entry.revision === look?.revision && entry.sources.every((source, i) => source === sources[i]);
+}
+
+// The client's tile data for one chunk, from the samples of it and its loaded neighbors.
+function terrainMessage(cx, cy, sources) {
+  const size = config.size;
+  const wrap = value => ((value % size) + size) % size;
+  const sampleAt = (x, y) => {
+    const chunk = sources[(y < 0 ? 0 : y >= size ? 2 : 1) * 3 + (x < 0 ? 0 : x >= size ? 2 : 1)];
+    return chunk ? readSample(chunk.bytes, wrap(y) * size + wrap(x)) : null;
+  };
+  const data = buildTileData(size, (x, y) => {
+    const sample = sampleAt(x, y);
+    if (sample?.status !== 1) return null;
+    const texture = drawnTexture(look.catalog, sample.biomeId, sample.groundId);
+    const biome = drawnBiome(look.catalog, sample.biomeId, sample.groundId);
+    // Height quantized like the client receives it (TileSample::height).
+    const height = Math.round(Math.min(1, Math.max(0, sample.height)) * 65535);
+    return [texture, look.catalog.overlay[texture] ?? 0, ...look.catalog.tints[biome], biome, height];
+  }, look.blend.tint_radius);
+  // Outside-world padding and unclassified tiles (which the client never receives) stay empty.
+  const hidden = new Uint8Array(size * size);
+  for (let i = 0; i < size * size; i++) hidden[i] = sources[4].bytes[i * SAMPLE_BYTES] === 1 ? 0 : 1;
+  return {
+    size, originX: cx * size, originY: cy * size, textures: look.stack, blend: look.blend,
+    data: { layer: data.layer.buffer, level: data.level.buffer, biome: data.biome.buffer, tint: data.tint.buffer, relief: data.relief.buffer }, hidden: hidden.buffer,
+  };
+}
+
+function closeTerrain(entry) { entry.image.close(); }
+
+function clearTerrain() {
+  for (const entry of terrainCache.values()) closeTerrain(entry);
+  terrainCache.clear();
+  terrainActive.clear();
+}
+
+function texturedAt(m) {
+  return texturesToggle.checked && mapMode === 'biomes' && m.lod === 0 && m.baseTilePx >= 4;
+}
+
+function fetchTerrainVisible(minX, minY, maxX, maxY) {
+  if (!look) return;
+  const wanted = [];
+  const centerX = (minX + maxX) / 2;
+  const centerY = (minY + maxY) / 2;
+  for (let cy = minY; cy <= maxY; cy++) for (let cx = minX; cx <= maxX; cx++) {
+    const id = key(cx, cy, 0);
+    const sources = terrainSources(cx, cy);
+    if (!sources[4] || terrainActive.has(id)) continue;
+    const entry = terrainCache.get(id);
+    if (entry && terrainCurrent(entry, sources)) continue;
+    wanted.push({ cx, cy, id, sources, distance: (cx - centerX) ** 2 + (cy - centerY) ** 2 });
+  }
+  wanted.sort((a, b) => a.distance - b.distance);
+  for (const { cx, cy, id, sources } of wanted.slice(0, Math.max(0, 4 - terrainActive.size))) {
+    const token = {};
+    terrainActive.set(id, token);
+    const revision = look.revision;
+    const message = terrainMessage(cx, cy, sources);
+    const imageSide = config.size * imagePixelsPerTile(config.size, look.blend);
+    composeTerrainImage(message, [message.data.layer, message.data.level, message.data.biome, message.data.tint, message.data.relief, message.hidden])
+      .then(image => {
+        if (terrainActive.get(id) !== token || cache.get(id) !== sources[4]) { image.close(); return; }
+        const previous = terrainCache.get(id);
+        if (previous) closeTerrain(previous);
+        terrainCache.delete(id);
+        terrainCache.set(id, { image, sources, revision });
+        const limit = Math.max(24, Math.floor(160 * 1024 ** 2 / (imageSide ** 2 * 4)));
+        while (terrainCache.size > limit) {
+          const oldest = terrainCache.keys().next().value;
+          closeTerrain(terrainCache.get(oldest)); terrainCache.delete(oldest);
+        }
+        terrainError = '';
+      })
+      .catch(error => { terrainError = `Textures unavailable: ${error.message}`; })
+      .finally(() => { if (terrainActive.get(id) === token) terrainActive.delete(id); invalidate(); });
+  }
+}
+
+function drawTerrain(cx, cy, edgeX, edgeY, span) {
+  const id = key(cx, cy, 0);
+  const entry = terrainCache.get(id);
+  // An outdated image stays as a placeholder while its sample chunk is still the one on screen.
+  if (!entry || (entry.sources[4] !== cache.get(id) && entry.sources[4] !== staleCache.get(id))) return false;
+  ctx.save();
+  ctx.imageSmoothingEnabled = span < entry.image.width;
+  ctx.drawImage(entry.image, edgeX, edgeY, span, span);
+  ctx.restore();
+  return true;
+}
+
 let retryAt = 0;
 let inputError = '';
 
@@ -122,13 +337,13 @@ function installControls(nextControls) {
       label.append(text, input); section.append(label);
     }
     const hints = {
-      World: 'Terrain coordinate scale multiplies elevation noise frequency. Regional noise uses global tile coordinates.',
+      World: 'Terrain scale makes every noise pattern and terrain feature (cells, radii) that many times larger, like terrain_scale in world.ron. Terrain coordinate scale is a preview-only multiplier of elevation noise frequency. Regional noise uses global tile coordinates.',
       'Elevation noise': 'Leave seed override blank to follow the world seed.',
       'Temperature region noise': 'Leave seed override blank to derive it from the world seed.',
       'Temperature coefficients': 'Temperature is always the daily average for the selected season.',
       Planet: 'Orbit: 0 / 0.5 equinox, 0.25 northern summer, 0.75 northern winter.',
       Craters: 'Territory is marked without replacing terrain colors. Temperature offsets heat or cool affected tiles before biome selection. Density is the expected number per cell; 0 disables craters. Maximum radius × 1.5 must fit within a cell.',
-      'Impact basins': 'Territory is marked without replacing terrain colors. Temperature offsets heat or cool basin interiors before biome selection. Large, rare impacts applied before craters. Probability 0 disables basins; 1 tests every cell. Use Fit world (□) to see their extent. Smoothing octaves are capped by elevation octaves.',
+      'Impact basins': 'Each basin picks a type (default preset: basalt or sulfur) whose biome map colors its interior; outline irregularity 0 keeps them circular. Temperature offsets heat or cool basin interiors before biome selection. Large impacts applied before craters. Probability 0 disables basins; 1 tests every cell. Use Fit world (□) to see their extent. Smoothing octaves are capped by elevation octaves.',
       Volcanoes: 'Temperature offsets heat or cool affected tiles before biome selection. Raised cones with summit calderas, applied after basins and craters. Volcano territory is always marked. Final height, temperature and biome select a global tile through the separate tile map. Probability 0 disables volcanoes; 1 places one per cell. Heights and depths use the normalized height scale. Caldera radius 0 makes a solid cone. Use Fit world (□) to find sparse volcanoes.',
     };
     const hint = document.createElement('p');
@@ -148,6 +363,10 @@ function updateUrl() {
   const query = controls.length ? settingsQuery(config, controls, true) : new URLSearchParams(location.search);
   query.set('mode', mapMode);
   if (!objectsToggle.checked) query.set('objects', '0');
+  if (!texturesToggle.checked) query.set('textures', '0');
+  for (const control of DISPLAY_CONTROLS) {
+    if (display[control.key] !== control.default) query.set(control.key, display[control.key]);
+  }
   if (biomeFile) query.set('biome', biomeFile);
   if (apiBase) query.set('api', apiBase);
   history.replaceState(null, '', `${location.pathname}?${query}`);
@@ -168,7 +387,7 @@ function applyInputs() {
   const chunkSizeChanged = candidate.size !== config.size;
   config = candidate;
   clearCache(staleCache);
-  if (chunkSizeChanged) { clearCache(cache); world = null; }
+  if (chunkSizeChanged) { clearCache(cache); clearTerrain(); world = null; }
   staleCache = cache;
   cache = new Map();
   revision++;
@@ -186,6 +405,7 @@ function metrics() {
 
 function zoomAt(amount, screenX, screenY) {
   const old = metrics();
+  screenY = flipY(screenY);
   const oldX = cameraX + (screenX - viewport.clientWidth / 2) / old.cellPx;
   const oldY = cameraY + (screenY - viewport.clientHeight / 2) / old.cellPx;
   if (!world) return;
@@ -211,7 +431,7 @@ function constrainView() {
 function cellAt(screenX, screenY, m = metrics()) {
   return {
     x: Math.floor(cameraX + (screenX - viewport.clientWidth / 2) / m.cellPx),
-    y: Math.floor(cameraY + (screenY - viewport.clientHeight / 2) / m.cellPx),
+    y: Math.floor(cameraY + (flipY(screenY) - viewport.clientHeight / 2) / m.cellPx),
   };
 }
 
@@ -224,6 +444,7 @@ function clearCache(map) {
 
 function closeChunk(chunk) {
   for (const image of Object.values(chunk.images)) image.close();
+  chunk.images = {};
 }
 
 function resetObjects() {
@@ -315,8 +536,10 @@ function fetchVisible(minX, minY, maxX, maxY, lod) {
         const buffer = await response.arrayBuffer();
         if (buffer.byteLength !== size * size * SAMPLE_BYTES) throw new Error('Incomplete chunk data');
         if (requestRevision !== revision || controller.signal.aborted) return;
-        const chunk = await decode(buffer, size);
+        const decodedDisplay = displayRevision;
+        const chunk = await decode(buffer, size, lod);
         if (requestRevision !== revision || controller.signal.aborted) { closeChunk(chunk); return; }
+        if (decodedDisplay !== displayRevision) redecode(chunk, lod).catch(() => {});
         cache.set(id, chunk);
         while (cache.size > Math.min(2000, Math.floor(64 * 1024 ** 2 / (size * size * (SAMPLE_BYTES + 4 * Object.keys(MAP_MODES).length))))) {
           const oldest = cache.keys().next().value;
@@ -382,6 +605,9 @@ function draw() {
   ctx.fillRect(0, 0, width, height);
   if (!world) { labels.status.textContent = 'Waiting for world dimensions…'; tooltip.hidden = true; return; }
   constrainView();
+  // World drawing below uses y-up coordinates (y = 0 at the bottom of the viewport).
+  ctx.setTransform(dpr, 0, 0, -dpr, 0, height * dpr);
+  const chunkLabels = [];
   const m = metrics();
   const stride = 2 ** m.lod;
   const worldX = width / 2 - cameraX * m.cellPx;
@@ -397,6 +623,7 @@ function draw() {
   const right = Math.min(Math.ceil(world.width / stride), Math.ceil(cameraX + width / (2 * m.cellPx)) + 1);
   const bottom = Math.min(Math.ceil(world.height / stride), Math.ceil(cameraY + height / (2 * m.cellPx)) + 1);
   const chunkSize = config.size;
+  const textured = texturedAt(m);
   const minChunkX = Math.floor(left / chunkSize);
   const minChunkY = Math.floor(top / chunkSize);
   const maxChunkX = Math.floor((right - 1) / chunkSize);
@@ -406,21 +633,19 @@ function draw() {
       const edgeX = width / 2 + (cx * chunkSize - cameraX) * m.cellPx;
       const edgeY = height / 2 + (cy * chunkSize - cameraY) * m.cellPx;
       const span = chunkSize * m.cellPx;
-      drawFallback(cx, cy, m.lod, edgeX, edgeY, span);
+      if (!textured || !drawTerrain(cx, cy, edgeX, edgeY, span)) drawFallback(cx, cy, m.lod, edgeX, edgeY, span);
       ctx.strokeStyle = '#d3f3e477';
       ctx.lineWidth = 1.5;
       ctx.strokeRect(Math.round(edgeX) + .5, Math.round(edgeY) + .5, span, span);
       if (span > 120 && edgeX < width && edgeY < height && edgeX + span > 0 && edgeY + span > 0) {
-        ctx.fillStyle = '#09202bd9';
-        ctx.fillRect(edgeX + 1, edgeY + 1, 105, 22);
-        ctx.fillStyle = '#c3e9dd';
-        ctx.font = '10px ui-monospace, monospace';
-        ctx.fillText(`CHUNK ${cx}, ${cy}`, edgeX + 8, edgeY + 16);
+        chunkLabels.push({ text: `CHUNK ${cx}, ${cy}`, x: edgeX, y: height - edgeY - span });
       }
     }
   }
   fetchVisible(minChunkX, minChunkY, maxChunkX, maxChunkY, m.lod);
-  if (m.cellPx >= 18) {
+  if (textured) fetchTerrainVisible(minChunkX, minChunkY, maxChunkX, maxChunkY);
+  else terrainActive.clear();
+  if (m.cellPx >= 18 && !textured) {
     ctx.strokeStyle = '#07172022';
     ctx.lineWidth = 1;
     for (let x = left; x <= right; x++) {
@@ -442,7 +667,7 @@ function draw() {
     }
     visibleObjects = collectObjects(chunks, { minX: left, minY: top, maxX: right, maxY: bottom });
     const hover = pointer && !dragging ? cellAt(pointer.x, pointer.y, m) : null;
-    drawObjects(ctx, visibleObjects, objectTypes, worldX, worldY, m.baseTilePx,
+    drawObjects(ctx, visibleObjects, worldX, worldY, m.baseTilePx, look?.objects, underAt,
       hover ? objectAt(visibleObjects, hover.x, hover.y) : null);
     const unavailable = chunks.filter(chunk => chunk.error).length;
     objectStatus.textContent = objectError || (unavailable
@@ -455,8 +680,17 @@ function draw() {
       ? 'No object definitions supplied.' : 'Zoom in to see placed objects.';
   }
   ctx.restore();
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.font = '10px ui-monospace, monospace';
+  for (const label of chunkLabels) {
+    ctx.fillStyle = '#09202bd9';
+    ctx.fillRect(label.x + 1, label.y + 1, 105, 22);
+    ctx.fillStyle = '#c3e9dd';
+    ctx.fillText(label.text, label.x + 8, label.y + 16);
+  }
   labels.zoom.textContent = zoom >= 0 ? `2^−${zoom.toFixed(1)}×` : `${2 ** -zoom < 1e6 ? (2 ** -zoom).toFixed(1) : `2^${(-zoom).toFixed(0)}`}×`;
-  labels.status.textContent = m.lod === 0 ? `LOD 0 · exact tiles · ${m.baseTilePx.toFixed(2)} px / tile` : `LOD ${m.lod} · 2^${m.lod} tiles / cell`;
+  labels.status.textContent = m.lod === 0 ? `LOD 0 · exact tiles · ${m.baseTilePx.toFixed(2)} px / tile${textured ? ' · textured' : ''}` : `LOD ${m.lod} · 2^${m.lod} tiles / cell`;
+  if (terrainError && textured) labels.validation.textContent = terrainError;
 
   updateReadout();
 }
@@ -473,7 +707,7 @@ function updateReadout() {
     return;
   }
   const worldX = (cameraX + (pointer.x - viewport.clientWidth / 2) / m.cellPx) * stride;
-  const worldY = (cameraY + (pointer.y - viewport.clientHeight / 2) / m.cellPx) * stride;
+  const worldY = (cameraY + (flipY(pointer.y) - viewport.clientHeight / 2) / m.cellPx) * stride;
   if (worldX < 0 || worldX >= world.width || worldY < 0 || worldY >= world.height) return;
   const cell = cellAt(pointer.x, pointer.y, m);
   const chunkX = Math.floor(cell.x / config.size);
@@ -485,7 +719,9 @@ function updateReadout() {
   const tileX = Math.min(world.width - 1, cell.x * stride + offset);
   const tileY = Math.min(world.height - 1, cell.y * stride + offset);
   const biome = biomeForSample(biomes, sample);
-  const surface = tileForSample(tilePalette, sample);
+  const textureId = sample?.status === 1 && look ? drawnTexture(look.catalog, sample.biomeId, sample.groundId) : null;
+  const texture = textureId === null ? null : look.catalog.textures[textureId];
+  const ground = sample?.status === 1 && sample.groundId !== sample.biomeId ? biomes[sample.groundId]?.name : null;
   const title = sample ? (mapMode === 'biomes' ? (biome ? biome.name : 'No matching biome') : MAP_MODES[mapMode].label) : 'Loading tile…';
   const temperature = sample && Number.isFinite(sample.temperature) ? `${sample.temperature.toFixed(1)} °C` : '—';
   const height = sample && Number.isFinite(sample.height) ? sample.height.toFixed(4) : '—';
@@ -495,7 +731,7 @@ function updateReadout() {
   tooltipFields.tile.textContent = `${m.lod === 0 ? 'Tile' : 'Sample'} ${tileX}, ${tileY} · ${title}`;
   tooltipFields.temperature.textContent = temperature;
   tooltipFields.height.textContent = height;
-  tooltipFields.note.textContent = `${sample?.status === 1 ? `Tile ${sample.tileId}: ${surface?.name || sample.color} · ${sample.color} · ` : ''}Height 0–1 · daily average temperature${m.lod ? ` · LOD ${m.lod}` : ''}`;
+  tooltipFields.note.textContent = `${texture ? `Texture ${texture.name} · layer ${look.catalog.overlay[textureId]} · ` : ''}${ground ? `Ground ${ground} · ` : ''}Height 0–1 · daily average temperature${m.lod ? ` · LOD ${m.lod}` : ''}`;
   if (object) {
     const label = objectStyle(objectTypes[object.kind]).label;
     tooltipFields.object.textContent = `${label} · footprint ${object.footprint.width} × ${object.footprint.height}\nAnchor ${object.id.anchor.x}, ${object.id.anchor.y} · instance ${objectKey(object)}`;
@@ -531,6 +767,11 @@ modeSelect.addEventListener('change', () => {
   mapMode = readMapMode(modeSelect.value);
   updateMapMode();
   updateUrl();
+});
+
+texturesToggle.addEventListener('change', () => {
+  updateUrl();
+  invalidate();
 });
 
 objectsToggle.addEventListener('change', () => {
@@ -592,7 +833,7 @@ viewport.addEventListener('pointermove', event => {
   if (dragging) {
     const m = metrics();
     cameraX -= (event.clientX - dragging.x) / m.cellPx;
-    cameraY -= (event.clientY - dragging.y) / m.cellPx;
+    cameraY += (event.clientY - dragging.y) / m.cellPx;
     dragging = { x: event.clientX, y: event.clientY };
   }
   invalidate();
@@ -609,14 +850,14 @@ async function pollBuild() {
     const response = await fetch(`${apiBase}/api/meta?${query}`, { cache: 'no-store' });
     if (!response.ok) throw new Error(response.status === 400 ? await response.text() : 'Generator is rebuilding or unavailable. Waiting for the local server…');
     const { build, protocol, world: nextWorld, controls: nextControls, biome_files: nextFiles, biome_file: nextFile,
-      biomes: nextBiomes, biome_rules: nextRules, feature_biome_maps: nextFeatureMaps, tile_palette: nextPalette, tile_rules: nextTileRules,
+      biomes: nextBiomes, biome_rules: nextRules, feature_biome_maps: nextFeatureMaps,
       object_types: nextObjectTypes = [] } = await response.json();
     if (request !== metaRequest) return;
-    if (protocol !== 6 || !nextWorld || !Number.isSafeInteger(nextWorld.width) || !Number.isSafeInteger(nextWorld.height)
+    if (protocol !== PROTOCOL || !nextWorld || !Number.isSafeInteger(nextWorld.width) || !Number.isSafeInteger(nextWorld.height)
       || nextWorld.width <= 0 || nextWorld.height <= 0 || !Array.isArray(nextControls) || !nextControls.length) throw new Error('Unsupported preview metadata');
     if (JSON.stringify(controls) !== JSON.stringify(nextControls)) installControls(nextControls);
     if (!Array.isArray(nextFiles) || !nextFiles.includes(nextFile) || !Array.isArray(nextBiomes)
-      || !Array.isArray(nextRules) || !nextFeatureMaps || !Array.isArray(nextPalette) || !Array.isArray(nextTileRules)) throw new Error('Unsupported biome metadata');
+      || !Array.isArray(nextRules) || !nextFeatureMaps) throw new Error('Unsupported biome metadata');
     if (JSON.stringify(biomeFiles) !== JSON.stringify(nextFiles)) {
       biomeFiles = nextFiles;
       biomeSelect.replaceChildren(...biomeFiles.map(file => {
@@ -635,17 +876,15 @@ async function pollBuild() {
     if (!Array.isArray(nextObjectTypes) || nextObjectTypes.some(type => typeof type.name !== 'string'
       || !Number.isSafeInteger(type.footprint?.width) || !Number.isSafeInteger(type.footprint?.height)
       || type.footprint.width <= 0 || type.footprint.height <= 0)) throw new Error('Unsupported object metadata');
-    if (JSON.stringify(objectTypes) !== JSON.stringify(nextObjectTypes)) {
+    const objectsChanged = JSON.stringify(objectTypes) !== JSON.stringify(nextObjectTypes);
+    if (objectsChanged) {
       objectTypes = nextObjectTypes;
       resetObjects();
-      renderObjectLegend(document.querySelector('#object-legend'), objectTypes);
     }
-    if (!biomeReady || JSON.stringify(biomes) !== JSON.stringify(nextBiomes)
-      || JSON.stringify(biomeMaps) !== JSON.stringify(nextMaps)
-      || JSON.stringify(tilePalette) !== JSON.stringify(nextPalette) || JSON.stringify(tileRules) !== JSON.stringify(nextTileRules)) {
+    const biomesChanged = !biomeReady || JSON.stringify(biomes) !== JSON.stringify(nextBiomes)
+      || JSON.stringify(biomeMaps) !== JSON.stringify(nextMaps);
+    if (biomesChanged) {
       biomes = nextBiomes;
-      tilePalette = nextPalette;
-      tileRules = nextTileRules;
       biomeMaps = nextMaps;
       const selectedMap = biomeMapView.value;
       biomeMapView.replaceChildren(...Object.keys(biomeMaps).map(name => {
@@ -655,6 +894,7 @@ async function pollBuild() {
       biomeMapView.value = Object.hasOwn(biomeMaps, selectedMap) ? selectedMap : 'Default';
       renderBiomeMap();
     }
+    if (biomesChanged || objectsChanged) editor.setMeta({ preset: biomeFile, biomes, maps: biomeMaps, objectTypes });
     biomeReady = true;
     updateUrl();
     if (buildId !== null && build !== buildId) {

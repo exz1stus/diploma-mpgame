@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use bevy::{app::App, math::Vec2};
 use worldgen::{
-    BiomeId, BiomeRepository, GenerationStage, ObjectPlacer, ObjectRepository, TileDraft,
-    TileMapper, TilePalette, TilePos, WorldGeneratorConfig,
+    BiomeId, BiomeRepository, GenerationStage, ObjectPlacer, ObjectRepository, TileDraft, TilePos,
+    WorldGeneratorConfig,
 };
 
 use super::coords::TILE_SIZE;
@@ -23,12 +23,6 @@ impl GenerationStage for Flat {
 
 pub(crate) fn test_generator() -> worldgen::WorldGenerator {
     let biomes = Arc::new(BiomeRepository::from_ron(r#"[(name: "plain")]"#).unwrap());
-    let mapper = TileMapper::from_ron(
-        r#"[(tile: "ground", height: (min: 0.0, max: 1.0))]"#,
-        TilePalette::from_ron(r##"[(name: "ground", color: "#123456")]"##).unwrap(),
-        &biomes,
-    )
-    .unwrap();
     let objects = ObjectPlacer::from_ron(
         r#"[(id: 1, object: "rock", density: 0.3)]"#,
         ObjectRepository::from_ron(r#"[(name: "rock", footprint: (width: 1, height: 1))]"#)
@@ -45,7 +39,6 @@ pub(crate) fn test_generator() -> worldgen::WorldGenerator {
         },
         vec![Box::new(Flat)],
         biomes,
-        mapper,
         objects,
     )
 }

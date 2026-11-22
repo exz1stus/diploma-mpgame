@@ -1,0 +1,48 @@
+// Object art from the previous sprite sheet (presets/old_atlas/atlas.ron), as the worldgen
+// preview drew it before the current atlas: one art set per kind, on every surface.
+// Same format as world/objects.ron.
+(
+    default_placeholder: "#475A47",
+    // The old object art is already gray: tinted, not recolored.
+    // Object tints per biome, floor to ridge: darker or grayer than the ground so objects
+    // stand out; polar rocks are bluish gray instead of snow white.
+    tints: {
+        "plain_floor": "#4A4846",
+        "plain_low": "#575552",
+        "plain_mid": "#64625E",
+        "plain_upland": "#716F6B",
+        "plain_ridge": "#7E7C78",
+        "desert_floor": "#5A5650",
+        "desert_low": "#67625C",
+        "desert_mid": "#736E67",
+        "desert_upland": "#807A73",
+        "desert_ridge": "#8C867E",
+        "sulfur_floor": "#655A2C",
+        "sulfur_low": "#7F7135",
+        "sulfur_mid": "#97863F",
+        "sulfur_upland": "#AC9A4A",
+        "sulfur_ridge": "#BDAD5A",
+        "basalt_floor": "#4A4D52",
+        "basalt_low": "#53565B",
+        "basalt_mid": "#5C5F64",
+        "basalt_upland": "#65686D",
+        "basalt_ridge": "#6E7176",
+        "snow_floor": "#7A8592",
+        "snow_low": "#818C99",
+        "snow_mid": "#8893A0",
+        "snow_upland": "#8F9AA7",
+        "snow_ridge": "#96A1AE",
+        "frost_floor": "#65707C",
+        "frost_low": "#6C7783",
+        "frost_mid": "#737E8A",
+        "frost_upland": "#7A8591",
+        "frost_ridge": "#818C98",
+    },
+    surfaces: {},
+    kinds: {
+        "rock": (sprite: Some("rock"), jitter: 0.3, placeholder: Some("#5A5550")),
+        "large_rock": (sprite: Some("boulder"), jitter: 0.25, placeholder: Some("#4A4642")),
+        "iron_ore": (sprite: Some("spikes"), jitter: 0.25, placeholder: Some("#7A4A35")),
+        "pebbles": (sprite: Some("pebbles"), jitter: 0.4, layer: Ground, occlusion: false, placeholder: Some("#77726B")),
+    },
+)

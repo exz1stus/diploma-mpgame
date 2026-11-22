@@ -1,6 +1,6 @@
 mod config;
 mod game;
-mod networking;
+mod net;
 use std::time::Duration;
 
 use avian2d::prelude::PhysicsPlugins;
@@ -15,7 +15,7 @@ use shared::role::NetworkRole;
 
 use crate::{
     config::AppConfig,
-    networking::{ServerPlugin, world_streaming::WorldStreamingPlugin},
+    net::{ServerPlugin, world_streaming::WorldStreamingPlugin},
 };
 
 fn main() {

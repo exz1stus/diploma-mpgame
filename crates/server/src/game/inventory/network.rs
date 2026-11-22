@@ -1,5 +1,5 @@
 use super::{InventoryService, access::owned_player, sessions::Session};
-use crate::networking::client::ReplicationClients;
+use crate::net::client::ReplicationClients;
 use bevy::prelude::*;
 use shared::{
     commands::CommandRequest,

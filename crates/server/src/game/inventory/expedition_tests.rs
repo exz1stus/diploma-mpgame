@@ -303,7 +303,7 @@ fn night_requires_generation_and_duplicate_fuel_receipts_do_not_burn_extra_coal(
 
 #[test]
 fn a_fixed_tick_rescues_the_player_and_spills_the_beacon_at_the_loss_site() {
-    use crate::networking::{entity, messages::MessageBuffer, server::TickCounter};
+    use crate::net::{entity, messages::MessageBuffer, server::TickCounter};
     use shared::role::NetworkRole;
     let mut app = shared::app_init(NetworkRole::Server);
     app.init_resource::<shared::replication::BufferedComponentChanges>()
@@ -369,17 +369,14 @@ fn the_default_pole_requires_more_than_two_full_t3_tanks_one_way() {
 
 #[test]
 fn local_exposure_matches_the_biome_map_at_each_players_tile() {
-    use worldgen::{TilePos, WorldGeneratorConfig, WorldPreset};
+    use worldgen::{TilePos, WorldConfig};
     let config = InventoryConfig::load().unwrap();
     let rules = &config.expedition;
-    let generator = WorldPreset::bundled()
-        .build(WorldGeneratorConfig {
-            seed: 73,
-            world_size_chunks: 16,
-            chunk_size: 32,
-            ..Default::default()
-        })
-        .unwrap();
+    let mut world = WorldConfig::bundled();
+    world.world.seed = 73;
+    world.world.world_size_chunks = 16;
+    world.world.chunk_size = 32;
+    let generator = world.build().unwrap();
     // Both positions are equally far from the ship. The map origin is tile (256, 256).
     let east = Vec2::new(7000.0, -0.5);
     let north = Vec2::new(-0.5, 7000.0);

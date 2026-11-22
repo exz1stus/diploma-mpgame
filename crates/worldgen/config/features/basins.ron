@@ -1,0 +1,45 @@
+// Generation settings and biome selection for basins.
+// Biome names reference ../biomes.ron; the map is evaluated on final height and temperature.
+// Basin biomes decide which objects spawn; clients draw them like the terrain biome
+// underneath unless they define tiles for them.
+(
+    cell_size: 3000,
+    probability: 0.2,
+    min_radius: 768.0,
+    max_radius: 1800.0,
+    min_depth: 0.0,
+    max_depth: 0.16,
+    min_rim_height: 0.012,
+    max_rim_height: 0.026,
+    smoothing: 0.9,
+    // Octaves of the elevation noise used as the smoothed basin floor (capped by elevation octaves).
+    smoothing_octaves: 2,
+    temperature_offset: 20.0,
+    // Outline irregularity in [0, 0.6]: the radius varies by up to this fraction around the rim.
+    shape_noise: 0.35,
+    // Edge detail: multi-octave noise added to the normalized distance from the centre, in [0, 0.5].
+    // Large details are edge_noise_scale tiles wide; each octave halves them. Ridged noise makes
+    // sharp spikes and notches, like the noisy edges of the other terrain transitions.
+    edge_noise: 0.12,
+    edge_noise_scale: 220.0,
+    edge_octaves: 7,
+    edge_ridged: true,
+    // Basin types; each basin picks one by weight. Both apply in any climate warmer than frost;
+    // colder basins fall back to the terrain map (snow and frost).
+    variants: [
+        (name: "basalt", weight: 0.6, biome_map: [
+            (biome: "basalt_floor", height: (min: 0.0, max: 0.38), temperature: (min: -6.0, max: 60.0)),
+            (biome: "basalt_low", height: (min: 0.38, max: 0.46), temperature: (min: -6.0, max: 60.0)),
+            (biome: "basalt_mid", height: (min: 0.46, max: 0.54), temperature: (min: -6.0, max: 60.0)),
+            (biome: "basalt_upland", height: (min: 0.54, max: 0.62), temperature: (min: -6.0, max: 60.0)),
+            (biome: "basalt_ridge", height: (min: 0.62, max: 1.0), temperature: (min: -6.0, max: 60.0)),
+        ]),
+        (name: "sulfur", weight: 0.4, biome_map: [
+            (biome: "sulfur_floor", height: (min: 0.0, max: 0.38), temperature: (min: -6.0, max: 60.0)),
+            (biome: "sulfur_low", height: (min: 0.38, max: 0.46), temperature: (min: -6.0, max: 60.0)),
+            (biome: "sulfur_mid", height: (min: 0.46, max: 0.54), temperature: (min: -6.0, max: 60.0)),
+            (biome: "sulfur_upland", height: (min: 0.54, max: 0.62), temperature: (min: -6.0, max: 60.0)),
+            (biome: "sulfur_ridge", height: (min: 0.62, max: 1.0), temperature: (min: -6.0, max: 60.0)),
+        ]),
+    ],
+)

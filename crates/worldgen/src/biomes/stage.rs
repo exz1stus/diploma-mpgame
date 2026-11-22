@@ -14,32 +14,34 @@ impl BiomeStage {
 }
 
 impl GenerationStage for BiomeStage {
+    /// The terrain map gives the ground; a feature map, where it has a rule, overrides
+    /// the biome (and so the objects) but not the ground.
     fn apply(&self, _pos: TilePos, tile: &mut TileDraft) {
-        tile.biome = tile
+        let ground = self
+            .default_map
+            .determine_biome(tile.temperature, tile.height);
+        let feature = tile
             .biome_map
             .as_ref()
-            .and_then(|map| map.determine_biome(tile.temperature, tile.height))
-            .or_else(|| {
-                self.default_map
-                    .determine_biome(tile.temperature, tile.height)
-            });
+            .and_then(|map| map.determine_biome(tile.temperature, tile.height));
+        tile.biome = feature.or(ground);
+        tile.ground = ground.or(feature);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::BiomeRepository;
 
     #[test]
     fn feature_maps_choose_by_final_height_and_temperature_and_gaps_use_default() {
-        let repository = BiomeRepository::parse();
+        let repository = crate::old_preset::biomes();
         let feature_map = Arc::new(BiomeMap::from_ron(r#"[
             (biome: "frozen_volcano", height: (min: 0.0, max: 1.0), temperature: (min: -20.0, max: -5.0)),
             (biome: "volcano", height: (min: 0.0, max: 0.7), temperature: (min: -5.0, max: 20.0)),
             (biome: "crater", height: (min: 0.7, max: 1.0), temperature: (min: -5.0, max: 20.0)),
         ]"#, &repository).unwrap());
-        let default_map = Arc::new(BiomeMap::parse(&repository));
+        let default_map = Arc::new(crate::old_preset::map(&repository));
         let stage = BiomeStage::new(Arc::clone(&default_map));
         for (height, temperature, expected) in [
             (0.5, -10.0, repository.id("frozen_volcano")),
@@ -61,6 +63,13 @@ mod tests {
             assert_eq!(
                 tile.biome, expected,
                 "height={height}, temperature={temperature}"
+            );
+            assert_eq!(
+                tile.ground,
+                default_map
+                    .determine_biome(temperature, height)
+                    .or(expected),
+                "the ground is always the terrain biome"
             );
         }
     }

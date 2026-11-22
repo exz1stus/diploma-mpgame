@@ -1,6 +1,7 @@
 use rand::{Rng, RngExt};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
+use super::first_failure;
 use crate::features::feature::{FeatureGenerator, TerrainFeature};
 use crate::{BiomeMapDefinition, TileDraft, TilePos};
 
@@ -17,6 +18,15 @@ pub struct Volcano {
 }
 
 impl TerrainFeature for Volcano {
+    fn scaled(self, scale: f64) -> Self {
+        Self {
+            x: self.x * scale,
+            y: self.y * scale,
+            radius: self.radius * scale,
+            ..self
+        }
+    }
+
     fn center(&self) -> (f64, f64) {
         (self.x, self.y)
     }
@@ -25,12 +35,12 @@ impl TerrainFeature for Volcano {
         self.radius
     }
 
-    fn apply(&self, pos: TilePos, tile: &mut TileDraft) -> bool {
+    fn apply(&self, pos: TilePos, tile: &mut TileDraft) -> Option<f64> {
         let x = pos.x as f64;
         let y = pos.y as f64;
         let u = (x - self.x).hypot(y - self.y) / self.radius;
         if u >= 1.0 {
-            return false;
+            return None;
         }
         // Smooth summit and foot avoid a central spike or a seam at the base.
         let cone = self.height * (1.0 - u).powi(2) * (1.0 + 2.0 * u);
@@ -42,11 +52,11 @@ impl TerrainFeature for Volcano {
         };
         tile.height = tile.height + cone - caldera;
         tile.temperature_offset += self.temperature_offset * (1.0 - u).powi(2);
-        true
+        Some(u)
     }
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct VolcanoGenerator {
     pub cell_size: i64,
@@ -60,31 +70,57 @@ pub struct VolcanoGenerator {
     pub caldera_ratio: f64,
     pub caldera_depth: f64,
     pub temperature_offset: f64,
+    /// Biome rules for the territory, evaluated on final height and temperature.
+    /// Empty or omitted: the feature only shapes terrain and keeps the terrain biome.
+    #[serde(default)]
     pub biome_map: BiomeMapDefinition,
+    /// Objects spawned only inside this feature's territory, in any biome.
+    #[serde(default)]
+    pub objects: Vec<crate::ObjectSpawn>,
 }
 
 impl Default for VolcanoGenerator {
     fn default() -> Self {
-        Self::from_ron(include_str!("volcano.ron"))
-            .expect("bundled volcano definition must be valid")
+        crate::config::parse_ron(crate::ConfigFile::Volcanoes.bundled())
+            .expect("bundled volcano settings must be valid")
     }
 }
 
 impl VolcanoGenerator {
-    pub fn from_ron(source: &str) -> Result<Self, ron::error::SpannedError> {
-        ron::from_str(source)
-    }
-
-    pub(crate) fn validate(&self) {
-        assert!(self.cell_size > 0, "volcano cell size must be positive");
-        assert!(self.min_radius.is_finite() && self.min_radius > 0.0);
-        assert!(self.max_radius.is_finite() && self.max_radius >= self.min_radius);
-        assert!(self.probability.is_finite() && (0.0..=1.0).contains(&self.probability));
-        assert!(self.min_height.is_finite() && self.min_height >= 0.0);
-        assert!(self.max_height.is_finite() && self.max_height >= self.min_height);
-        assert!(self.caldera_ratio.is_finite() && (0.0..1.0).contains(&self.caldera_ratio));
-        assert!(self.caldera_depth.is_finite() && self.caldera_depth >= 0.0);
-        assert!(self.temperature_offset.is_finite());
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        first_failure(&[
+            (self.cell_size > 0, "cell_size must be positive"),
+            (
+                self.min_radius.is_finite()
+                    && self.min_radius > 0.0
+                    && self.max_radius.is_finite()
+                    && self.max_radius >= self.min_radius,
+                "radii must satisfy 0 < min_radius <= max_radius",
+            ),
+            (
+                self.probability.is_finite() && (0.0..=1.0).contains(&self.probability),
+                "probability must be in [0, 1]",
+            ),
+            (
+                self.min_height.is_finite()
+                    && self.min_height >= 0.0
+                    && self.max_height.is_finite()
+                    && self.max_height >= self.min_height,
+                "heights must satisfy 0 <= min_height <= max_height",
+            ),
+            (
+                self.caldera_ratio.is_finite() && (0.0..1.0).contains(&self.caldera_ratio),
+                "caldera_ratio must be in [0, 1)",
+            ),
+            (
+                self.caldera_depth.is_finite() && self.caldera_depth >= 0.0,
+                "caldera_depth must be non-negative",
+            ),
+            (
+                self.temperature_offset.is_finite(),
+                "temperature_offset must be finite",
+            ),
+        ])
     }
 }
 
@@ -95,8 +131,8 @@ impl FeatureGenerator for VolcanoGenerator {
         self.biome_map.clone()
     }
 
-    fn cell_size(&self) -> i64 {
-        self.cell_size
+    fn cell_size(&self) -> f64 {
+        self.cell_size as f64
     }
 
     fn max_influence_radius(&self) -> f64 {
@@ -104,7 +140,6 @@ impl FeatureGenerator for VolcanoGenerator {
     }
 
     fn generate_cell(&self, cx: i64, cy: i64, rng: &mut impl Rng) -> Vec<Volcano> {
-        self.validate();
         if self.probability == 0.0 || rng.random::<f64>() >= self.probability {
             return Vec::new();
         }

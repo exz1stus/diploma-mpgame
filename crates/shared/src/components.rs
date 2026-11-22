@@ -8,6 +8,16 @@ use serde::{Deserialize, Serialize};
 #[derive(Component, Serialize, Deserialize, Debug)]
 pub struct Player;
 
+/// What an entity is (`"player"`, `"slime"`, ...). Clients choose its visuals by this name.
+#[derive(Component, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Debug)]
+pub struct EntityKind(pub String);
+
+impl EntityKind {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self(name.into())
+    }
+}
+
 #[derive(Component, Clone, Copy, Serialize, Deserialize, Debug, Default)]
 pub struct NetworkPhysicsState {
     // Local metadata. The enclosing server message supplies the wire tick.
@@ -59,6 +69,7 @@ assign_network_ids!(
     Player,
     NetworkPhysicsState,
     Health,
+    EntityKind,
     Chest,
     GroundItem
 );

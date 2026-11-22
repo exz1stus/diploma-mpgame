@@ -7,9 +7,8 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use worldgen::WorldGeneratorConfig;
 
-use crate::{config::AppConfig, networking::server::TickSet};
+use crate::{config::AppConfig, net::server::TickSet};
 
 pub(crate) mod components;
 pub(crate) mod coords;
@@ -36,26 +35,17 @@ impl std::ops::Deref for WorldGenerator {
     }
 }
 
-/// Bundled presets shipped with the server.
-const PRESETS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/src/game/worldgen_presets");
+/// Server overrides of the worldgen defaults (`worldgen/config/`), file by file.
+const CONFIG_OVERRIDES_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/worldgen");
 
-pub(crate) fn install_preset(app: &mut App, world_size_chunks: Option<u32>) {
-    let preset_name = app.world().get_resource::<AppConfig>().map_or_else(
-        || "default".to_string(),
-        |config| config.worldgen_preset.clone(),
+pub(crate) fn install_world(app: &mut App, world_size_chunks: Option<u32>) {
+    let config = app.world().get_resource::<AppConfig>();
+    let overrides = config.map_or_else(
+        || PathBuf::from(CONFIG_OVERRIDES_DIR),
+        |config| config.worldgen_config.clone(),
     );
-    let mut config = WorldGeneratorConfig::default();
-    if let Some(size) = world_size_chunks {
-        config.world_size_chunks = size;
-    }
-    if let Some(seed) = std::env::var_os("WORLD_SEED") {
-        config.seed = seed
-            .to_str()
-            .expect("WORLD_SEED must contain valid text")
-            .parse::<u64>()
-            .expect("WORLD_SEED must be an unsigned 64-bit integer");
-    }
-    let generator = Arc::new(load_generator(&preset_name, config));
+    let seed = config.and_then(|config| config.world_seed);
+    let generator = Arc::new(load_generator(&overrides, seed, world_size_chunks));
     install(app, generator, RECENT_CHUNKS);
     objects::default_kinds(app);
     app.configure_sets(
@@ -64,33 +54,40 @@ pub(crate) fn install_preset(app: &mut App, world_size_chunks: Option<u32>) {
     );
 }
 
-/// Resolves a preset by name (folder in [`PRESETS_DIR`]) or by path, and builds the generator.
-/// Panics with a readable message: a server cannot run without a valid world.
-fn load_generator(preset: &str, config: WorldGeneratorConfig) -> worldgen::WorldGenerator {
-    let dir = preset_dir(preset);
-    worldgen::WorldPreset::from_dir(&dir)
-        .and_then(|preset| {
-            let overridden: Vec<_> = preset.overridden().iter().map(|f| f.file_name()).collect();
-            println!(
-                "World preset {}: {} from folder",
-                dir.display(),
-                overridden.join(", ")
-            );
-            preset.build(config)
+/// Builds the generator from the worldgen defaults plus the files in `overrides`,
+/// optionally with another seed. Panics with a readable message: a server cannot run
+/// without a valid world.
+fn load_generator(
+    overrides: &Path,
+    seed: Option<u64>,
+    world_size_chunks: Option<u32>,
+) -> worldgen::WorldGenerator {
+    worldgen::ConfigSource::with_overrides(overrides)
+        .and_then(|source| {
+            log_overrides(overrides, &source);
+            let mut config = worldgen::WorldConfig::load(&source)?;
+            if let Some(seed) = seed {
+                config.world.seed = seed;
+            }
+            if let Some(size) = world_size_chunks {
+                config.world.world_size_chunks = size;
+            }
+            config.build()
         })
-        .unwrap_or_else(|error| panic!("world preset {}: {error}", dir.display()))
+        .unwrap_or_else(|error| panic!("world config {}: {error}", overrides.display()))
 }
 
-fn preset_dir(preset: &str) -> PathBuf {
-    let path = Path::new(preset);
-    if path.components().count() > 1 || path.is_absolute() {
-        path.to_path_buf()
+fn log_overrides(dir: &Path, source: &worldgen::ConfigSource) {
+    let files: Vec<_> = source.overridden().iter().map(|file| file.path()).collect();
+    let files = if files.is_empty() {
+        "none".to_owned()
     } else {
-        Path::new(PRESETS_DIR).join(preset)
-    }
+        files.join(", ")
+    };
+    println!("World config overrides from {}: {files}", dir.display());
 }
 
-/// Generator, storage and streaming systems; separate from [`plugin`] so tests can use a small world.
+/// Generator, storage and streaming systems; separate from [`install_world`] so tests can use a small world.
 pub(crate) fn install(
     app: &mut App,
     generator: Arc<worldgen::WorldGenerator>,
@@ -106,33 +103,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_preset_folder_builds_with_every_file_overridden() {
-        let dir = preset_dir("default");
-        let preset = worldgen::WorldPreset::from_dir(&dir).unwrap();
-        assert_eq!(preset.overridden(), worldgen::PresetFile::ALL);
-        let generator = preset
-            .build(WorldGeneratorConfig {
-                world_size_chunks: 8,
-                chunk_size: 8,
-                ..Default::default()
-            })
-            .unwrap();
-        assert!(
-            generator
-                .chunk_at(worldgen::ChunkPos { x: 2, y: 2 })
-                .is_ok()
-        );
-    }
-
-    #[test]
-    fn presets_resolve_by_name_or_path() {
-        assert_eq!(
-            preset_dir("default"),
-            Path::new(PRESETS_DIR).join("default")
-        );
-        assert_eq!(
-            preset_dir("./my_presets/arid"),
-            Path::new("./my_presets/arid")
-        );
+    fn server_overrides_build_a_generator() {
+        let generator = load_generator(Path::new(CONFIG_OVERRIDES_DIR), None, None);
+        let manifest = generator.manifest();
+        for name in ["rock", "large_rock", "iron_ore"] {
+            assert!(
+                manifest.objects.iter().any(|kind| kind.name == name),
+                "default object kinds rely on {name:?}"
+            );
+        }
+        let reseeded = load_generator(Path::new(CONFIG_OVERRIDES_DIR), Some(12345), Some(16));
+        assert_eq!(reseeded.config().seed, 12345);
+        assert_eq!(reseeded.config().world_size_chunks, 16);
     }
 }

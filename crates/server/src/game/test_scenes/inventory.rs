@@ -5,7 +5,7 @@ use shared::{
     inventory::{Chest, GroundItem, ItemStack},
 };
 
-use crate::{game::inventory::InventoryService, networking::entity::NetworkCommandsExt};
+use crate::{game::inventory::InventoryService, net::entity::NetworkCommandsExt};
 
 /// Present only in the inventory scene. Normal worlds keep full-health spawns.
 #[derive(Resource, Default)]
@@ -78,7 +78,7 @@ pub(super) fn spawn(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::networking::{entity, messages::MessageBuffer, server::TickCounter};
+    use crate::net::{entity, messages::MessageBuffer, server::TickCounter};
     use shared::{
         inventory::{Inventory, InventoryConfig},
         replication::NetworkEntityMap,

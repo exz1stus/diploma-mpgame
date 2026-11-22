@@ -27,9 +27,11 @@ impl BiomeMapDefinition {
     pub fn resolve(&self, repository: &BiomeRepository) -> Result<BiomeMap, BiomeMapError> {
         let mut rules = Vec::with_capacity(self.0.len());
         for rule in &self.0 {
-            for (field, range) in [("height", rule.height), ("temperature", rule.temperature)] {
-                if !range.is_valid() || (field == "height" && (range.min < 0.0 || range.max > 1.0))
-                {
+            for (field, valid) in [
+                ("height", rule.height.is_valid_height()),
+                ("temperature", rule.temperature.is_valid()),
+            ] {
+                if !valid {
                     return Err(BiomeMapError::InvalidRange {
                         biome: rule.biome.clone(),
                         field,
@@ -65,7 +67,7 @@ pub struct BiomeMap {
 
 impl BiomeMap {
     pub fn parse(repository: &BiomeRepository) -> Self {
-        Self::from_ron(include_str!("maps/default.ron"), repository)
+        Self::from_ron(crate::ConfigFile::BiomeMap.bundled(), repository)
             .expect("bundled default biome map must be valid")
     }
 
@@ -127,7 +129,7 @@ mod tests {
 
     #[test]
     fn maps_resolve_shared_ids_and_preserve_rule_order_and_boundaries() {
-        let repository = BiomeRepository::parse();
+        let repository = crate::old_preset::biomes();
         let map = BiomeMap::from_ron(
             r#"[
             (biome: "crater", height: (min: 0.0, max: 0.5), temperature: (min: -10.0, max: 10.0)),
@@ -146,7 +148,7 @@ mod tests {
 
     #[test]
     fn invalid_ranges_and_unknown_references_fail_before_sampling() {
-        let repository = BiomeRepository::parse();
+        let repository = crate::old_preset::biomes();
         let unknown = r#"[(biome: "missing", height: (min: 0.0, max: 1.0), temperature: (min: -10.0, max: 10.0))]"#;
         assert!(matches!(
             BiomeMap::from_ron(unknown, &repository),

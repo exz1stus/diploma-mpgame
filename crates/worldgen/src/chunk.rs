@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{PlacedObject, Tile, TilePos};
+use crate::{PlacedObject, TilePos, TileSample};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ChunkPos {
@@ -8,12 +8,13 @@ pub struct ChunkPos {
     pub y: i64,
 }
 
-/// A complete chunk response. Tiles use index y * size + x in local coordinates.
+/// A complete chunk: per-tile biome and height (index `y * size + x`, chunk-local)
+/// and every object intersecting it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChunkData {
     pub position: ChunkPos,
     pub size: u32,
-    pub tiles: Vec<Tile>,
+    pub tiles: Vec<TileSample>,
     /// All objects intersecting this chunk, including anchors in adjacent chunks.
     /// Deduplicate by instance ID when loading multiple chunks.
     pub objects: Vec<PlacedObject>,

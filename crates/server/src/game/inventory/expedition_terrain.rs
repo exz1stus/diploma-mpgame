@@ -5,7 +5,7 @@ use crate::{
         components::{Chunk, ChunkTiles},
         coords::{TILE_SIZE, WorldFrame, tile_to_world},
     },
-    networking::entity::NetworkCommandsExt,
+    net::entity::NetworkCommandsExt,
 };
 use avian2d::prelude::Position;
 use bevy::prelude::*;
@@ -27,7 +27,7 @@ pub(super) fn prepare(
         return;
     };
     let frame = WorldFrame::new(generator.config());
-    let palette = generator.tile_mapper().palette();
+    let biomes = generator.biomes();
     for (chunk, mut terrain) in &mut chunks {
         for center in generator.crater_centers(frame.to_generator(chunk.pos)) {
             if !opened.insert(center) {
@@ -58,18 +58,35 @@ pub(super) fn prepare(
         let origin = Vec2::new(chunk.pos.x as f32, chunk.pos.y as f32) * side;
         for (contact, site) in mission.sites.iter().zip(&service.config.expedition.sites) {
             let center = Vec2::new(contact.position[0] as f32, contact.position[1] as f32);
-            let (radius, floor_name, rim_name) = match site.kind {
-                SiteKind::Crater => (380.0, "dark_crater_floors", "weathered_basalt"),
-                SiteKind::Quartz => (1250.0, "silicate_gravel_plains", "bright_ejecta_ridges"),
-                SiteKind::Sulfur => (1400.0, "weathered_basalt", "barren_silicate_ridges"),
-                SiteKind::Ice => (1800.0, "blue_ice_plains", "glacier_ridges"),
+            let (radius, floor_names, rim_names) = match site.kind {
+                SiteKind::Crater => (
+                    380.0,
+                    ["basalt_floor", "dark_crater_floors"],
+                    ["basalt_ridge", "weathered_basalt"],
+                ),
+                SiteKind::Quartz => (
+                    1250.0,
+                    ["plain_floor", "silicate_gravel_plains"],
+                    ["plain_ridge", "bright_ejecta_ridges"],
+                ),
+                SiteKind::Sulfur => (
+                    1400.0,
+                    ["sulfur_floor", "weathered_basalt"],
+                    ["sulfur_ridge", "barren_silicate_ridges"],
+                ),
+                SiteKind::Ice => (
+                    1800.0,
+                    ["snow_floor", "blue_ice_plains"],
+                    ["snow_ridge", "glacier_ridges"],
+                ),
                 _ => continue,
             };
             if center.distance(center.clamp(origin, origin + Vec2::splat(side))) > radius {
                 continue;
             }
-            let (Some(floor), Some(rim)) = (palette.tile(floor_name), palette.tile(rim_name))
-            else {
+            // Resolve site colors against the current or legacy world preset.
+            let lookup = |names: [&str; 2]| names.into_iter().find_map(|name| biomes.id(name));
+            let (Some(floor), Some(rim)) = (lookup(floor_names), lookup(rim_names)) else {
                 continue;
             };
             let size = terrain.size as usize;
@@ -79,7 +96,8 @@ pub(super) fn prepare(
                         * TILE_SIZE;
                 let r = point.distance(center) / radius;
                 if r <= 1.0 {
-                    *tile = if r > 0.82 { rim } else { floor };
+                    tile.biome = if r > 0.82 { rim } else { floor };
+                    tile.ground = tile.biome;
                 }
             }
         }

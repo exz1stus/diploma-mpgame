@@ -7,7 +7,7 @@ use super::{
     sessions::Session,
     transactions::{GroundChange, Plan},
 };
-use crate::networking::entity::reserve_network_ids;
+use crate::net::entity::reserve_network_ids;
 use bevy::prelude::*;
 use bevy_renet::renet::ClientId;
 use shared::{

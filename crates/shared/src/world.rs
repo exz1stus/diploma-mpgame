@@ -5,7 +5,10 @@ use std::time::Duration;
 
 use bevy_renet::renet::{ChannelConfig, ConnectionConfig, DefaultChannel, SendType};
 use serde::{Deserialize, Serialize};
-pub use worldgen::{ChunkPos, Footprint, ObjectId, Tile, TilePos};
+pub use worldgen::{
+    BiomeId, ChunkPos, Footprint, ObjectId, ObjectKind, PlanetParams, SunPosition, TilePos,
+    TileSample, WorldGeography, WorldManifest,
+};
 
 /// Server → client world data. Ordered, so a chunk's unload and reload never swap.
 /// Listed last, so renet gives gameplay channels bandwidth first.
@@ -33,17 +36,10 @@ pub fn connection_config() -> ConnectionConfig {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum WorldMessage {
-    /// First message of the stream; describes how to read and draw chunks.
-    Init(WorldInfo),
+    /// First message of the stream: chunk size and the names behind biome and object IDs.
+    Init(WorldManifest),
     ChunkLoad(ChunkSnapshot),
     ChunkUnload(ChunkPos),
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct WorldInfo {
-    pub chunk_size: u32,
-    /// RGBA per tile id, from the server's world preset palette.
-    pub tile_colors: Vec<[u8; 4]>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -51,7 +47,7 @@ pub struct ChunkSnapshot {
     pub pos: ChunkPos,
     pub size: u32,
     /// Indexed `y * size + x`, chunk-local, +Y up.
-    pub tiles: Vec<Tile>,
+    pub tiles: Vec<TileSample>,
     pub objects: Vec<ChunkObject>,
 }
 
@@ -77,16 +73,6 @@ pub fn chunk_span(chunk_size: u32) -> f32 {
     TILE_SIZE * chunk_size as f32
 }
 
-/// Parses `#RRGGBB` (as used by tile palettes) into opaque RGBA.
-pub fn parse_hex_color(color: &str) -> Option<[u8; 4]> {
-    let hex = color.strip_prefix('#')?;
-    if hex.len() != 6 {
-        return None;
-    }
-    let channel = |i: usize| u8::from_str_radix(hex.get(i..i + 2)?, 16).ok();
-    Some([channel(0)?, channel(2)?, channel(4)?, 255])
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -96,7 +82,7 @@ mod tests {
         let message = WorldMessage::ChunkLoad(ChunkSnapshot {
             pos: ChunkPos { x: -3, y: 4 },
             size: 32,
-            tiles: vec![Tile { id: 5 }; 32 * 32],
+            tiles: vec![TileSample::new(BiomeId(5), 0.5); 32 * 32],
             objects: vec![ChunkObject {
                 kind: ObjectId(2),
                 anchor: TilePos { x: -90, y: 130 },
@@ -117,10 +103,24 @@ mod tests {
     }
 
     #[test]
-    fn hex_colors_parse() {
-        assert_eq!(parse_hex_color("#F3FA0e"), Some([0xF3, 0xFA, 0x0E, 255]));
-        assert_eq!(parse_hex_color("F3FA0E"), None);
-        assert_eq!(parse_hex_color("#F3FA"), None);
+    fn the_manifest_round_trips_with_its_planet() {
+        let message = WorldMessage::Init(WorldManifest {
+            chunk_size: 32,
+            world_size_chunks: 250,
+            biomes: vec!["plain_mid".into()],
+            objects: vec![ObjectKind {
+                name: "rock".into(),
+                footprint: Footprint {
+                    width: 1,
+                    height: 1,
+                },
+            }],
+            planet: PlanetParams {
+                orbit: 0.25,
+                axial_tilt_deg: 5.0,
+            },
+        });
+        assert_eq!(decode(&encode(&message)), Some(message));
     }
 
     #[test]

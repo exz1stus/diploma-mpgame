@@ -18,6 +18,8 @@ Set-Location (Join-Path $PSScriptRoot '..')
 
 # Keep Windows artifacts apart from WSL/Linux builds that share this checkout.
 if (-not $env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR = 'target\windows' }
+# Clients run as plain executables, so tell Bevy where the client's assets live.
+if (-not $env:BEVY_ASSET_ROOT) { $env:BEVY_ASSET_ROOT = (Resolve-Path 'crates/client').Path }
 
 cargo build -p server -p client
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

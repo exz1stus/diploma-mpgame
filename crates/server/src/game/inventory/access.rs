@@ -1,5 +1,5 @@
 use super::{Id, InventoryService, Result, sessions::Session};
-use crate::networking::client::ReplicationClients;
+use crate::net::client::ReplicationClients;
 use avian2d::physics_transform::Position;
 use bevy::prelude::*;
 use bevy_renet::renet::ClientId;

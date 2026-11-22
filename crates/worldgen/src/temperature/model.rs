@@ -1,8 +1,8 @@
-use std::f64::consts::TAU;
-
+use super::sun::SunPosition;
 use crate::{GeoPosition, NoiseSource, TilePos, WorldGeography};
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PlanetParams {
     /// Orbital phase in [0, 1): 0 is equinox, 0.25 northern summer, 0.75 northern winter.
     pub orbit: f64,
@@ -29,7 +29,8 @@ pub struct TemperatureModel {
 }
 
 // all coefficients are in Celsius
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TemperatureCoefficients {
     pub base: f64, //   at zero solar exposure, zero height, and zero noise
     pub region: f64,
@@ -97,17 +98,8 @@ impl TemperatureModel {
         total / SAMPLES as f64
     }
 
+    /// Cosine of the solar zenith angle; 0 at night.
     fn sun_exposure(&self, normalized_time: f64, pos: GeoPosition, planet: &PlanetParams) -> f64 {
-        // Solar declination (seasons)
-        let declination = planet.axial_tilt_deg.to_radians() * (planet.orbit * TAU).sin();
-
-        // Solar hour angle
-        let hour_angle = (normalized_time - 0.5) * TAU + pos.longitude;
-
-        // Cosine of solar zenith angle
-        let cos_zenith = pos.latitude.sin() * declination.sin()
-            + pos.latitude.cos() * declination.cos() * hour_angle.cos();
-
-        cos_zenith.max(0.0)
+        SunPosition::at(normalized_time, pos, planet).up.max(0.0)
     }
 }

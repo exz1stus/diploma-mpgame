@@ -1,8 +1,6 @@
 use avian2d::{
-    collision::collider::Collider,
     dynamics::rigid_body::{AngularVelocity, LinearVelocity, LockedAxes, RigidBody},
     physics_transform::Position,
-    prelude::CollisionEventsEnabled,
 };
 use bevy::{app::App, math::Vec2, transform::components::Transform};
 use bevy_ecs::{
@@ -11,11 +9,11 @@ use bevy_ecs::{
     query::With,
     system::{Commands, Query, Res},
 };
-use shared::components::{DisconnectPolicy, Health, NetworkPhysicsState, Player};
+use shared::components::{DisconnectPolicy, EntityKind, Health, NetworkPhysicsState, Player};
 
 use crate::{
     game::{inventory::InventoryService, world::WorldObserver},
-    networking::{client::ClientIntiated, entity::NetworkCommandsExt, input::CurrentMovementInput},
+    net::{client::ClientIntiated, entity::NetworkCommandsExt, input::CurrentMovementInput},
 };
 
 pub fn plugin(app: &mut App) {
@@ -30,6 +28,7 @@ pub fn new_player_bundle() -> impl Bundle {
 fn new_player_bundle_at(spawn: Vec2, health: u16) -> impl Bundle {
     (
         Player,
+        EntityKind::new("player"),
         Health(health),
         NetworkPhysicsState {
             tick: 0,
@@ -39,8 +38,8 @@ fn new_player_bundle_at(spawn: Vec2, health: u16) -> impl Bundle {
         CurrentMovementInput::default(),
         WorldObserver::default(),
         RigidBody::Dynamic,
-        Collider::circle(16.0),
-        CollisionEventsEnabled,
+        // Collider::circle(16.0),
+        // CollisionEventsEnabled,
         Position(spawn),
         LinearVelocity::ZERO,
         AngularVelocity::ZERO,

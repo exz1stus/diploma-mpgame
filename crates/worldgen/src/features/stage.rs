@@ -4,30 +4,56 @@ use std::{
 };
 
 use super::feature::{FeatureGenerator, FeatureLayer, TerrainFeature};
+use super::{FeatureKind, FeatureMark};
 use crate::{BiomeMap, BiomeRepository, ChunkPos, GenerationStage, TileDraft, TilePos};
 
 pub struct FeatureStage<G: FeatureGenerator> {
+    kind: FeatureKind,
     layer: FeatureLayer<G>,
     chunk_size: u32,
-    biome_map: Arc<BiomeMap>,
+    /// Per feature variant; `None` for an empty map: the feature only shapes terrain and
+    /// leaves biomes alone.
+    biome_maps: Vec<Option<Arc<BiomeMap>>>,
     // cache features for each chuck, to avoid mulitple intersection lookups
     chunk_features: Mutex<HashMap<ChunkPos, Arc<[G::Feature]>>>,
 }
 
 impl<G: FeatureGenerator> FeatureStage<G> {
-    pub fn new(seed: u64, generator: G, chunk_size: u32, biomes: &BiomeRepository) -> Self {
+    pub fn new(
+        kind: FeatureKind,
+        seed: u64,
+        generator: G,
+        chunk_size: u32,
+        biomes: &BiomeRepository,
+    ) -> Self {
         assert!(chunk_size > 0, "chunk_size must be positive");
-        let biome_map = Arc::new(
-            generator
-                .biome_map()
-                .resolve(biomes)
-                .expect("feature biome map must reference valid biomes and ranges"),
-        );
+        let biome_maps = generator
+            .biome_maps()
+            .iter()
+            .map(|definition| {
+                let map = definition
+                    .resolve(biomes)
+                    .expect("feature biome map must reference valid biomes and ranges");
+                (!map.rules().is_empty()).then(|| Arc::new(map))
+            })
+            .collect();
         Self {
+            kind,
             layer: FeatureLayer::new(seed, generator),
             chunk_size,
-            biome_map,
+            biome_maps,
             chunk_features: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Records the territory; only a feature variant with biome rules replaces the biome map.
+    fn mark(&self, tile: &mut TileDraft, distance: f64, variant: usize) {
+        tile.feature = Some(FeatureMark {
+            kind: self.kind,
+            distance,
+        });
+        if let Some(Some(map)) = self.biome_maps.get(variant) {
+            tile.biome_map = Some(Arc::clone(map));
         }
     }
 
@@ -60,8 +86,8 @@ impl<G: FeatureGenerator> GenerationStage for FeatureStage<G> {
             y: pos.y.div_euclid(size),
         };
         for feature in self.features_for_chunk(chunk).iter() {
-            if feature.apply(pos, tile) {
-                tile.biome_map = Some(Arc::clone(&self.biome_map));
+            if let Some(distance) = feature.apply(pos, tile) {
+                self.mark(tile, distance, feature.variant());
             }
         }
     }
@@ -76,6 +102,10 @@ mod tests {
     struct BorderFeature;
 
     impl TerrainFeature for BorderFeature {
+        fn scaled(self, _scale: f64) -> Self {
+            self
+        }
+
         fn center(&self) -> (f64, f64) {
             (15.0, 8.0)
         }
@@ -84,10 +114,10 @@ mod tests {
             4.0
         }
 
-        fn apply(&self, pos: TilePos, tile: &mut TileDraft) -> bool {
+        fn apply(&self, pos: TilePos, tile: &mut TileDraft) -> Option<f64> {
             let distance = (pos.x as f64 - 15.0).hypot(pos.y as f64 - 8.0);
             tile.height += (self.influence_radius() - distance).max(0.0);
-            distance < self.influence_radius()
+            (distance < self.influence_radius()).then(|| distance / self.influence_radius())
         }
     }
 
@@ -103,8 +133,8 @@ mod tests {
             self.biome_map.clone()
         }
 
-        fn cell_size(&self) -> i64 {
-            16
+        fn cell_size(&self) -> f64 {
+            16.0
         }
 
         fn max_influence_radius(&self) -> f64 {
@@ -130,13 +160,14 @@ mod tests {
     fn chunk_queries_are_reused_and_include_features_beyond_the_first_tile() {
         let queries = Arc::new(AtomicUsize::new(0));
         let stage = FeatureStage::new(
+            FeatureKind::Crater,
             42,
             CountingGenerator {
                 queries: Arc::clone(&queries),
                 biome_map: Default::default(),
             },
             16,
-            &BiomeRepository::parse(),
+            &crate::old_preset::biomes(),
         );
         let sample = |x| {
             let mut tile = TileDraft::default();
@@ -162,10 +193,11 @@ mod tests {
 
     #[test]
     fn maps_apply_only_inside_features_and_last_map_gaps_use_default() {
-        let biomes = BiomeRepository::parse();
-        let default_map = Arc::new(BiomeMap::parse(&biomes));
+        let biomes = crate::old_preset::biomes();
+        let default_map = Arc::new(crate::old_preset::map(&biomes));
         let make_stage = |source: &str| {
             FeatureStage::new(
+                FeatureKind::Crater,
                 42,
                 CountingGenerator {
                     queries: Arc::new(AtomicUsize::new(0)),
@@ -190,11 +222,14 @@ mod tests {
         );
         assert!(Arc::ptr_eq(
             tile.biome_map.as_ref().unwrap(),
-            &first.biome_map
+            first.biome_maps[0].as_ref().unwrap()
         ));
         last.apply(TilePos { x: 0, y: 8 }, &mut tile);
         assert!(
-            Arc::ptr_eq(tile.biome_map.as_ref().unwrap(), &first.biome_map),
+            Arc::ptr_eq(
+                tile.biome_map.as_ref().unwrap(),
+                first.biome_maps[0].as_ref().unwrap()
+            ),
             "unaffected tiles retain the earlier map"
         );
         last.apply(pos, &mut tile);
@@ -204,12 +239,65 @@ mod tests {
         );
         assert!(Arc::ptr_eq(
             tile.biome_map.as_ref().unwrap(),
-            &last.biome_map
+            last.biome_maps[0].as_ref().unwrap()
         ));
         tile.height = 0.5;
         tile.temperature = 0.0;
         crate::BiomeStage::new(Arc::clone(&default_map)).apply(pos, &mut tile);
         assert_eq!(tile.biome, default_map.determine_biome(0.0, 0.5));
         assert_ne!(tile.biome, biomes.id("volcano"));
+    }
+
+    #[test]
+    fn features_without_biome_rules_mark_territory_but_keep_the_biome_map() {
+        let biomes = crate::old_preset::biomes();
+        let stage = |kind, source: &str| {
+            FeatureStage::new(
+                kind,
+                42,
+                CountingGenerator {
+                    queries: Arc::new(AtomicUsize::new(0)),
+                    biome_map: crate::BiomeMapDefinition::from_ron(source).unwrap(),
+                },
+                16,
+                &biomes,
+            )
+        };
+        let basin = stage(
+            FeatureKind::Basin,
+            r#"[(biome: "basin", height: (min: 0.0, max: 1.0), temperature: (min: -50.0, max: 40.0))]"#,
+        );
+        let crater = stage(FeatureKind::Crater, "[]");
+        let mut tile = TileDraft::default();
+        crater.apply(TilePos { x: 13, y: 8 }, &mut tile);
+        assert!(
+            tile.biome_map.is_none(),
+            "a crater alone leaves terrain biomes"
+        );
+        assert_eq!(
+            tile.feature.map(|mark| mark.kind),
+            Some(FeatureKind::Crater)
+        );
+        assert!((tile.feature.unwrap().distance - 0.5).abs() < 1e-12);
+
+        let mut tile = TileDraft::default();
+        basin.apply(TilePos { x: 13, y: 8 }, &mut tile);
+        crater.apply(TilePos { x: 13, y: 8 }, &mut tile);
+        assert!(
+            Arc::ptr_eq(
+                tile.biome_map.as_ref().unwrap(),
+                basin.biome_maps[0].as_ref().unwrap()
+            ),
+            "a crater inside a basin keeps the basin's biome rules"
+        );
+        assert_eq!(
+            tile.feature.unwrap().kind,
+            FeatureKind::Crater,
+            "the last feature marks the tile"
+        );
+
+        let mut outside = TileDraft::default();
+        crater.apply(TilePos { x: 0, y: 8 }, &mut outside);
+        assert!(outside.feature.is_none());
     }
 }

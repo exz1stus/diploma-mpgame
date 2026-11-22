@@ -11,7 +11,7 @@ mod sessions;
 mod transactions;
 mod views;
 
-use crate::networking::server::TickSet;
+use crate::net::server::TickSet;
 use bevy::prelude::*;
 use bevy_renet::renet::ClientId;
 use locks::LockKey;

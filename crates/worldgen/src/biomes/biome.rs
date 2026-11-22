@@ -33,7 +33,8 @@ pub struct BiomeRepository {
 
 impl BiomeRepository {
     pub fn parse() -> Self {
-        Self::from_ron(include_str!("biomes.ron")).expect("bundled biome repository must be valid")
+        Self::from_definitions(&crate::WorldConfig::bundled().biomes.biomes)
+            .expect("bundled biome repository must be valid")
     }
 
     pub fn new(biomes: Vec<Biome>) -> Result<Self, BiomeRepositoryError> {
@@ -56,6 +57,20 @@ impl BiomeRepository {
 
     pub fn from_ron(source: &str) -> Result<Self, BiomeRepositoryError> {
         Self::new(ron::from_str(source).map_err(BiomeRepositoryError::Parse)?)
+    }
+
+    /// Identity of every configured biome, in `biomes.ron` order.
+    pub fn from_definitions(
+        definitions: &[crate::BiomeDefinition],
+    ) -> Result<Self, BiomeRepositoryError> {
+        Self::new(
+            definitions
+                .iter()
+                .map(|definition| Biome {
+                    name: definition.name.clone(),
+                })
+                .collect(),
+        )
     }
 
     pub fn get(&self, id: BiomeId) -> Option<&Biome> {
