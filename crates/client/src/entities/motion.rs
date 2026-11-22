@@ -10,7 +10,6 @@ use shared::{
 };
 
 use super::spawn::Visual;
-use crate::combat::shoot::PredictedVisuals;
 use crate::net::prediction::{Prediction, PredictionSettings};
 use crate::net::{
     interpolation::{InterpolationSample, sample_at_tick},
@@ -95,8 +94,6 @@ pub fn move_entity_visuals(
         Without<Visual>,
     >,
     mut visuals: Query<(&ChildOf, &Visual, &mut Transform)>,
-
-    predicted_visuals: Res<PredictedVisuals>,
 ) {
     if !client_state.initiated {
         return;
@@ -126,12 +123,6 @@ pub fn move_entity_visuals(
 
         debug.display_tick = display_tick;
         debug.sample = None;
-
-        visual_transform.scale = if predicted_visuals.is_hidden(identity.id) {
-            Vec3::ZERO
-        } else {
-            Vec3::ONE
-        };
 
         let root_position = root_transform.translation.truncate();
 

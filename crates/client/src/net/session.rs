@@ -5,7 +5,6 @@ use std::{
 };
 
 use crate::{
-    combat::{ShootAimState, commands::PendingCommands, shoot::PredictedVisuals},
     config::ClientConfig,
     inventory::InventoryClient,
     net::{
@@ -270,10 +269,6 @@ impl Session {
         *world.resource_mut::<TimeSyncEstimates>() = TimeSyncEstimates::default();
         *world.resource_mut::<ReconciliationStatus>() = ReconciliationStatus::default();
         *world.resource_mut::<NetworkDiagnostics>() = NetworkDiagnostics::default();
-        *world.resource_mut::<ShootAimState>() = ShootAimState::default();
         *world.resource_mut::<InventoryClient>() = InventoryClient::default();
-
-        world.resource_mut::<PendingCommands>().clear();
-        world.resource_mut::<PredictedVisuals>().clear();
     }
 }

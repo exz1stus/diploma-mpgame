@@ -1,5 +1,4 @@
 mod assets;
-mod combat;
 mod config;
 mod entities;
 mod inventory;
@@ -16,7 +15,6 @@ use shared::app_init;
 use shared::role::NetworkRole;
 
 use crate::{
-    combat::CombatPlugin,
     config::ClientConfig,
     entities::EntityVisualsPlugin,
     inventory::InventoryPlugin,
@@ -51,7 +49,6 @@ fn main() {
         WorldPresentationPlugin,
         EntityVisualsPlugin,
         PlayerPlugin,
-        CombatPlugin,
         InventoryPlugin,
         UiPlugin,
     ));

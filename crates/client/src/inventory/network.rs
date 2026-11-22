@@ -1,5 +1,3 @@
-//! Submit one inventory operation at a time and retry with the same identity after a timeout.
-
 use super::state::{InventoryClient, Pending};
 use crate::{
     net::{

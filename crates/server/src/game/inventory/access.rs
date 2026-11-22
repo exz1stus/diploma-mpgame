@@ -1,5 +1,3 @@
-//! Ownership, actor state, distance, recipient, and container access checks.
-
 use super::{Id, InventoryService, Result, sessions::Session};
 use crate::net::client::ReplicationClients;
 use avian2d::physics_transform::Position;

@@ -1,5 +1,3 @@
-//! Drain the single ordered inventory request stream, then refresh authorized viewers.
-
 use super::{InventoryService, access::owned_player, sessions::Session};
 use crate::net::client::ReplicationClients;
 use bevy::prelude::*;

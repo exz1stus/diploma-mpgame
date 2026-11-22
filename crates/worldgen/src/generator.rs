@@ -9,9 +9,12 @@ use crate::{
     WorldGeneratorConfig, WorldManifest,
 };
 
+pub(crate) type CraterStage = crate::FeatureStage<crate::ScaledFeatures<crate::CraterGenerator>>;
+
 /// Samples terrain through ordered stages and serves complete chunks.
 /// Immutable and shareable between worker threads.
 pub struct WorldGenerator {
+    pub(crate) craters: Option<Arc<CraterStage>>,
     config: WorldGeneratorConfig,
     bounds: TileRect,
     stages: Vec<Box<dyn GenerationStage>>,
@@ -31,6 +34,7 @@ impl WorldGenerator {
             .tile_bounds()
             .expect("world dimensions must be valid");
         Self {
+            craters: None,
             config,
             bounds,
             stages,
@@ -123,6 +127,23 @@ impl WorldGenerator {
                 .collect(),
             planet: self.planet,
         }
+    }
+
+    /// Generated impact centers owned by this chunk, in generator tile coordinates.
+    pub fn crater_centers(&self, chunk: ChunkPos) -> Vec<TilePos> {
+        let Some(stage) = &self.craters else {
+            return Vec::new();
+        };
+        let size = i64::from(self.config.chunk_size);
+        stage
+            .features_for_chunk(chunk)
+            .iter()
+            .map(|c| TilePos {
+                x: c.x.floor() as i64,
+                y: c.y.floor() as i64,
+            })
+            .filter(|p| p.x.div_euclid(size) == chunk.x && p.y.div_euclid(size) == chunk.y)
+            .collect()
     }
 
     pub fn biomes(&self) -> &BiomeRepository {

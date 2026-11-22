@@ -193,7 +193,7 @@ fn options_screen(ui: &mut egui::Ui, menu: &mut MenuState, windows: &mut Primary
     }
     ui.checkbox(&mut menu.show_diagnostics, "Network diagnostics");
     ui.add_space(16.0);
-    ui.label("WASD: move · Mouse: aim and shoot · Escape: menu");
+    ui.label("WASD: move · I: inventory · E: interact · Escape: menu");
     ui.add_space(16.0);
 
     if action(ui, "BACK") {

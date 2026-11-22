@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use crate::generator::CraterStage;
 use crate::objects::feature_rules;
 use crate::{
     BasinGenerator, BiomeMap, BiomeRepository, BiomeStage, ClampHeightStage, ConfigError,
@@ -73,11 +74,20 @@ impl WorldConfig {
         let object_placer =
             ObjectPlacer::from_config(&self.biomes, &self.objects, &self.feature_spawns(), &biomes)
                 .map_err(|error| ConfigError::invalid(objects_error_file(&error), error))?;
-        let stages = self.stages(sources, &biomes, biome_map);
-        Ok(
-            WorldGenerator::new(dimensions, stages, biomes, object_placer)
-                .with_planet(self.world.climate.planet),
-        )
+        let craters = (self.craters.density > 0.0).then(|| {
+            Arc::new(CraterStage::new(
+                FeatureKind::Crater,
+                self.world.seed ^ CRATER_SEED,
+                ScaledFeatures::new(self.craters.clone(), self.world.terrain_scale),
+                self.world.chunk_size,
+                &biomes,
+            ))
+        });
+        let stages = self.stages(sources, &biomes, biome_map, craters.clone());
+        let mut generator = WorldGenerator::new(dimensions, stages, biomes, object_placer)
+            .with_planet(self.world.climate.planet);
+        generator.craters = craters;
+        Ok(generator)
     }
 
     /// Elevation, enabled features in order (basins, craters, volcanoes), clamp,
@@ -87,6 +97,7 @@ impl WorldConfig {
         sources: TerrainSources,
         biomes: &BiomeRepository,
         biome_map: BiomeMap,
+        craters: Option<Arc<CraterStage>>,
     ) -> Vec<Box<dyn GenerationStage>> {
         let seed = self.world.seed;
         let chunk_size = self.world.chunk_size;
@@ -102,15 +113,8 @@ impl WorldConfig {
                 biomes,
             ));
         }
-        if self.craters.density > 0.0 {
-            stages.push(feature_stage(
-                FeatureKind::Crater,
-                seed ^ CRATER_SEED,
-                self.craters.clone(),
-                self.world.terrain_scale,
-                chunk_size,
-                biomes,
-            ));
+        if let Some(craters) = craters {
+            stages.push(Box::new(craters));
         }
         if self.volcanoes.probability > 0.0 {
             stages.push(feature_stage(

@@ -1,5 +1,3 @@
-//! Publish complete inventory views only to their owner and authorized chest viewers.
-
 use super::{
     InventoryService,
     access::{lookup, position, public_inventory},
@@ -116,6 +114,14 @@ impl InventoryService {
         InventoryState {
             player: Some(player_id),
             open_container: session.open,
+            expedition: world
+                .get_resource::<super::expedition::Expedition>()
+                .and_then(|mission| {
+                    Some(Box::new(mission.view(
+                        &self.config.expedition,
+                        world.get::<shared::inventory::survival::LifeSupport>(player)?,
+                    )))
+                }),
             health: world.get::<Health>(player).map(|health| health.0),
             views,
         }

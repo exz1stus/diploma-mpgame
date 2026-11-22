@@ -5,6 +5,7 @@ mod config;
 pub mod definitions;
 mod fixtures;
 mod protocol;
+pub mod survival;
 
 pub use components::{Access, Chest, GroundItem, Inventory, InventorySlot, ItemStack};
 pub use config::InventoryConfig;

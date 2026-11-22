@@ -1,11 +1,9 @@
 use std::marker::PhantomData;
 
-use bevy::{app::App, math::Vec2, platform::collections::HashMap};
+use bevy::{app::App, platform::collections::HashMap};
 use bevy_ecs::{change_detection::Mut, message::Message, resource::Resource, system::Commands};
 use bevy_renet::renet::ClientId;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-
-use crate::snapshots::NetworkEntityId;
 
 pub type CommandId = u16;
 pub const MAX_COMMAND_BYTES: usize = 1024;
@@ -161,39 +159,76 @@ impl NetworkCommandAppExt for App {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Shoot {
-    pub direction: Vec2,
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::inventory::{InventoryAction, InventoryCommand};
+    use bevy_ecs::{message::Messages, world::World};
 
-macro_rules! assign_command_ids {
-    ($first:ident $(, $rest:ident)* $(,)?) => {
-        #[repr(u16)]
-        enum CommandKind {
-            $first = 1,
-            $($rest,)*
+    fn context() -> CommandContext {
+        CommandContext {
+            client_id: 42,
+            sequence: 7,
+            received_tick: 10,
         }
+    }
 
-        impl NetworkCommand for $first {
-            const NETWORK_ID: CommandId = CommandKind::$first as CommandId;
-        }
+    #[test]
+    fn inventory_commands_reach_the_server_request_queue() {
+        let mut app = App::new();
+        app.add_command::<InventoryCommand>();
+        let command = InventoryCommand {
+            epoch: 5,
+            counter: 3,
+            action: InventoryAction::Refresh,
+        };
+        let envelope = CommandEnvelope::encode(&command).unwrap();
+        assert_eq!(envelope.id, 2);
+        app.world_mut()
+            .resource_scope(|world: &mut World, registry: Mut<CommandsRegistry>| {
+                registry
+                    .enqueue(&mut world.commands(), context(), &envelope)
+                    .unwrap();
+            });
+        app.world_mut().flush();
+        let requests: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Messages<CommandRequest<InventoryCommand>>>()
+            .drain()
+            .collect();
+        assert_eq!(requests.len(), 1);
+        let request = &requests[0];
+        assert_eq!(request.context.client_id, 42);
+        assert_eq!(request.command.epoch, 5);
+        assert_eq!(request.command.counter, 3);
+        assert!(matches!(request.command.action, InventoryAction::Refresh));
+    }
 
-        $(
-            impl NetworkCommand for $rest {
-                const NETWORK_ID: CommandId = CommandKind::$rest as CommandId;
-            }
-        )*
-    };
-}
-
-assign_command_ids!(Shoot);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum CommandOutcome {
-    Shoot { hit: Option<NetworkEntityId> },
-}
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CommandResult {
-    pub id: CommandId,
-    pub outcome: CommandOutcome,
+    #[test]
+    fn retired_command_id_is_rejected_without_queueing_inventory_work() {
+        let mut app = App::new();
+        app.add_command::<InventoryCommand>();
+        // Use valid inventory bytes with the retired ID to check dispatch, not deserialization.
+        let mut envelope = CommandEnvelope::encode(&InventoryCommand {
+            epoch: 5,
+            counter: 3,
+            action: InventoryAction::Refresh,
+        })
+        .unwrap();
+        envelope.id = 1;
+        let result =
+            app.world_mut()
+                .resource_scope(|world: &mut World, registry: Mut<CommandsRegistry>| {
+                    registry.enqueue(&mut world.commands(), context(), &envelope)
+                });
+        assert_eq!(result, Err(CommandError::UnknownId));
+        app.world_mut().flush();
+        assert_eq!(
+            app.world_mut()
+                .resource_mut::<Messages<CommandRequest<InventoryCommand>>>()
+                .drain()
+                .count(),
+            0
+        );
+    }
 }

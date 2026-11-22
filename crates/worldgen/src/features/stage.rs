@@ -57,7 +57,7 @@ impl<G: FeatureGenerator> FeatureStage<G> {
         }
     }
 
-    fn features_for_chunk(&self, chunk: ChunkPos) -> Arc<[G::Feature]> {
+    pub(crate) fn features_for_chunk(&self, chunk: ChunkPos) -> Arc<[G::Feature]> {
         let cache = self
             .chunk_features
             .lock()

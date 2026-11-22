@@ -109,6 +109,7 @@ fn controls(
     }
 
     if key(&config.ui.bindings.drop_selected).is_some_and(|key| keys.just_pressed(key))
+        && inventory.visible
         && let Some((source, quantity)) = inventory.selected_quantity()
         && Some(source.inventory) == inventory.state.player
     {
@@ -169,6 +170,7 @@ fn controls(
         }
 
         (Some(chest), _) => {
+            inventory.mission_tab = false;
             inventory.visible = true;
             inventory.enqueue(InventoryAction::OpenContainer { container: chest.1 });
         }
@@ -181,6 +183,18 @@ fn controls(
             });
         }
 
-        _ => {}
+        _ => {
+            if let Some(view) = &inventory.state.expedition {
+                if let Some(site) = super::expedition::near_site(view, origin) {
+                    let id = site.id;
+                    inventory.enqueue(InventoryAction::Expedition(
+                        shared::inventory::survival::ExpeditionAction::WorkSite(id),
+                    ));
+                } else if origin.length() <= shared::inventory::survival::SHIP_RADIUS {
+                    inventory.visible = true;
+                    inventory.mission_tab = true;
+                }
+            }
+        }
     }
 }

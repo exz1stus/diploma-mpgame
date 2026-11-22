@@ -1,7 +1,7 @@
-//! Client inventory plugin. Registers state and the input, network, UI, and world visuals.
-
+mod expedition;
 mod input;
 mod network;
+mod presentation;
 mod rendering;
 mod slots;
 mod state;
