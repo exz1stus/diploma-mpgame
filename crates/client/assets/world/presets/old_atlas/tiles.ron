@@ -1,0 +1,180 @@
+// Ground of the previous sprite sheet (presets/old_atlas/atlas.ron) with its height ladders,
+// kept to compare against world/tiles.ron. Same format and settings otherwise.
+//
+// A biome is drawn with a texture. By default the texture name is the biome name; list a
+// biome under `textures` to rename it or share one texture between several biomes.
+//
+// regions: texture name -> atlas tile region (atlas.ron `tiles`) its art comes from; unlisted
+// textures use the region of their own name. Textures keep their own layer and placeholder
+// even when they share a region. Until a texture's region exists, the tile is drawn flat
+// with its placeholder color (keyed by texture name).
+//
+// recolor: true makes tile art neutral: each pixel becomes its texture's placeholder color
+// scaled by the pixel's brightness relative to the tile's average, so the art keeps its light
+// and shade but not its hue, and tints alone color the ground. Use false for art that is
+// already neutral (grayscale) or should keep its own colors.
+//
+// A biome with no entry here and no atlas region has no tiles of its own: it is drawn
+// with the tiles of the terrain biome underneath (the biome the terrain map gives the
+// tile). Feature biomes rely on this to override only objects.
+//
+// layers: texture name -> overlay layer (unlisted: 0), for height. Where textures on different
+// layers meet, the higher one overlays the lower one with a crisp, noisy edge and shades the
+// lower ground next to it. Give height bands increasing layers. Within a layer, biomes meet
+// on crisp, noisy edges too, without shading.
+//
+// tints: biome name -> color the ground is multiplied by (unlisted: white), for temperature.
+// Keep textures neutral and let tints color them; close tints make biomes read as terraces.
+//
+// blend: pixels_per_tile (texture pixels per tile; textures repeat in world space),
+// overlay_reach (how far a higher layer reaches over a lower neighbor, 0-0.5 tiles),
+// edge_noise (irregularity of height and biome edges, 0-1), noise_scale (its size in tiles),
+// ao_strength (shade at the foot of higher layers, 0-1),
+// ao_width (its width in pixels), ao_south / ao_north (shade scale where the higher ground
+// lies north / south of the lower ground, 0-4), tint_radius (radius in tiles over which tints
+// are averaged within a layer; 0 keeps each biome one flat color).
+(
+    textures: {},
+    // The previous height ladders: lower bands get rockier regolith, frost is ice, snow is snow.
+    regions: {
+        "plain_floor": "regolith_lowland",
+        "plain_low": "regolith_rocky",
+        "plain_mid": "regolith_cracked",
+        "plain_upland": "regolith_highland",
+        "plain_ridge": "regolith_highland",
+        "desert_floor": "regolith_rocky",
+        "desert_low": "regolith_cracked",
+        "desert_mid": "regolith_highland",
+        "desert_upland": "regolith_highland",
+        "desert_ridge": "regolith_highland",
+        "sulfur_floor": "regolith_cracked",
+        "sulfur_low": "regolith_cracked",
+        "sulfur_mid": "regolith_highland",
+        "sulfur_upland": "regolith_highland",
+        "sulfur_ridge": "regolith_highland",
+        "basalt_floor": "basalt",
+        "basalt_low": "basalt",
+        "basalt_mid": "basalt",
+        "basalt_upland": "basalt",
+        "basalt_ridge": "basalt",
+        "snow_floor": "snow",
+        "snow_low": "snow",
+        "snow_mid": "snow",
+        "snow_upland": "snow",
+        "snow_ridge": "snow",
+        "frost_floor": "ice",
+        "frost_low": "ice",
+        "frost_mid": "ice",
+        "frost_upland": "ice",
+        "frost_ridge": "ice",
+    },
+    recolor: true,
+    default_placeholder: "#FF00FF",
+    placeholder_colors: {
+        "basalt_floor": "#EEEEEE",
+        "basalt_low": "#EEEEEE",
+        "basalt_mid": "#EEEEEE",
+        "basalt_ridge": "#EEEEEE",
+        "basalt_upland": "#EEEEEE",
+        "desert_floor": "#EEEEEE",
+        "desert_low": "#EEEEEE",
+        "desert_mid": "#EEEEEE",
+        "desert_ridge": "#EEEEEE",
+        "desert_upland": "#EEEEEE",
+        "frost_floor": "#EEEEEE",
+        "frost_low": "#EEEEEE",
+        "frost_mid": "#EEEEEE",
+        "frost_ridge": "#EEEEEE",
+        "frost_upland": "#EEEEEE",
+        "plain_floor": "#EEEEEE",
+        "plain_low": "#EEEEEE",
+        "plain_mid": "#EEEEEE",
+        "plain_ridge": "#EEEEEE",
+        "plain_upland": "#EEEEEE",
+        "snow_floor": "#EEEEEE",
+        "snow_low": "#EEEEEE",
+        "snow_mid": "#EEEEEE",
+        "snow_ridge": "#EEEEEE",
+        "snow_upland": "#EEEEEE",
+        "sulfur_floor": "#EEEEEE",
+        "sulfur_low": "#EEEEEE",
+        "sulfur_mid": "#EEEEEE",
+        "sulfur_ridge": "#EEEEEE",
+        "sulfur_upland": "#EEEEEE",
+    },
+    layers: {
+        "basalt_floor": 1,
+        "basalt_low": 2,
+        "basalt_mid": 3,
+        "basalt_ridge": 5,
+        "basalt_upland": 4,
+        "desert_floor": 1,
+        "desert_low": 2,
+        "desert_mid": 3,
+        "desert_ridge": 5,
+        "desert_upland": 4,
+        "frost_floor": 1,
+        "frost_low": 2,
+        "frost_mid": 3,
+        "frost_ridge": 5,
+        "frost_upland": 4,
+        "plain_floor": 1,
+        "plain_low": 2,
+        "plain_mid": 3,
+        "plain_ridge": 5,
+        "plain_upland": 4,
+        "snow_floor": 1,
+        "snow_low": 2,
+        "snow_mid": 3,
+        "snow_ridge": 5,
+        "snow_upland": 4,
+        "sulfur_floor": 1,
+        "sulfur_low": 2,
+        "sulfur_mid": 3,
+        "sulfur_ridge": 5,
+        "sulfur_upland": 4,
+    },
+    tints: {
+        "basalt_floor": "#24262A",
+        "basalt_low": "#2F3135",
+        "basalt_mid": "#3A3C40",
+        "basalt_ridge": "#535457",
+        "basalt_upland": "#46484B",
+        "desert_floor": "#6F5E48",
+        "desert_low": "#85715A",
+        "desert_mid": "#9B846A",
+        "desert_ridge": "#C1A98B",
+        "desert_upland": "#AF977A",
+        "frost_floor": "#7F8D97",
+        "frost_low": "#93A0A9",
+        "frost_mid": "#A7B2B9",
+        "frost_ridge": "#CDD4D8",
+        "frost_upland": "#BAC3C8",
+        "plain_floor": "#57534D",
+        "plain_low": "#6B665E",
+        "plain_mid": "#7F7970",
+        "plain_ridge": "#A79F93",
+        "plain_upland": "#938C81",
+        "snow_floor": "#C9D3DB",
+        "snow_low": "#D8E0E6",
+        "snow_mid": "#E4EAEE",
+        "snow_ridge": "#F8FAFB",
+        "snow_upland": "#EEF2F5",
+        "sulfur_floor": "#6E6230",
+        "sulfur_low": "#8A7B3A",
+        "sulfur_mid": "#A49244",
+        "sulfur_ridge": "#CDBC62",
+        "sulfur_upland": "#BBA850",
+    },
+    blend: (
+        pixels_per_tile: 16,
+        overlay_reach: 0.15,
+        edge_noise: 0.35,
+        noise_scale: 0.5,
+        ao_strength: 0.35,
+        ao_width: 3,
+        ao_south: 1.5,
+        ao_north: 0.4,
+        tint_radius: 0,
+    ),
+)

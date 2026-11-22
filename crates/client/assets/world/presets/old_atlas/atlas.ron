@@ -1,0 +1,76 @@
+// The previous sprite sheet (textures/atlas_old.png) and its regions, kept to compare against
+// the current atlas. Same format as world/atlas.ron.
+(
+    image: "textures/atlas_old.png",
+    tiles: {
+        "regolith_highland": (288, 384, 32, 32),
+        "regolith_cracked": (320, 384, 32, 32),
+        "regolith_rocky": (352, 384, 32, 32),
+        "regolith_lowland": (384, 384, 32, 32),
+        "basalt": (384, 256, 32, 32),
+        "ice": (416, 128, 32, 32),
+        "snow": (384, 128, 32, 32),
+    },
+    sprites: {
+        // The densest 16 px quadrant of each pebble cell: one tile at 16 px per tile.
+        "pebbles": [
+            (rect: (16, 384, 16, 16)),
+            (rect: (48, 384, 16, 16)),
+            (rect: (80, 384, 16, 16)),
+            (rect: (112, 384, 16, 16)),
+            (rect: (144, 400, 16, 16)),
+            (rect: (160, 384, 16, 16)),
+            (rect: (192, 384, 16, 16)),
+            (rect: (224, 384, 16, 16)),
+        ],
+        "rock": [
+            (rect: (8, 424, 15, 16)),
+            (rect: (40, 428, 16, 10)),
+            (rect: (65, 429, 21, 14)),
+            (rect: (103, 429, 18, 15)),
+            (rect: (133, 425, 23, 18)),
+            (rect: (165, 425, 23, 17)),
+            (rect: (196, 420, 19, 20)),
+            (rect: (228, 425, 23, 18)),
+            (rect: (165, 455, 18, 17)),
+            (rect: (197, 449, 24, 27)),
+            (rect: (228, 451, 19, 25)),
+        ],
+        "spikes": [
+            (rect: (2, 447, 27, 32)),
+            (rect: (36, 447, 22, 32)),
+            (rect: (65, 447, 28, 32)),
+            (rect: (100, 447, 23, 32)),
+            (rect: (130, 448, 22, 31)),
+        ],
+        "boulder": [
+            (rect: (3, 486, 26, 24)),
+            (rect: (32, 482, 28, 27)),
+            (rect: (66, 484, 25, 23)),
+            (rect: (101, 483, 22, 27)),
+            (rect: (135, 486, 16, 19)),
+            (rect: (168, 482, 21, 26)),
+            (rect: (195, 486, 22, 19)),
+            (rect: (230, 486, 21, 21)),
+        ],
+        "stalagmite_small": [
+            (rect: (14, 277, 6, 9)),
+            (rect: (24, 270, 6, 16)),
+            (rect: (36, 266, 7, 20)),
+            (rect: (49, 264, 9, 23)),
+            (rect: (67, 262, 6, 25)),
+            (rect: (82, 261, 9, 26)),
+        ],
+        "stalagmite_large": [
+            (rect: (134, 259, 16, 27)),
+            (rect: (164, 256, 21, 32)),
+            (rect: (197, 241, 19, 44)),
+            (rect: (258, 234, 26, 53)),
+        ],
+        "stalagmite_tall": [
+            (rect: (101, 242, 24, 45)),
+            (rect: (197, 241, 19, 44)),
+            (rect: (228, 241, 21, 45)),
+        ],
+    },
+)

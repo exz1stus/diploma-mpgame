@@ -1,0 +1,47 @@
+// Biome definitions. List order is the BiomeId: append new biomes to keep saved worlds valid.
+//
+// Five climate kinds (snow, frost, plain, desert, sulfur) and basalt (impact basins), each with
+// five height variants from crater floor to ridge. Appearance lives in the client's tiles.ron.
+// The previous biome set is the `old` preset (presets/old/).
+//
+// Each biome may spawn objects (object kinds and shared sets live in objects.ron):
+//   object_sets: set names from objects.ron; omitted means `defaults.object_sets`, [] means none.
+//   objects:     spawns specific to this biome.
+// A spawn is (object, density, [height], [temperature], [max_height_difference]);
+// density is the proposal probability per anchor tile, before footprint/overlap rejection.
+// Where a biome appears is decided by biome_map.ron (terrain) and features/*.ron (feature territories).
+(
+    defaults: (object_sets: ["common_rocks", "pebbles"]),
+    biomes: [
+        (name: "snow_floor", object_sets: ["common_rocks", "polar"]),
+        (name: "snow_low", object_sets: ["common_rocks", "polar"]),
+        (name: "snow_mid", object_sets: ["common_rocks", "polar"]),
+        (name: "snow_upland", object_sets: ["common_rocks", "polar"]),
+        (name: "snow_ridge", object_sets: ["common_rocks", "polar"]),
+        (name: "frost_floor", object_sets: ["common_rocks", "polar"]),
+        (name: "frost_low", object_sets: ["common_rocks", "polar"]),
+        (name: "frost_mid", object_sets: ["common_rocks", "polar"]),
+        (name: "frost_upland", object_sets: ["common_rocks", "polar"]),
+        (name: "frost_ridge", object_sets: ["common_rocks", "polar"]),
+        (name: "plain_floor"),
+        (name: "plain_low"),
+        (name: "plain_mid"),
+        (name: "plain_upland"),
+        (name: "plain_ridge"),
+        (name: "desert_floor"),
+        (name: "desert_low"),
+        (name: "desert_mid"),
+        (name: "desert_upland", object_sets: ["common_rocks", "pebbles"]),
+        (name: "desert_ridge", object_sets: ["common_rocks", "pebbles"]),
+        (name: "sulfur_floor", object_sets: ["sulfur_rocks", "pebbles"]),
+        (name: "sulfur_low", object_sets: ["sulfur_rocks", "pebbles"]),
+        (name: "sulfur_mid", object_sets: ["sulfur_rocks", "pebbles"]),
+        (name: "sulfur_upland", object_sets: ["sulfur_rocks", "pebbles"]),
+        (name: "sulfur_ridge", object_sets: ["sulfur_rocks", "pebbles"]),
+        (name: "basalt_floor", object_sets: ["common_rocks", "pebbles"]),
+        (name: "basalt_low", object_sets: ["common_rocks", "pebbles"]),
+        (name: "basalt_mid", object_sets: ["common_rocks", "pebbles"]),
+        (name: "basalt_upland", object_sets: ["common_rocks", "pebbles"]),
+        (name: "basalt_ridge", object_sets: ["common_rocks", "pebbles"]),
+    ],
+)

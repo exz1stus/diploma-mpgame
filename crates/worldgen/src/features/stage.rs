@@ -1,0 +1,303 @@
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
+
+use super::feature::{FeatureGenerator, FeatureLayer, TerrainFeature};
+use super::{FeatureKind, FeatureMark};
+use crate::{BiomeMap, BiomeRepository, ChunkPos, GenerationStage, TileDraft, TilePos};
+
+pub struct FeatureStage<G: FeatureGenerator> {
+    kind: FeatureKind,
+    layer: FeatureLayer<G>,
+    chunk_size: u32,
+    /// Per feature variant; `None` for an empty map: the feature only shapes terrain and
+    /// leaves biomes alone.
+    biome_maps: Vec<Option<Arc<BiomeMap>>>,
+    // cache features for each chuck, to avoid mulitple intersection lookups
+    chunk_features: Mutex<HashMap<ChunkPos, Arc<[G::Feature]>>>,
+}
+
+impl<G: FeatureGenerator> FeatureStage<G> {
+    pub fn new(
+        kind: FeatureKind,
+        seed: u64,
+        generator: G,
+        chunk_size: u32,
+        biomes: &BiomeRepository,
+    ) -> Self {
+        assert!(chunk_size > 0, "chunk_size must be positive");
+        let biome_maps = generator
+            .biome_maps()
+            .iter()
+            .map(|definition| {
+                let map = definition
+                    .resolve(biomes)
+                    .expect("feature biome map must reference valid biomes and ranges");
+                (!map.rules().is_empty()).then(|| Arc::new(map))
+            })
+            .collect();
+        Self {
+            kind,
+            layer: FeatureLayer::new(seed, generator),
+            chunk_size,
+            biome_maps,
+            chunk_features: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Records the territory; only a feature variant with biome rules replaces the biome map.
+    fn mark(&self, tile: &mut TileDraft, distance: f64, variant: usize) {
+        tile.feature = Some(FeatureMark {
+            kind: self.kind,
+            distance,
+        });
+        if let Some(Some(map)) = self.biome_maps.get(variant) {
+            tile.biome_map = Some(Arc::clone(map));
+        }
+    }
+
+    fn features_for_chunk(&self, chunk: ChunkPos) -> Arc<[G::Feature]> {
+        let cache = self
+            .chunk_features
+            .lock()
+            .expect("chunk feature cache poisoned");
+        if let Some(features) = cache.get(&chunk) {
+            return Arc::clone(features);
+        }
+        drop(cache);
+        let features: Arc<[G::Feature]> = self
+            .layer
+            .features_in(chunk.world_bounds(self.chunk_size))
+            .into();
+        let mut cache = self
+            .chunk_features
+            .lock()
+            .expect("chunk feature cache poisoned");
+        Arc::clone(cache.entry(chunk).or_insert(features))
+    }
+}
+
+impl<G: FeatureGenerator> GenerationStage for FeatureStage<G> {
+    fn apply(&self, pos: TilePos, tile: &mut TileDraft) {
+        let size = i64::from(self.chunk_size);
+        let chunk = ChunkPos {
+            x: pos.x.div_euclid(size),
+            y: pos.y.div_euclid(size),
+        };
+        for feature in self.features_for_chunk(chunk).iter() {
+            if let Some(distance) = feature.apply(pos, tile) {
+                self.mark(tile, distance, feature.variant());
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[derive(Clone)]
+    struct BorderFeature;
+
+    impl TerrainFeature for BorderFeature {
+        fn scaled(self, _scale: f64) -> Self {
+            self
+        }
+
+        fn center(&self) -> (f64, f64) {
+            (15.0, 8.0)
+        }
+
+        fn influence_radius(&self) -> f64 {
+            4.0
+        }
+
+        fn apply(&self, pos: TilePos, tile: &mut TileDraft) -> Option<f64> {
+            let distance = (pos.x as f64 - 15.0).hypot(pos.y as f64 - 8.0);
+            tile.height += (self.influence_radius() - distance).max(0.0);
+            (distance < self.influence_radius()).then(|| distance / self.influence_radius())
+        }
+    }
+
+    struct CountingGenerator {
+        queries: Arc<AtomicUsize>,
+        biome_map: crate::BiomeMapDefinition,
+    }
+
+    impl FeatureGenerator for CountingGenerator {
+        type Feature = BorderFeature;
+
+        fn biome_map(&self) -> crate::BiomeMapDefinition {
+            self.biome_map.clone()
+        }
+
+        fn cell_size(&self) -> f64 {
+            16.0
+        }
+
+        fn max_influence_radius(&self) -> f64 {
+            self.queries.fetch_add(1, Ordering::Relaxed);
+            4.0
+        }
+
+        fn generate_cell(
+            &self,
+            cell_x: i64,
+            cell_y: i64,
+            _rng: &mut impl rand::Rng,
+        ) -> Vec<Self::Feature> {
+            if cell_x == 0 && cell_y == 0 {
+                vec![BorderFeature]
+            } else {
+                Vec::new()
+            }
+        }
+    }
+
+    #[test]
+    fn chunk_queries_are_reused_and_include_features_beyond_the_first_tile() {
+        let queries = Arc::new(AtomicUsize::new(0));
+        let stage = FeatureStage::new(
+            FeatureKind::Crater,
+            42,
+            CountingGenerator {
+                queries: Arc::clone(&queries),
+                biome_map: Default::default(),
+            },
+            16,
+            &crate::old_preset::biomes(),
+        );
+        let sample = |x| {
+            let mut tile = TileDraft::default();
+            stage.apply(TilePos { x, y: 8 }, &mut tile);
+            tile.height
+        };
+
+        // The first tile is far from the feature, but its chunk intersects it.
+        assert_eq!(sample(0), 0.0);
+        assert_eq!(sample(15), 4.0);
+        assert_eq!(queries.load(Ordering::Relaxed), 1);
+
+        // A feature owned by the neighboring cell also reaches this chunk.
+        assert_eq!(sample(16), 3.0);
+        assert_eq!(sample(17), 2.0);
+        assert_eq!(queries.load(Ordering::Relaxed), 2);
+
+        // Negative coordinates use Euclidean division and empty lists are cached.
+        assert_eq!(sample(-1), 0.0);
+        assert_eq!(sample(-16), 0.0);
+        assert_eq!(queries.load(Ordering::Relaxed), 3);
+    }
+
+    #[test]
+    fn maps_apply_only_inside_features_and_last_map_gaps_use_default() {
+        let biomes = crate::old_preset::biomes();
+        let default_map = Arc::new(crate::old_preset::map(&biomes));
+        let make_stage = |source: &str| {
+            FeatureStage::new(
+                FeatureKind::Crater,
+                42,
+                CountingGenerator {
+                    queries: Arc::new(AtomicUsize::new(0)),
+                    biome_map: crate::BiomeMapDefinition::from_ron(source).unwrap(),
+                },
+                16,
+                &biomes,
+            )
+        };
+        let first = make_stage(
+            r#"[(biome: "volcano", height: (min: 0.0, max: 1.0), temperature: (min: -50.0, max: 40.0))]"#,
+        );
+        let last = make_stage(
+            r#"[(biome: "crater", height: (min: 0.0, max: 1.0), temperature: (min: 20.0, max: 30.0))]"#,
+        );
+        let pos = TilePos { x: 15, y: 8 };
+        let mut tile = TileDraft::default();
+        first.apply(pos, &mut tile);
+        assert!(
+            tile.biome.is_none(),
+            "features must not select final biomes"
+        );
+        assert!(Arc::ptr_eq(
+            tile.biome_map.as_ref().unwrap(),
+            first.biome_maps[0].as_ref().unwrap()
+        ));
+        last.apply(TilePos { x: 0, y: 8 }, &mut tile);
+        assert!(
+            Arc::ptr_eq(
+                tile.biome_map.as_ref().unwrap(),
+                first.biome_maps[0].as_ref().unwrap()
+            ),
+            "unaffected tiles retain the earlier map"
+        );
+        last.apply(pos, &mut tile);
+        assert_eq!(
+            tile.height, 8.0,
+            "territory is marked even when the visible height is already clipped"
+        );
+        assert!(Arc::ptr_eq(
+            tile.biome_map.as_ref().unwrap(),
+            last.biome_maps[0].as_ref().unwrap()
+        ));
+        tile.height = 0.5;
+        tile.temperature = 0.0;
+        crate::BiomeStage::new(Arc::clone(&default_map)).apply(pos, &mut tile);
+        assert_eq!(tile.biome, default_map.determine_biome(0.0, 0.5));
+        assert_ne!(tile.biome, biomes.id("volcano"));
+    }
+
+    #[test]
+    fn features_without_biome_rules_mark_territory_but_keep_the_biome_map() {
+        let biomes = crate::old_preset::biomes();
+        let stage = |kind, source: &str| {
+            FeatureStage::new(
+                kind,
+                42,
+                CountingGenerator {
+                    queries: Arc::new(AtomicUsize::new(0)),
+                    biome_map: crate::BiomeMapDefinition::from_ron(source).unwrap(),
+                },
+                16,
+                &biomes,
+            )
+        };
+        let basin = stage(
+            FeatureKind::Basin,
+            r#"[(biome: "basin", height: (min: 0.0, max: 1.0), temperature: (min: -50.0, max: 40.0))]"#,
+        );
+        let crater = stage(FeatureKind::Crater, "[]");
+        let mut tile = TileDraft::default();
+        crater.apply(TilePos { x: 13, y: 8 }, &mut tile);
+        assert!(
+            tile.biome_map.is_none(),
+            "a crater alone leaves terrain biomes"
+        );
+        assert_eq!(
+            tile.feature.map(|mark| mark.kind),
+            Some(FeatureKind::Crater)
+        );
+        assert!((tile.feature.unwrap().distance - 0.5).abs() < 1e-12);
+
+        let mut tile = TileDraft::default();
+        basin.apply(TilePos { x: 13, y: 8 }, &mut tile);
+        crater.apply(TilePos { x: 13, y: 8 }, &mut tile);
+        assert!(
+            Arc::ptr_eq(
+                tile.biome_map.as_ref().unwrap(),
+                basin.biome_maps[0].as_ref().unwrap()
+            ),
+            "a crater inside a basin keeps the basin's biome rules"
+        );
+        assert_eq!(
+            tile.feature.unwrap().kind,
+            FeatureKind::Crater,
+            "the last feature marks the tile"
+        );
+
+        let mut outside = TileDraft::default();
+        crater.apply(TilePos { x: 0, y: 8 }, &mut outside);
+        assert!(outside.feature.is_none());
+    }
+}

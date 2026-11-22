@@ -1,50 +1,59 @@
-mod client;
+mod assets;
 mod config;
-mod diagnostics;
-mod interpolation;
-mod netgraph;
-mod network;
-mod rendering;
-mod replication;
-mod state;
-mod replication_handlers;
+mod entities;
+mod inventory;
+mod net;
+mod player;
+mod render_layers;
+mod schedule;
+mod ui;
+mod world;
 
-use bevy::{
-    DefaultPlugins,
-    prelude::{Camera2d, Commands, Startup},
-};
-use bevy_egui::{EguiPlugin, EguiPrimaryContextPass};
-use bevy_renet::{RenetClientPlugin, netcode::NetcodeClientPlugin};
-use client::GameClient;
+use bevy::{DefaultPlugins, prelude::*, window::WindowPlugin};
+use bevy_egui::EguiPlugin;
 use shared::app_init;
 use shared::role::NetworkRole;
 
-use crate::{config::ClientConfig, netgraph::network_diagnostics_ui};
+use crate::{
+    config::ClientConfig,
+    entities::EntityVisualsPlugin,
+    inventory::InventoryPlugin,
+    net::NetPlugin,
+    player::PlayerPlugin,
+    schedule::SchedulePlugin,
+    ui::UiPlugin,
+    world::{ClockPlugin, WorldPresentationPlugin},
+};
 
 fn main() {
-    let mut app = app_init(NetworkRole::Client);
-
-    app.add_plugins((
-        DefaultPlugins,
-        EguiPlugin::default(),
-        RenetClientPlugin,
-        NetcodeClientPlugin,
-    ));
-
-    app.add_systems(Startup, spawn_camera);
-    app.add_systems(EguiPrimaryContextPass, network_diagnostics_ui);
-
-    let config = ClientConfig::new();
-    let mut client = GameClient::new(app, &config);
-
     #[cfg(target_os = "linux")]
     prefer_wslg_x11();
 
-    client.run();
-}
+    let mut app = app_init(NetworkRole::Client);
 
-fn spawn_camera(mut commands: Commands) {
-    commands.spawn(Camera2d);
+    app.add_plugins((
+        DefaultPlugins.set(WindowPlugin {
+            primary_window: Some(Window {
+                title: "World Prototype".into(),
+                resolution: (1280, 720).into(),
+                ..default()
+            }),
+            ..default()
+        }),
+        EguiPlugin::default(),
+        SchedulePlugin,
+        NetPlugin {
+            config: ClientConfig::new(),
+        },
+        ClockPlugin,
+        WorldPresentationPlugin,
+        EntityVisualsPlugin,
+        PlayerPlugin,
+        InventoryPlugin,
+        UiPlugin,
+    ));
+
+    app.run();
 }
 
 #[cfg(target_os = "linux")]

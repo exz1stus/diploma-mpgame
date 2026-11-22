@@ -1,0 +1,25 @@
+(
+ world_size_chunks: 512,
+ daylight: 240, night: 120, coal_seconds: 120, crystal_seconds: 180,
+ tank_seconds: (180, 360, 450),
+ recipes: [
+    (product: "tank_t2", ingredients: [("iron_ore", 12), ("coal", 4)], power: 12),
+    (product: "suit_t1", ingredients: [("iron_ore", 18), ("basalt", 9), ("quartz", 6), ("coal", 6)], power: 15),
+    (product: "tank_t3", ingredients: [("iron_ore", 24), ("basalt", 8), ("quartz", 8), ("sulfur", 8)], power: 20),
+    (product: "suit_t2", ingredients: [("cryo_crystal", 28), ("iron_ore", 16), ("sulfur", 8)], power: 24),
+    (product: "distress_beacon", ingredients: [("distress_beacon", 1), ("iron_ore", 4), ("quartz", 2)], power: 15),
+ ],
+ // First matching rule wins. Object names come from the worldgen manifest.
+ mining: [
+    (object:"rock", yields:[("coal",8),("basalt",2)]),
+    (object:"iron_ore", yields:[("iron_ore",2)]),
+    (object:"large_rock", scan:2, biome_prefix:Some("sulfur"), yields:[("sulfur",4)]),
+    (object:"large_rock", scan:2, yields:[("quartz",4)]),
+    (object:"crystal", scan:3, yields:[("cryo_crystal",6)]),
+ ],
+ sites: [
+    (name:"Engineering wreck", offset:(-51000,12000), scan:3, kind:Wreck, uses:1),
+    (name:"Navigation wreck", offset:(52000,-14000), scan:3, kind:Wreck, uses:1),
+    (name:"Polar emergency module", offset:(0,0), scan:3, kind:Pole, uses:1),
+ ],
+)

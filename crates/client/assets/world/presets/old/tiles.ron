@@ -1,0 +1,152 @@
+// Ground textures and tints per biome. Exported by the worldgen preview (tools/worldgen-preview).
+//
+// A biome is drawn with the texture `textures/tiles/<texture>.png`. By default the texture
+// name is the biome name; list a biome under `textures` to rename it or share one texture
+// between several biomes. All tile textures must have the same size.
+//
+// Until a texture file exists, the tile is drawn flat with its placeholder color
+// (keyed by texture name).
+//
+// A biome with no entry here and no texture file has no tiles of its own: it is drawn
+// with the tiles of the terrain biome underneath (the biome the terrain map gives the
+// tile). Feature biomes rely on this to override only objects.
+//
+// layers: texture name -> overlay layer (unlisted: 0), for height. Where textures on different
+// layers meet, the higher one overlays the lower one with a crisp, noisy edge and shades the
+// lower ground next to it. Give height bands increasing layers. Within a layer, biomes meet
+// on crisp, noisy edges too, without shading.
+//
+// tints: biome name -> color the ground is multiplied by (unlisted: white), for temperature.
+// Keep textures neutral and let tints color them; close tints make biomes read as terraces.
+//
+// blend: pixels_per_tile (texture pixels per tile; textures repeat in world space),
+// overlay_reach (how far a higher layer reaches over a lower neighbor, 0-0.5 tiles),
+// edge_noise (irregularity of height and biome edges, 0-1), noise_scale (its size in tiles),
+// ao_strength (shade at the foot of higher layers, 0-1),
+// ao_width (its width in pixels), ao_south / ao_north (shade scale where the higher ground
+// lies north / south of the lower ground, 0-4), tint_radius (radius in tiles over which tints
+// are averaged within a layer; 0 keeps each biome one flat color).
+(
+    textures: {
+        "barren_silicate_ridges": "regolith_3",
+        "blue_ice_plains": "frost_2",
+        "bright_ejecta_ridges": "regolith_5",
+        "buried_ice_basins": "frost_1",
+        "carbonaceous_basins": "regolith_1",
+        "cold_trap_ice": "regolith_1",
+        "copper_toned_scree": "regolith_2",
+        "dark_basalt_depressions": "basalt_1",
+        "dark_crater_floors": "regolith_1",
+        "exposed_anorthosite": "regolith_4",
+        "fractured_ice_basins": "frost_1",
+        "frost_margin_regolith": "regolith_2",
+        "frosted_breccia": "regolith_3",
+        "frosted_crater_floors": "regolith_2",
+        "frozen_shadow_basins": "regolith_1",
+        "frozen_volcanic_highlands": "basalt_7",
+        "frozen_volcano": "basalt_6",
+        "glacier_ridges": "frost_4",
+        "hot_dark_regolith": "regolith_1",
+        "ice_cemented_regolith": "regolith_3",
+        "iron_rich_regolith": "regolith_2",
+        "mixed_ice_regolith": "regolith_3",
+        "ochre_dust_plains": "regolith_2",
+        "patchy_ice_highlands": "regolith_4",
+        "permanent_polar_ice": "frost_1",
+        "polar_ice_highlands": "frost_2",
+        "polar_volcano": "frost_6",
+        "rime_covered_ridges": "regolith_4",
+        "rocky_crater_uplands": "regolith_3",
+        "salt_crust_pans": "regolith_2",
+        "silicate_gravel_plains": "regolith_4",
+        "sintered_frost_fields": "frost_3",
+        "sunlit_crater_floors": "regolith_1",
+        "volcanic_highlands": "basalt_7",
+        "volcano": "basalt_6",
+        "warm_exposed_rock": "regolith_1",
+        "weathered_basalt": "basalt_3",
+    },
+    default_placeholder: "#FF00FF",
+    placeholder_colors: {
+        "basalt_1": "#D0D0D0",
+        "basalt_3": "#D0D0D0",
+        "basalt_6": "#D0D0D0",
+        "basalt_7": "#D0D0D0",
+        "frost_1": "#D0D0D0",
+        "frost_2": "#D0D0D0",
+        "frost_3": "#D0D0D0",
+        "frost_4": "#D0D0D0",
+        "frost_6": "#D0D0D0",
+        "regolith_1": "#D0D0D0",
+        "regolith_2": "#D0D0D0",
+        "regolith_3": "#D0D0D0",
+        "regolith_4": "#D0D0D0",
+        "regolith_5": "#D0D0D0",
+    },
+    layers: {
+        "basalt_1": 1,
+        "basalt_3": 3,
+        "basalt_6": 6,
+        "basalt_7": 7,
+        "frost_1": 1,
+        "frost_2": 2,
+        "frost_3": 3,
+        "frost_4": 4,
+        "frost_6": 6,
+        "regolith_1": 1,
+        "regolith_2": 2,
+        "regolith_3": 3,
+        "regolith_4": 4,
+        "regolith_5": 5,
+    },
+    tints: {
+        "barren_silicate_ridges": "#C2A483",
+        "blue_ice_plains": "#BBC4CB",
+        "bright_ejecta_ridges": "#B0B0AD",
+        "buried_ice_basins": "#B8C1C9",
+        "carbonaceous_basins": "#AFA99E",
+        "cold_trap_ice": "#AFB5B9",
+        "copper_toned_scree": "#BFA181",
+        "dark_basalt_depressions": "#B6A58F",
+        "dark_crater_floors": "#AAAAA7",
+        "exposed_anorthosite": "#B5AEA3",
+        "fractured_ice_basins": "#C8D2DA",
+        "frost_margin_regolith": "#AEB1B2",
+        "frosted_breccia": "#AFB2B3",
+        "frosted_crater_floors": "#B1B8BC",
+        "frozen_shadow_basins": "#ACAFAF",
+        "frozen_volcanic_highlands": "#BBC3C9",
+        "frozen_volcano": "#B6BEC4",
+        "glacier_ridges": "#BEC8CF",
+        "hot_dark_regolith": "#B07E63",
+        "ice_cemented_regolith": "#B2B8BD",
+        "iron_rich_regolith": "#B9A891",
+        "mixed_ice_regolith": "#ADADAA",
+        "ochre_dust_plains": "#B2ABA0",
+        "patchy_ice_highlands": "#B1B4B5",
+        "permanent_polar_ice": "#DEE6ED",
+        "polar_ice_highlands": "#CDD7E0",
+        "polar_volcano": "#D9E1EA",
+        "rime_covered_ridges": "#B4BBBF",
+        "rocky_crater_uplands": "#BCAA93",
+        "salt_crust_pans": "#ACACA9",
+        "silicate_gravel_plains": "#AEAEAB",
+        "sintered_frost_fields": "#BCC5CC",
+        "sunlit_crater_floors": "#BC9F7F",
+        "volcanic_highlands": "#C4A483",
+        "volcano": "#BFA07F",
+        "warm_exposed_rock": "#BE9473",
+        "weathered_basalt": "#B2ACA0",
+    },
+    blend: (
+        pixels_per_tile: 16,
+        overlay_reach: 0.15,
+        edge_noise: 0.35,
+        noise_scale: 0.5,
+        ao_strength: 0.35,
+        ao_width: 3,
+        ao_south: 1.5,
+        ao_north: 0.4,
+        tint_radius: 0,
+    ),
+)
