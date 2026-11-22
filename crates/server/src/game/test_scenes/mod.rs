@@ -14,6 +14,10 @@ enum TestScene {
 pub(crate) struct TestScenesPlugin(TestScene);
 
 impl TestScenesPlugin {
+    pub(super) fn is_expedition(&self) -> bool {
+        matches!(self.0, TestScene::Expedition)
+    }
+
     pub(crate) fn from_env() -> Self {
         let scene = match std::env::var("TEST_SCENE").as_deref() {
             Ok("circle") => TestScene::Circle,

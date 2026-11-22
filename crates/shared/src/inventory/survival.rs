@@ -17,6 +17,8 @@ pub const SUITS: [&str; 2] = ["suit_t1", "suit_t2"];
 pub struct ExpeditionRules {
     #[serde(skip)]
     pub signature: u64,
+    #[serde(default = "default_expedition_size")]
+    pub world_size_chunks: u16,
     pub mining: Vec<MiningRule>,
     pub daylight: u16,
     pub night: u16,
@@ -68,8 +70,7 @@ pub enum SiteKind {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct LegacyExpedition {
-    #[serde(rename = "world_size_chunks")]
-    _size: u16,
+    world_size_chunks: u16,
     daylight: u16,
     night: u16,
     coal_seconds: u16,
@@ -126,6 +127,7 @@ impl LegacyExpedition {
             .collect();
         Ok(ExpeditionRules {
             signature: 0,
+            world_size_chunks: self.world_size_chunks,
             mining: defaults.mining,
             daylight: self.daylight,
             night: self.night,
@@ -136,6 +138,10 @@ impl LegacyExpedition {
             sites,
         })
     }
+}
+
+fn default_expedition_size() -> u16 {
+    512
 }
 
 impl ExpeditionRules {
@@ -153,7 +159,8 @@ impl ExpeditionRules {
             .fold(0xcbf29ce484222325u64, |hash, byte| {
                 (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
             });
-        if rules.daylight == 0
+        if rules.world_size_chunks < 2
+            || rules.daylight == 0
             || rules.night == 0
             || rules.coal_seconds == 0
             || rules.crystal_seconds == 0

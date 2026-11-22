@@ -426,8 +426,8 @@ fn expedition_places_the_polar_module_inside_the_configured_world() {
     let config = InventoryConfig::load().unwrap();
     let generator = worldgen::WorldConfig::bundled().build().unwrap();
     let cfg = generator.config();
-    let half =
-        (cfg.world_size_chunks / 2 * cfg.chunk_size) as i32 * shared::world::TILE_SIZE as i32;
+    let half = (u32::from(config.expedition.world_size_chunks) / 2 * cfg.chunk_size) as i32
+        * shared::world::TILE_SIZE as i32;
     let mission = Expedition::new(&config.expedition, cfg.seed, half);
     let pole = config
         .expedition
@@ -435,7 +435,11 @@ fn expedition_places_the_polar_module_inside_the_configured_world() {
         .iter()
         .position(|site| site.kind == SiteKind::Pole)
         .unwrap();
-    assert_eq!(mission.sites[pole].position[1].abs(), half - 512);
+    let distance = mission.sites[pole].position[1].abs();
+    assert_eq!(distance, half - 512);
+    let seconds = (distance as f32 - SITE_RADIUS) / 500.0;
+    let tank = f32::from(config.expedition.tank_seconds[2]);
+    assert!(seconds > tank && seconds < 2.0 * tank);
     assert!(
         mission
             .sites
