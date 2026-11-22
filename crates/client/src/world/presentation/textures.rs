@@ -53,14 +53,16 @@ const FLAT_HEIGHT: u8 = 128;
 /// texture spans the full range whatever its contrast; flat ones stay at [`FLAT_HEIGHT`].
 /// The worldgen preview (`terrain.mjs`, `pixelHeights`) computes the same bytes.
 pub fn bake_pixel_heights(layer: &mut [u8]) {
-    let brightness = |px: &[u8]| f64::from(u16::from(px[0]) + u16::from(px[1]) + u16::from(px[2]));
-    let count = (layer.len() / 4).max(1) as f64;
-    let mean = layer.chunks_exact(4).map(brightness).sum::<f64>() / count;
-    let spread = layer
-        .chunks_exact(4)
+    let brightness =
+        |px: &[u8; 4]| f64::from(u16::from(px[0]) + u16::from(px[1]) + u16::from(px[2]));
+    let (pixels, _) = layer.as_chunks_mut::<4>();
+    let count = pixels.len().max(1) as f64;
+    let mean = pixels.iter().map(brightness).sum::<f64>() / count;
+    let spread = pixels
+        .iter()
         .map(|px| (brightness(px) - mean).abs())
         .fold(0.0, f64::max);
-    for px in layer.chunks_exact_mut(4) {
+    for px in pixels {
         px[3] = if spread < 0.5 {
             FLAT_HEIGHT
         } else {
