@@ -9,6 +9,16 @@
 //   from the ground tints so objects stand out. Feature biomes without an entry use their ground
 //   biome's; other unlisted biomes stay white.
 //
+// shadow: sun shadows of standing objects (the sun follows the world clock, clock.ron):
+//   opacity (darkness under a high sun, 0-1), max_length (longest shadow, in object heights,
+//   for a low sun), fade_degrees (sun elevation over which shadows fade out toward dusk), depth
+//   (how deep objects are, as a fraction of their height: the least a shadow spreads, so side
+//   light does not flatten it to a line). Shadows darken whole terrain texels.
+// occlusion: ambient occlusion in whole terrain texels, like the tiles' height shading:
+//   opacity (ground darkness next to an object, 0-1), reach (texels it fades over around
+//   standing art, 1-6), decal_reach (around ground decals like pebbles, 0-6), base_rows (bottom
+//   rows of standing art that darken so it sits in the ground, 0-8), base_opacity (0-1).
+//
 // surfaces: biome name -> surface. A kind's `sprites` choose art per surface, so a rock on
 //   basalt looks like basalt. Feature biomes without an entry use their ground biome's.
 //
@@ -18,9 +28,12 @@
 //   jitter:      largest nudge of the foot off its footprint's south-edge center, in tiles
 //                (0 to 0.5); it only moves north, east and west, staying on the footprint
 //   flip:        mirror half of the objects; only for art without painted light (default: off)
-//   scale:       (min, max) size multiplier, picked per object
+//   scale:       (min, max) size multiplier, picked per object; anything but 1 puts the art's
+//                pixels off the terrain pixel grid the art otherwise snaps to
 //   layer:       Sorted (stands; drawn by foot position with players) or Ground (flat decal)
 //   tinted:      false keeps the art's own colors: no recolor and no biome tint (default: true)
+//   shadow:      false casts no sun shadow (default: true; ground decals never cast one)
+//   occlusion:   false skips the ambient occlusion at the lower edge (default: true)
 //   tint:        Some("#RRGGBB") multiplies the art
 //   placeholder: Some("#RRGGBB") rectangle drawn while the kind has no sprite
 // Art is drawn at its pixel size, `tiles.ron` blend.pixels_per_tile pixels per tile.
@@ -62,6 +75,8 @@
         "frost_ridge": "#818C98",
     },
     recolor: Some("#EEEEEE"),
+    shadow: (opacity: 0.45, max_length: 1.2, fade_degrees: 8.0, depth: 0.4),
+    occlusion: (opacity: 0.5, reach: 4, decal_reach: 1, base_rows: 2, base_opacity: 0.3),
     surfaces: {
         "plain_floor": "regolith",
         "plain_low": "regolith",
@@ -112,7 +127,6 @@
                 "sulfur": "sulfur_spike",
             },
             jitter: 0.25,
-            scale: (1.0, 1.2),
             placeholder: Some("#4A4642"),
         ),
         "iron_ore": (
@@ -135,6 +149,8 @@
             },
             jitter: 0.4,
             layer: Ground,
+            // Flat and tiny: no occlusion halo, it reads as too strong.
+            occlusion: false,
             placeholder: Some("#77726B"),
         ),
         // Rare, on the floors of cold craters (worldgen features/craters.ron); keeps its own

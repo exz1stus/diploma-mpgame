@@ -62,6 +62,7 @@ pub fn place(
     variants: &[SpriteVariant],
     salt: u32,
     world_per_px: f32,
+    grid: f32,
 ) -> Placement {
     let hash = |channel: Channel| {
         hash32(
@@ -80,13 +81,14 @@ pub fn place(
     let corner = Vec2::new(anchor.x as f32, anchor.y as f32) * TILE_SIZE;
     let center = corner + footprint_size / 2.0;
     let jitter = style.jitter() * TILE_SIZE;
-    let foot = Vec2::new(
+    let jittered = Vec2::new(
         center.x + jitter * signed_unit(hash(Channel::JitterX)),
         corner.y + jitter * (1.0 + signed_unit(hash(Channel::JitterY))),
     );
 
     let pixels = art.rect.size().as_vec2();
     let size = pixels * world_per_px * scale;
+    let foot = snap_to_grid(jittered, &art, flip, size / pixels, grid);
     let mut pivot = Vec2::new(
         art.pivot().x / pixels.x - 0.5,
         0.5 - art.pivot().y / pixels.y,
@@ -101,6 +103,22 @@ pub fn place(
         size,
         foot,
     }
+}
+
+/// Moves the foot so the art's lower-left corner lies on the terrain pixel grid (`grid` world
+/// units per texel, origin at world 0; 0 leaves it): with art pixels of the texel's size, the
+/// art's pixels then cover whole ground pixels, like the shadows and occlusion under it.
+fn snap_to_grid(foot: Vec2, art: &SpriteVariant, flip: bool, pixel: Vec2, grid: f32) -> Vec2 {
+    if grid <= 0.0 {
+        return foot;
+    }
+    let pivot = art.pivot();
+    let width = art.rect.size().x as f32;
+    // Pixels from the art's left and bottom edges to its pivot, mirrored with the art.
+    let from_left = if flip { width - pivot.x } else { pivot.x };
+    let from_bottom = art.rect.size().y as f32 - pivot.y;
+    let corner = foot - Vec2::new(from_left, from_bottom) * pixel;
+    foot + (corner / grid).round() * grid - corner
 }
 
 /// The top 24 bits as 0..=1; exact in f32 and in JavaScript numbers.
@@ -146,6 +164,7 @@ mod tests {
             &variants(),
             fnv1a("rock"),
             2.0,
+            0.0,
         );
         let foot = placement.foot / TILE_SIZE;
         let scale = placement.size.x / (variants()[placement.variant].rect.size().x as f32 * 2.0);
@@ -182,7 +201,7 @@ mod tests {
 
     #[test]
     fn without_jitter_the_pivot_sits_on_the_south_edge_center() {
-        let placement = place(at(3, 5), ONE, &style(0.0, false), &variants(), 7, 2.0);
+        let placement = place(at(3, 5), ONE, &style(0.0, false), &variants(), 7, 2.0, 0.0);
         assert_eq!(placement.foot, Vec2::new(3.5, 5.0) * TILE_SIZE);
         // The anchor maps the bottom-center pivot from the entity (tile center) to the foot.
         let center = Vec2::new(3.5, 5.5) * TILE_SIZE;
@@ -198,8 +217,24 @@ mod tests {
         for x in 0..40 {
             for y in 0..40 {
                 let tile = at(x, y);
-                let a = place(tile, ONE, &style(0.5, true), &variants, fnv1a("rock"), 2.0);
-                let b = place(tile, ONE, &style(0.5, true), &variants, fnv1a("rock"), 2.0);
+                let a = place(
+                    tile,
+                    ONE,
+                    &style(0.5, true),
+                    &variants,
+                    fnv1a("rock"),
+                    2.0,
+                    0.0,
+                );
+                let b = place(
+                    tile,
+                    ONE,
+                    &style(0.5, true),
+                    &variants,
+                    fnv1a("rock"),
+                    2.0,
+                    0.0,
+                );
                 assert_eq!(a, b);
                 seen[a.variant] = true;
                 let min = Vec2::new(x as f32, y as f32) * TILE_SIZE;
@@ -211,12 +246,35 @@ mod tests {
     }
 
     #[test]
+    fn snapping_puts_the_art_corner_on_the_texel_grid() {
+        let variants = variants();
+        for x in 0..40 {
+            let jittery = style(0.5, true);
+            let placement = place(at(x, 7), ONE, &jittery, &variants, 3, 2.0, 2.0);
+            let art = variants[placement.variant];
+            let pivot = art.pivot();
+            let width = art.rect.size().x as f32;
+            let from_left = if placement.flip {
+                width - pivot.x
+            } else {
+                pivot.x
+            };
+            let from_bottom = art.rect.size().y as f32 - pivot.y;
+            let corner = placement.foot - Vec2::new(from_left, from_bottom) * 2.0;
+            let off_grid = (corner / 2.0 - (corner / 2.0).round()).abs();
+            assert!(off_grid.max_element() < 1e-4, "{corner}");
+            let unsnapped = place(at(x, 7), ONE, &jittery, &variants, 3, 2.0, 0.0);
+            assert!(placement.foot.distance(unsnapped.foot) <= 2.0_f32.sqrt() + 1e-4);
+        }
+    }
+
+    #[test]
     fn art_keeps_its_pixel_size_and_flipping_mirrors_the_pivot() {
         let tall = [variants()[1]];
-        let placement = place(at(0, 0), ONE, &style(0.0, false), &tall, 1, 2.0);
+        let placement = place(at(0, 0), ONE, &style(0.0, false), &tall, 1, 2.0, 0.0);
         assert_eq!(placement.size, Vec2::new(20.0, 40.0));
         let flipped = (0..64)
-            .map(|x| place(at(x, 0), ONE, &style(0.0, true), &tall, 1, 2.0))
+            .map(|x| place(at(x, 0), ONE, &style(0.0, true), &tall, 1, 2.0, 0.0))
             .find(|placement| placement.flip)
             .unwrap();
         assert_eq!(flipped.anchor.y, placement.anchor.y);

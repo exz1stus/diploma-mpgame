@@ -5,8 +5,8 @@ use std::{
 
 use crate::{
     BiomeRepository, ChunkData, ChunkPos, GenerationError, GenerationStage, ObjectKind,
-    ObjectPlacer, TileData, TileDraft, TilePos, TileRect, TileSample, WorldGeneratorConfig,
-    WorldManifest,
+    ObjectPlacer, PlanetParams, TileData, TileDraft, TilePos, TileRect, TileSample,
+    WorldGeneratorConfig, WorldManifest,
 };
 
 /// Samples terrain through ordered stages and serves complete chunks.
@@ -17,6 +17,7 @@ pub struct WorldGenerator {
     stages: Vec<Box<dyn GenerationStage>>,
     biomes: Arc<BiomeRepository>,
     object_placer: ObjectPlacer,
+    planet: PlanetParams,
 }
 
 impl WorldGenerator {
@@ -35,7 +36,14 @@ impl WorldGenerator {
             stages,
             biomes,
             object_placer,
+            planet: PlanetParams::default(),
         }
+    }
+
+    /// The planet the world lies on, for the sun (see [`crate::SunPosition`]).
+    pub fn with_planet(mut self, planet: PlanetParams) -> Self {
+        self.planet = planet;
+        self
     }
 
     pub fn draft_at(&self, pos: TilePos) -> TileDraft {
@@ -113,6 +121,7 @@ impl WorldGenerator {
                     footprint: object.footprint,
                 })
                 .collect(),
+            planet: self.planet,
         }
     }
 

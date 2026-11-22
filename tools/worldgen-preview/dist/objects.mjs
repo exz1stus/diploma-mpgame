@@ -90,7 +90,8 @@ export function objectVisual(object, look, under) {
     const insetY = height * (1 - PLACEHOLDER_SCALE) / 2;
     return { ground, sortY: anchor.y, color: kind.placeholder, left: anchor.x + insetX, bottom: anchor.y + insetY, width: width - 2 * insetX, height: height - 2 * insetY };
   }
-  const placement = placeObject(anchor, object.footprint, kind.style, variants, kind.salt, look.tilesPerPx);
+  // Snapped to the terrain pixel grid, like the client (texels are the size of art pixels).
+  const placement = placeObject(anchor, object.footprint, kind.style, variants, kind.salt, look.tilesPerPx, look.tilesPerPx);
   const { art, flip, size, foot } = placement;
   const [pivotX, pivotY] = variantPivot(art);
   const tilesPerArtPx = size.width / art.rect[2];

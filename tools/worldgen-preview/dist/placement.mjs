@@ -44,7 +44,21 @@ export const variantPivot = variant => variant.pivot ?? [variant.rect[2] / 2, va
 
 // place(): variant, mirroring, world size (tiles) and foot (tiles, +Y up) of one object.
 // `tilesPerPx` is the size of one art pixel in tiles (1 / pixels_per_tile).
-export function placeObject(anchor, footprint, style, variants, salt, tilesPerPx) {
+// snap_to_grid: moves the foot so the art's lower-left corner lies on the terrain pixel grid
+// (`grid` tiles per texel, origin at 0; 0 leaves it).
+function snapToGrid(foot, art, flip, pixel, grid) {
+  if (!(grid > 0)) return foot;
+  const [pivotX, pivotY] = variantPivot(art);
+  const fromLeft = flip ? art.rect[2] - pivotX : pivotX;
+  const fromBottom = art.rect[3] - pivotY;
+  const corner = { x: foot.x - fromLeft * pixel, y: foot.y - fromBottom * pixel };
+  return {
+    x: foot.x + Math.round(corner.x / grid) * grid - corner.x,
+    y: foot.y + Math.round(corner.y / grid) * grid - corner.y,
+  };
+}
+
+export function placeObject(anchor, footprint, style, variants, salt, tilesPerPx, grid = 0) {
   const hash = channel => hash32(anchor.x >>> 0, anchor.y >>> 0, (salt ^ Math.imul(channel, 0x9e3779b9)) >>> 0);
   const variant = hash(CHANNEL.variant) % Math.max(1, variants.length);
   const art = variants[Math.min(variant, variants.length - 1)];
@@ -53,10 +67,11 @@ export function placeObject(anchor, footprint, style, variants, salt, tilesPerPx
   const scale = minScale + (maxScale - minScale) * unit(hash(CHANNEL.scale));
   const jitter = styleJitter(style);
   const centerX = anchor.x + footprint.width / 2;
-  const foot = {
+  const jittered = {
     x: centerX + jitter * signedUnit(hash(CHANNEL.jitterX)),
     y: anchor.y + jitter * (1 + signedUnit(hash(CHANNEL.jitterY))),
   };
   const size = { width: art.rect[2] * tilesPerPx * scale, height: art.rect[3] * tilesPerPx * scale };
+  const foot = snapToGrid(jittered, art, flip, tilesPerPx * scale, grid);
   return { variant, art, flip, size, foot };
 }

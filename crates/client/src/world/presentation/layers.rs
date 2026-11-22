@@ -183,6 +183,7 @@ mod tests {
             world_size_chunks: 1,
             biomes: vec!["first".into(), "second".into()],
             objects: vec![],
+            planet: Default::default(),
         }
     }
 

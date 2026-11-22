@@ -172,10 +172,10 @@
         overlay_reach: 0.15,
         edge_noise: 0.35,
         noise_scale: 0.5,
-        ao_strength: 0.35,
+        ao_strength: 0.5,
         ao_width: 3,
-        ao_south: 1.5,
-        ao_north: 0.4,
+        ao_south: 1.2,
+        ao_north: 0.6,
         tint_radius: 0,
     ),
 )

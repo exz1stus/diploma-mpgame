@@ -160,9 +160,20 @@ function styleRon(style) {
   if (min !== 1 || max !== 1) fields.push(`scale: (${number(min)}, ${number(max)})`);
   if (style.layer === 'Ground') fields.push('layer: Ground');
   if (style.tinted === false) fields.push('tinted: false');
+  if (style.shadow === false) fields.push('shadow: false');
+  if (style.occlusion === false) fields.push('occlusion: false');
   if (style.tint) fields.push(`tint: Some(${quote(style.tint)})`);
   if (style.placeholder) fields.push(`placeholder: Some(${quote(style.placeholder)})`);
   return fields.length ? `(\n${fields.map(field => `            ${field},`).join('\n')}\n        )` : '()';
+}
+
+// A `name: (key: value, ...)` style line, when the file sets one (the client defaults it).
+// Keys in `integers` are whole numbers (u32 on the client); the rest are floats.
+function numbersRon(name, values, keys, integers = []) {
+  if (!values) return '';
+  const value = key => (integers.includes(key) ? String(Math.max(0, Math.round(values[key]))) : number(values[key]));
+  const fields = keys.filter(key => Number.isFinite(values[key])).map(key => `${key}: ${value(key)}`);
+  return `\n    ${name}: (${fields.join(', ')}),`;
 }
 
 export function objectsRon(objects) {
@@ -178,6 +189,16 @@ export function objectsRon(objects) {
 //   from the ground tints so objects stand out. Feature biomes without an entry use their ground
 //   biome's; other unlisted biomes stay white.
 //
+// shadow: sun shadows of standing objects (the sun follows the world clock, clock.ron):
+//   opacity (darkness under a high sun, 0-1), max_length (longest shadow, in object heights,
+//   for a low sun), fade_degrees (sun elevation over which shadows fade out toward dusk), depth
+//   (how deep objects are, as a fraction of their height: the least a shadow spreads, so side
+//   light does not flatten it to a line). Shadows darken whole terrain texels.
+// occlusion: ambient occlusion in whole terrain texels, like the tiles' height shading:
+//   opacity (ground darkness next to an object, 0-1), reach (texels it fades over around
+//   standing art, 1-6), decal_reach (around ground decals like pebbles, 0-6), base_rows (bottom
+//   rows of standing art that darken so it sits in the ground, 0-8), base_opacity (0-1).
+//
 // surfaces: biome name -> surface. A kind's \`sprites\` choose art per surface, so a rock on
 //   basalt looks like basalt. Feature biomes without an entry use their ground biome's.
 //
@@ -187,16 +208,19 @@ export function objectsRon(objects) {
 //   jitter:      largest nudge of the foot off its footprint's south-edge center, in tiles
 //                (0 to 0.5); it only moves north, east and west, staying on the footprint
 //   flip:        mirror half of the objects; only for art without painted light (default: off)
-//   scale:       (min, max) size multiplier, picked per object
+//   scale:       (min, max) size multiplier, picked per object; anything but 1 puts the art's
+//                pixels off the terrain pixel grid the art otherwise snaps to
 //   layer:       Sorted (stands; drawn by foot position with players) or Ground (flat decal)
 //   tinted:      false keeps the art's own colors: no recolor and no biome tint (default: true)
+//   shadow:      false casts no sun shadow (default: true; ground decals never cast one)
+//   occlusion:   false skips the ambient occlusion at the lower edge (default: true)
 //   tint:        Some("#RRGGBB") multiplies the art
 //   placeholder: Some("#RRGGBB") rectangle drawn while the kind has no sprite
 // Art is drawn at its pixel size, \`tiles.ron\` blend.pixels_per_tile pixels per tile.
 (
     default_placeholder: ${quote(objects.default_placeholder)},
     recolor: ${objects.recolor ? `Some(${quote(objects.recolor)})` : 'None'},
-    tints: ${ronMap(objects.tints)},
+    tints: ${ronMap(objects.tints)},${numbersRon('shadow', objects.shadow, ['opacity', 'max_length', 'fade_degrees', 'depth'])}${numbersRon('occlusion', objects.occlusion, ['opacity', 'reach', 'decal_reach', 'base_rows', 'base_opacity'], ['reach', 'decal_reach', 'base_rows'])}
     surfaces: ${ronMap(objects.surfaces)},
     kinds: ${kinds.length ? `{\n${kinds.map(([kind, style]) => `        ${quote(kind)}: ${styleRon(style)},`).join('\n')}\n    }` : '{}'},
 )
@@ -289,7 +313,8 @@ export function objectBiomeTint(objects, biomeNames, biome, ground) {
 export function migrateObjects(objects) {
   if (objects.kinds) {
     return {
-      default_placeholder: objects.default_placeholder ?? '#475A47', tints: objects.tints || {},
+      default_placeholder: objects.default_placeholder ?? '#475A47', tints: objects.tints || {}, shadow: objects.shadow ?? null,
+      occlusion: objects.occlusion ?? null,
       recolor: objects.recolor ?? null, surfaces: objects.surfaces || {}, kinds: objects.kinds,
     };
   }

@@ -239,6 +239,10 @@ pub struct ObjectStyle {
     /// Take the object colors (`ObjectStyles` `recolor` and `tints`); false keeps the art's own
     /// colors, for kinds that should stand out, like crystals.
     pub tinted: bool,
+    /// Cast a shadow from the sun (standing kinds only; ground decals never do).
+    pub shadow: bool,
+    /// Darken the ground at the art's lower edge (ambient occlusion).
+    pub occlusion: bool,
     /// `#RRGGBB` the art is multiplied by.
     pub tint: Option<String>,
     /// `#RRGGBB` rectangle drawn while the kind has no sprite.
@@ -255,6 +259,8 @@ impl Default for ObjectStyle {
             scale: (1.0, 1.0),
             layer: ObjectLayer::Sorted,
             tinted: true,
+            shadow: true,
+            occlusion: true,
             tint: None,
             placeholder: None,
         }
@@ -298,6 +304,105 @@ impl ObjectStyle {
     }
 }
 
+/// Object shadows: each standing object's silhouette laid on the ground away from the sun,
+/// longer as the sun gets lower.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct ShadowStyle {
+    /// Darkness of a shadow under a high sun (0 to 1).
+    pub opacity: f32,
+    /// Longest shadow, as a multiple of the object's height (low sun).
+    pub max_length: f32,
+    /// Sun elevation in degrees over which shadows fade out toward the horizon (dusk).
+    pub fade_degrees: f32,
+    /// How deep objects are, as a fraction of their height: the least a shadow spreads up or
+    /// down, so side light does not flatten it to a line (0.1 to 1).
+    pub depth: f32,
+}
+
+impl Default for ShadowStyle {
+    fn default() -> Self {
+        Self {
+            opacity: 0.35,
+            max_length: 1.2,
+            fade_degrees: 8.0,
+            depth: 0.4,
+        }
+    }
+}
+
+impl ShadowStyle {
+    /// The same values clamped into their valid ranges.
+    pub fn sanitized(self) -> Self {
+        let clamp = |value: f32, min: f32, max: f32, fallback: f32| {
+            if value.is_finite() {
+                value.clamp(min, max)
+            } else {
+                fallback
+            }
+        };
+        let fallback = Self::default();
+        Self {
+            opacity: clamp(self.opacity, 0.0, 1.0, fallback.opacity),
+            max_length: clamp(self.max_length, 0.1, 10.0, fallback.max_length),
+            fade_degrees: clamp(self.fade_degrees, 0.1, 45.0, fallback.fade_degrees),
+            depth: clamp(self.depth, 0.1, 1.0, fallback.depth),
+        }
+    }
+}
+
+/// Ambient occlusion, independent of the sun, in whole terrain texels like the tiles' height
+/// shading: the ground darkens next to an object's lowest rows (all around a ground decal),
+/// darkest against it and one step lighter per texel away; standing art also darkens its own
+/// bottom rows so it sits in the ground.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct OcclusionStyle {
+    /// Ground darkness next to the object (0 to 1).
+    pub opacity: f32,
+    /// Texels the ground occlusion fades over around standing art (1 to 6).
+    pub reach: u32,
+    /// Texels it fades over around ground decals such as pebbles (0 to 6; 0 turns it off).
+    pub decal_reach: u32,
+    /// Bottom rows of standing art that darken toward the ground (0 to 8; 0 turns it off).
+    pub base_rows: u32,
+    /// Darkness of the art's bottom row (0 to 1).
+    pub base_opacity: f32,
+}
+
+impl Default for OcclusionStyle {
+    fn default() -> Self {
+        Self {
+            opacity: 0.35,
+            reach: 3,
+            decal_reach: 1,
+            base_rows: 2,
+            base_opacity: 0.3,
+        }
+    }
+}
+
+impl OcclusionStyle {
+    /// The same values clamped into their valid ranges.
+    pub fn sanitized(self) -> Self {
+        let clamp = |value: f32, fallback: f32| {
+            if value.is_finite() {
+                value.clamp(0.0, 1.0)
+            } else {
+                fallback
+            }
+        };
+        let fallback = Self::default();
+        Self {
+            opacity: clamp(self.opacity, fallback.opacity),
+            reach: self.reach.clamp(1, 6),
+            decal_reach: self.decal_reach.min(6),
+            base_rows: self.base_rows.min(8),
+            base_opacity: clamp(self.base_opacity, fallback.base_opacity),
+        }
+    }
+}
+
 /// `objects.ron`: how object kinds are drawn, and which surface each biome is.
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -312,6 +417,12 @@ pub struct ObjectStyles {
     /// ground biome's, others stay white.
     #[serde(default)]
     pub tints: HashMap<String, String>,
+    /// How objects' sun shadows look.
+    #[serde(default)]
+    pub shadow: ShadowStyle,
+    /// How the ground darkens at objects' lower edges.
+    #[serde(default)]
+    pub occlusion: OcclusionStyle,
     /// Biome name → surface name (`regolith`, `basalt`, ...), for `ObjectStyle::sprites`.
     #[serde(default)]
     pub surfaces: HashMap<String, String>,

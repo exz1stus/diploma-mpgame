@@ -53,7 +53,9 @@ pub use objects::{
 pub use pipeline::TerrainSources;
 pub use range::Range;
 pub use stage::GenerationStage;
-pub use temperature::{PlanetParams, TemperatureCoefficients, TemperatureModel, TemperatureStage};
+pub use temperature::{
+    PlanetParams, SunPosition, TemperatureCoefficients, TemperatureModel, TemperatureStage,
+};
 pub use tile::{TileData, TileDraft, TilePos, TileSample};
 
 #[cfg(test)]

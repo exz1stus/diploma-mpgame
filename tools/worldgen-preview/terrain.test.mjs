@@ -240,11 +240,13 @@ test('exported RON parses back and keeps every setting', () => {
   const objects = {
     default_placeholder: '#475A47',
     tints: { plain_mid: '#64625E' },
+    shadow: { opacity: 0.3, max_length: 2.5, fade_degrees: 10, depth: 0.5 },
+    occlusion: { opacity: 0.25, reach: 4, decal_reach: 2, base_rows: 3, base_opacity: 0.2 },
     recolor: '#EEEEEE',
     surfaces: { plain_mid: 'regolith', basalt_low: 'basalt' },
     kinds: {
       pebbles: { sprite: 'regolith_pebbles', sprites: { basalt: 'basalt_pebbles' }, jitter: 0.4, flip: true, layer: 'Ground', placeholder: '#77726B' },
-      rock: { scale: [1, 1.25], tint: '#FFEEDD', tinted: false },
+      rock: { scale: [1, 1.25], tint: '#FFEEDD', tinted: false, shadow: false, occlusion: false },
       tree: {},
     },
   };

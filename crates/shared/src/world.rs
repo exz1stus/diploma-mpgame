@@ -6,7 +6,8 @@ use std::time::Duration;
 use bevy_renet::renet::{ChannelConfig, ConnectionConfig, DefaultChannel, SendType};
 use serde::{Deserialize, Serialize};
 pub use worldgen::{
-    BiomeId, ChunkPos, Footprint, ObjectId, ObjectKind, TilePos, TileSample, WorldManifest,
+    BiomeId, ChunkPos, Footprint, ObjectId, ObjectKind, PlanetParams, SunPosition, TilePos,
+    TileSample, WorldGeography, WorldManifest,
 };
 
 /// Server → client world data. Ordered, so a chunk's unload and reload never swap.
@@ -99,6 +100,27 @@ mod tests {
         );
         assert_eq!(decode(&bytes), Some(message));
         assert_eq!(decode(&bytes[..bytes.len() / 2]), None);
+    }
+
+    #[test]
+    fn the_manifest_round_trips_with_its_planet() {
+        let message = WorldMessage::Init(WorldManifest {
+            chunk_size: 32,
+            world_size_chunks: 250,
+            biomes: vec!["plain_mid".into()],
+            objects: vec![ObjectKind {
+                name: "rock".into(),
+                footprint: Footprint {
+                    width: 1,
+                    height: 1,
+                },
+            }],
+            planet: PlanetParams {
+                orbit: 0.25,
+                axial_tilt_deg: 5.0,
+            },
+        });
+        assert_eq!(decode(&encode(&message)), Some(message));
     }
 
     #[test]

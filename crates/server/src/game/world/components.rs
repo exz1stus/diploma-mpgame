@@ -11,7 +11,7 @@ pub(crate) struct WorldObserver {
 impl Default for WorldObserver {
     fn default() -> Self {
         Self {
-            simulation_distance: 4,
+            simulation_distance: 5,
         }
     }
 }

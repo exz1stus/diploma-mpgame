@@ -13,6 +13,7 @@ use super::{
     catalog::{KindVisual, ObjectCatalog},
     config::{ObjectLayer, PresentationConfig},
     placement::place,
+    shadows::{ShadowAssets, ShadowMaterial, ShadowSpawner, Silhouette, SunLight},
     textures::recolor_regions,
 };
 use crate::{
@@ -62,6 +63,7 @@ pub fn prepare_object_catalog(
         recolor,
     });
     commands.insert_resource(ObjectCatalog::build(&world, &config.objects));
+    commands.insert_resource(ShadowAssets::default());
 }
 
 /// Once the sheet has loaded, makes the recolored copy tinted kinds draw from.
@@ -97,11 +99,24 @@ pub fn spawn_object_visuals(
     catalog: Res<ObjectCatalog>,
     sheet: Res<ObjectSheet>,
     config: Res<PresentationConfig>,
+    light: Res<SunLight>,
+    mut shadow_assets: ResMut<ShadowAssets>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut shadow_materials: ResMut<Assets<ShadowMaterial>>,
 ) {
     if sheet.tinted.is_none() {
         return;
     }
     let world_per_px = TILE_SIZE / config.tiles.blend.sanitized().pixels_per_tile as f32;
+    let mut shadows = ShadowSpawner {
+        assets: &mut shadow_assets,
+        meshes: &mut meshes,
+        materials: &mut shadow_materials,
+        light: *light,
+        occlusion: config.objects.occlusion,
+        // Art pixels and terrain texels share one size: pixels_per_tile per tile.
+        texel: world_per_px,
+    };
     for (entity, object, in_chunk, mut transform) in &mut objects {
         let Some((kind, image)) = catalog
             .kind(object.kind)
@@ -127,20 +142,31 @@ pub fn spawn_object_visuals(
                     variants,
                     kind.salt,
                     world_per_px,
+                    // Snap to the terrain pixel grid, the same size as art pixels.
+                    world_per_px,
                 );
                 let art = variants[placement.variant];
                 transform.translation.z = object_z(kind, placement.foot.y);
-                (
-                    Sprite {
-                        image: image.clone(),
-                        rect: Some(art.rect.to_rect()),
-                        custom_size: Some(placement.size),
-                        flip_x: placement.flip,
-                        color,
-                        ..default()
-                    },
-                    Anchor(placement.anchor),
-                )
+                let sprite = Sprite {
+                    image: image.clone(),
+                    rect: Some(art.rect.to_rect()),
+                    custom_size: Some(placement.size),
+                    flip_x: placement.flip,
+                    color,
+                    ..default()
+                };
+                for role in silhouettes(kind) {
+                    shadows.spawn(
+                        &mut commands,
+                        role,
+                        entity,
+                        &transform,
+                        &image,
+                        &art,
+                        &placement,
+                    );
+                }
+                (sprite, Anchor(placement.anchor))
             }
             None => {
                 let size = Vec2::new(
@@ -167,6 +193,28 @@ fn object_color(kind: &KindVisual, object_tint: Option<[u8; 3]>) -> Color {
     let tint = kind.style.tint().to_srgba();
     let [r, g, b] = object_tint.map_or([1.0; 3], |rgb| rgb.map(|value| f32::from(value) / 255.0));
     Srgba::new(tint.red * r, tint.green * g, tint.blue * b, tint.alpha).into()
+}
+
+/// The silhouettes a kind gets: ground occlusion, and if it stands a sun shadow and the shade
+/// on its own bottom rows.
+fn silhouettes(kind: &KindVisual) -> Vec<Silhouette> {
+    let standing = kind.style.layer == ObjectLayer::Sorted;
+    let occlusion = kind.style.occlusion;
+    let mut roles = Vec::new();
+    if occlusion {
+        roles.push(if standing {
+            Silhouette::StandingOcclusion
+        } else {
+            Silhouette::GroundOcclusion
+        });
+    }
+    if standing && kind.style.shadow {
+        roles.push(Silhouette::Sun);
+    }
+    if standing && occlusion {
+        roles.push(Silhouette::BaseShade);
+    }
+    roles
 }
 
 fn object_z(kind: &KindVisual, foot_y: f32) -> f32 {

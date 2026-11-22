@@ -4,6 +4,10 @@
 pub const GROUND: f32 = -10.0;
 /// Flat decoration on the ground (pebbles): above it, under everything that stands.
 pub const DECALS: f32 = -9.5;
+/// Object shadows: over the ground and its decals, under everything that stands.
+pub const SHADOWS: f32 = -9.4;
+/// Ambient occlusion at objects' lower edges: over the ground, under its decals and shadows.
+pub const OCCLUSION: f32 = -9.6;
 /// Base of the sorted layer: standing objects and entities, ordered by [`y_sorted`].
 const SORTED: f32 = -5.0;
 /// Z per world unit of foot height; the clamp below keeps the layer within ±1 of `SORTED`.

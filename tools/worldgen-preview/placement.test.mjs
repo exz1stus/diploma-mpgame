@@ -46,6 +46,17 @@ test('placement matches the client', () => {
   assert.ok(Math.abs(placement.size.width / (10 / 16) - 1.7255) < 1e-4, 'scale');
 });
 
+test('snapping puts the art corner on the texel grid, like the client', () => {
+  for (let x = 0; x < 40; x++) {
+    const style = { jitter: 0.5, flip: true };
+    const placement = placeObject({ x, y: 7 }, { width: 1, height: 1 }, style, variants, 3, 1 / 16, 1 / 16);
+    const [pivotX, pivotY] = placement.art.pivot ?? [placement.art.rect[2] / 2, placement.art.rect[3]];
+    const fromLeft = placement.flip ? placement.art.rect[2] - pivotX : pivotX;
+    const corner = [placement.foot.x - fromLeft / 16, placement.foot.y - (placement.art.rect[3] - pivotY) / 16];
+    for (const value of corner) assert.ok(Math.abs(value * 16 - Math.round(value * 16)) < 1e-6, `${corner}`);
+  }
+});
+
 test('placement is deterministic and keeps the foot inside the footprint', () => {
   const seen = new Set();
   for (let x = 0; x < 40; x++) for (let y = 0; y < 40; y++) {

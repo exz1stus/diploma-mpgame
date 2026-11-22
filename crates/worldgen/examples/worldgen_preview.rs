@@ -9,8 +9,8 @@ use std::{
 
 use worldgen::{
     BasinSettings, BiomeMap, BiomeMapDefinition, BiomeRepository, ConfigSource, CraterGenerator,
-    FbmNoise, NoiseConfig, NoiseSource, PlanetParams, TemperatureCoefficients, TerrainSources,
-    TilePos, VolcanoGenerator, WorldConfig, WorldGenerator, WorldGeneratorConfig,
+    FbmNoise, NoiseConfig, PlanetParams, TemperatureCoefficients, TerrainSources, TilePos,
+    VolcanoGenerator, WorldConfig, WorldGenerator, WorldGeneratorConfig,
 };
 
 #[derive(serde::Serialize)]
@@ -71,15 +71,6 @@ fn controls() -> Vec<Control> {
         Some(config.world.terrain_scale),
         0.05,
         20.0,
-        "any",
-    );
-    add(
-        "frequency",
-        "Terrain coordinate scale",
-        "World",
-        Some(0.025),
-        0.000001,
-        1.0,
         "any",
     );
     add(
@@ -495,11 +486,10 @@ fn controls() -> Vec<Control> {
     controls
 }
 
-/// The world config with the preview's URL controls applied, plus the adapter-only
-/// controls (coordinate frequency and independent noise seeds).
+/// The world config with the preview's URL controls applied, plus the adapter-only seed
+/// overrides (which default to the seeds the game uses).
 struct PreviewSettings {
     world: WorldConfig,
-    frequency: f64,
     elevation_seed: u64,
     region_seed: u64,
 }
@@ -516,7 +506,6 @@ impl PreviewSettings {
         let seed = world.world.seed;
         Ok(Self {
             world,
-            frequency: values["frequency"],
             elevation_seed: values
                 .get("elevation_seed")
                 .map_or(seed, |seed| *seed as u64),
@@ -655,31 +644,18 @@ fn apply_volcano_controls(
     Ok(())
 }
 
-// Preview controls are an adapter concern, separate from the world configuration.
-struct PreviewNoise {
-    source: FbmNoise,
-    frequency: f64,
-}
-
-impl NoiseSource for PreviewNoise {
-    fn sample(&self, x: f64, y: f64) -> f64 {
-        self.source.sample(x * self.frequency, y * self.frequency)
-    }
-}
-
+/// The generator the game builds from the same config (`TerrainSources::from_config`), with
+/// the preview's seed overrides; noise is sampled at plain tile coordinates, as in the game.
 fn preview_generator(settings: &PreviewSettings) -> WorldGenerator {
     let world = &settings.world.world;
-    let scaled = |config| PreviewNoise {
-        source: FbmNoise::new(settings.elevation_seed, config),
-        frequency: settings.frequency,
-    };
+    let noise = |config| FbmNoise::new(settings.elevation_seed, config);
     // `build_with` scales the features; the noise sources get `terrain_scale` here.
     let elevation = world.scaled_elevation();
     settings
         .world
         .build_with(TerrainSources {
-            elevation: Box::new(scaled(elevation)),
-            basin_floor: Box::new(scaled(settings.world.basins.floor_noise(elevation))),
+            elevation: Box::new(noise(elevation)),
+            basin_floor: Box::new(noise(settings.world.basins.floor_noise(elevation))),
             temperature_regions: Box::new(FbmNoise::new(
                 settings.region_seed,
                 world.scaled_region_noise(),
@@ -1211,10 +1187,26 @@ mod tests {
         }
     }
 
+    /// The preview is the truth: with default controls it generates exactly what the server
+    /// generates from the bundled config.
     #[test]
-    fn basin_smoothing_uses_the_same_elevation_seed_and_coordinate_scale() {
+    fn the_preview_generates_what_the_game_generates() {
+        let preview = preview_generator(&PreviewSettings::from_params(&HashMap::new()).unwrap());
+        let game = WorldConfig::bundled().build().unwrap();
+        for (x, y) in [(0, 0), (100, 120), (249, 3)] {
+            let pos = worldgen::ChunkPos { x, y };
+            assert_eq!(
+                preview.chunk_at(pos).unwrap(),
+                game.chunk_at(pos).unwrap(),
+                "{pos:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn basin_smoothing_uses_the_same_elevation_seed_and_frequency() {
         let query = format!(
-            "{BASIN_QUERY}&elevation_seed=123&frequency=0.125&basin_min_depth=0&basin_max_depth=0&basin_min_rim_height=0&basin_max_rim_height=0&basin_smoothing=1"
+            "{BASIN_QUERY}&elevation_seed=123&elevation_frequency=0.00025&basin_min_depth=0&basin_max_depth=0&basin_min_rim_height=0&basin_max_rim_height=0&basin_smoothing=1"
         );
         let disabled = region_bytes(&format!("{query}&basin_probability=0")).unwrap();
         let matching_source = region_bytes(&format!("{query}&basin_coarse_octaves=12")).unwrap();
@@ -1286,7 +1278,6 @@ mod tests {
             "elevation_octaves=2",
             "elevation_lacunarity=2",
             "elevation_persistence=0.8",
-            "frequency=0.1",
         ] {
             let changed = first_metrics(&format!("{EQUATOR_QUERY}&{setting}"));
             assert_ne!(changed.0, original.0, "{setting} must affect elevation");
@@ -1427,13 +1418,10 @@ mod tests {
 
     #[test]
     fn exact_region_preserves_generator_colors_and_metrics() {
-        let bytes =
-            region_bytes("min_x=0&min_y=0&max_x=1&max_y=0&lod=0&size=4&seed=42&frequency=0.025")
-                .unwrap();
+        let bytes = region_bytes("min_x=0&min_y=0&max_x=1&max_y=0&lod=0&size=4&seed=42").unwrap();
         assert_eq!(bytes.len(), 2 * 4 * 4 * SAMPLE_BYTES);
-        let generator = preview_generator(
-            &PreviewSettings::from_params(&params("seed=42&size=4&frequency=0.025")).unwrap(),
-        );
+        let generator =
+            preview_generator(&PreviewSettings::from_params(&params("seed=42&size=4")).unwrap());
         for chunk in 0..2 {
             for y in 0..4 {
                 for x in 0..4 {
@@ -1453,12 +1441,9 @@ mod tests {
 
     #[test]
     fn coarser_region_samples_representative_global_tile() {
-        let bytes =
-            region_bytes("min_x=1&min_y=1&max_x=1&max_y=1&lod=2&size=4&seed=0&frequency=0.025")
-                .unwrap();
-        let generator = preview_generator(
-            &PreviewSettings::from_params(&params("size=4&frequency=0.025")).unwrap(),
-        );
+        let bytes = region_bytes("min_x=1&min_y=1&max_x=1&max_y=1&lod=2&size=4&seed=0").unwrap();
+        let generator =
+            preview_generator(&PreviewSettings::from_params(&params("size=4")).unwrap());
         assert_record(&bytes[..SAMPLE_BYTES], &generator, TilePos { x: 18, y: 18 });
     }
 
@@ -1473,13 +1458,11 @@ mod tests {
             serde_json::from_str(&metadata("size=4", 123).unwrap()).unwrap();
         assert_eq!(meta["world"]["width"], side);
         assert_eq!(meta["world"]["height"], side);
-        assert!(
-            region_bytes("min_x=-1&min_y=0&max_x=0&max_y=0&lod=0&size=4&frequency=0.025").is_err()
-        );
+        assert!(region_bytes("min_x=-1&min_y=0&max_x=0&max_y=0&lod=0&size=4").is_err());
         let outside = side / 4;
         assert!(
             region_bytes(&format!(
-                "min_x={outside}&max_x={outside}&min_y=0&max_y=0&lod=0&size=4&frequency=0.025"
+                "min_x={outside}&max_x={outside}&min_y=0&max_y=0&lod=0&size=4"
             ))
             .is_err()
         );
@@ -1492,11 +1475,9 @@ mod tests {
             ..Default::default()
         })
         .unwrap();
-        let bytes =
-            region_bytes("min_x=0&max_x=0&min_y=0&max_y=0&lod=13&size=4&frequency=0.025").unwrap();
-        let generator = preview_generator(
-            &PreviewSettings::from_params(&params("size=4&frequency=0.025")).unwrap(),
-        );
+        let bytes = region_bytes("min_x=0&max_x=0&min_y=0&max_y=0&lod=13&size=4").unwrap();
+        let generator =
+            preview_generator(&PreviewSettings::from_params(&params("size=4")).unwrap());
         assert_record(
             &bytes[..SAMPLE_BYTES],
             &generator,

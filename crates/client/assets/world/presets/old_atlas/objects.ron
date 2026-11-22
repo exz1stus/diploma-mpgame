@@ -41,8 +41,8 @@
     surfaces: {},
     kinds: {
         "rock": (sprite: Some("rock"), jitter: 0.3, placeholder: Some("#5A5550")),
-        "large_rock": (sprite: Some("boulder"), jitter: 0.25, scale: (1.0, 1.2), placeholder: Some("#4A4642")),
+        "large_rock": (sprite: Some("boulder"), jitter: 0.25, placeholder: Some("#4A4642")),
         "iron_ore": (sprite: Some("spikes"), jitter: 0.25, placeholder: Some("#7A4A35")),
-        "pebbles": (sprite: Some("pebbles"), jitter: 0.4, layer: Ground, placeholder: Some("#77726B")),
+        "pebbles": (sprite: Some("pebbles"), jitter: 0.4, layer: Ground, occlusion: false, placeholder: Some("#77726B")),
     },
 )

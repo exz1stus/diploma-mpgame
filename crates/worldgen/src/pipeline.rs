@@ -74,12 +74,10 @@ impl WorldConfig {
             ObjectPlacer::from_config(&self.biomes, &self.objects, &self.feature_spawns(), &biomes)
                 .map_err(|error| ConfigError::invalid(objects_error_file(&error), error))?;
         let stages = self.stages(sources, &biomes, biome_map);
-        Ok(WorldGenerator::new(
-            dimensions,
-            stages,
-            biomes,
-            object_placer,
-        ))
+        Ok(
+            WorldGenerator::new(dimensions, stages, biomes, object_placer)
+                .with_planet(self.world.climate.planet),
+        )
     }
 
     /// Elevation, enabled features in order (basins, craters, volcanoes), clamp,

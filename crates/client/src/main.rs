@@ -15,8 +15,14 @@ use shared::app_init;
 use shared::role::NetworkRole;
 
 use crate::{
-    combat::CombatPlugin, config::ClientConfig, entities::EntityVisualsPlugin, net::NetPlugin,
-    player::PlayerPlugin, schedule::SchedulePlugin, ui::UiPlugin, world::WorldPresentationPlugin,
+    combat::CombatPlugin,
+    config::ClientConfig,
+    entities::EntityVisualsPlugin,
+    net::NetPlugin,
+    player::PlayerPlugin,
+    schedule::SchedulePlugin,
+    ui::UiPlugin,
+    world::{ClockPlugin, WorldPresentationPlugin},
 };
 
 fn main() {
@@ -39,6 +45,7 @@ fn main() {
         NetPlugin {
             config: ClientConfig::new(),
         },
+        ClockPlugin,
         WorldPresentationPlugin,
         EntityVisualsPlugin,
         PlayerPlugin,

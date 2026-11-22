@@ -216,6 +216,7 @@ mod tests {
                     height: 1,
                 },
             }],
+            planet: Default::default(),
         }
     }
 
