@@ -1,9 +1,0 @@
-// The world clock, kept by the client until the server sends time (the server will then own it,
-// and temperatures will be sampled from it).
-//   day_length_secs: real seconds per day
-//   start:           time of day when the client starts, in [0, 1): 0.25 dawn, 0.5 noon on the
-//                    prime meridian, 0.75 dusk (local time shifts with longitude)
-(
-    day_length_secs: 600.0,
-    start: 0.35,
-)

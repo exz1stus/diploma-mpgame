@@ -1,10 +1,7 @@
 use bevy_renet::renet::ClientId;
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    commands::CommandError,
-    snapshots::{EntitySnapshot, NetworkComponentId, NetworkEntityId, WorldSnapshot},
-};
+use crate::snapshots::{EntitySnapshot, NetworkComponentId, NetworkEntityId, WorldSnapshot};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum ServerMessages {
@@ -23,10 +20,6 @@ pub enum ServerMessages {
         entity_id: NetworkEntityId,
         component_id: NetworkComponentId,
     },
-
-    NetworkCommandError(CommandError),
-
-    Inventory(crate::inventory::InventoryPacket),
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

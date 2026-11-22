@@ -2,11 +2,11 @@
 set -euo pipefail
 
 usage() {
-    printf 'Usage: %s [-n client_count] [-s survival|empty|circle|inventory]\n' "$0"
+    printf 'Usage: %s [-n client_count] [-s empty|circle]\n' "$0"
 }
 
 client_count=1
-scene=survival
+scene=empty
 while getopts ':n:s:h' option; do
     case "$option" in
         n) client_count=$OPTARG ;;
@@ -17,7 +17,7 @@ while getopts ':n:s:h' option; do
 done
 shift $((OPTIND - 1))
 
-if (( $# != 0 )) || [[ ! $client_count =~ ^[0-9]+$ ]] || [[ $scene != survival && $scene != empty && $scene != circle && $scene != inventory ]]; then
+if (( $# != 0 )) || [[ ! $client_count =~ ^[0-9]+$ ]] || [[ $scene != empty && $scene != circle ]]; then
     usage >&2
     exit 2
 fi
@@ -37,8 +37,6 @@ fi
 
 cargo build -p server -p client
 binary_dir="${CARGO_TARGET_DIR:-target}/debug"
-# Clients run as plain executables, so tell Bevy where the client's assets live.
-export BEVY_ASSET_ROOT="${BEVY_ASSET_ROOT:-$PWD/crates/client}"
 
 pids=()
 cleanup() {
@@ -59,21 +57,7 @@ start_process() {
     pids+=("$!")
 }
 
-setsid x-terminal-emulator "${terminal_args[@]}" -e env "TEST_SCENE=$scene" \
-    bash -c '
-        if "$@"; then
-            exit 0
-        else
-            status=$?
-        fi
-
-        if (( status != 130 && status != 143 )); then
-            printf "\nServer exited with status %d. Press any key to close this terminal..." "$status"
-            read -r -n 1 -s _
-            printf "\n"
-        fi
-        exit "$status"
-    ' _ "$binary_dir/server" &
+setsid x-terminal-emulator "${terminal_args[@]}" -e env "TEST_SCENE=$scene" "$binary_dir/server" &
 pids+=("$!")
 server_pid=${pids[0]}
 
