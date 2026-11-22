@@ -44,10 +44,15 @@ pub(crate) fn plugin(app: &mut App) {
         || "default".to_string(),
         |config| config.worldgen_preset.clone(),
     );
-    let generator = Arc::new(load_generator(
-        &preset_name,
-        WorldGeneratorConfig::default(),
-    ));
+    let mut config = WorldGeneratorConfig::default();
+    if let Some(seed) = std::env::var_os("WORLD_SEED") {
+        config.seed = seed
+            .to_str()
+            .expect("WORLD_SEED must contain valid text")
+            .parse::<u64>()
+            .expect("WORLD_SEED must be an unsigned 64-bit integer");
+    }
+    let generator = Arc::new(load_generator(&preset_name, config));
     install(app, generator, RECENT_CHUNKS);
     objects::default_kinds(app);
     app.configure_sets(

@@ -1,16 +1,18 @@
 use bevy::app::App;
 use bevy_ecs::{
     bundle::Bundle,
+    entity::Entity,
     lifecycle::{Add, Remove},
     observer::On,
     query::Without,
     resource::{IsResource, Resource},
     system::{Commands, EntityCommands, ParamSet, Query, Res, ResMut},
-    world::{EntityRef, EntityWorldMut},
+    world::{EntityRef, EntityWorldMut, World},
 };
 use bevy_renet::renet::{ClientId, DefaultChannel::ReliableOrdered};
 use shared::{
     components::{DisconnectPolicy, Ownership},
+    inventory::InventoryError,
     replication::{NetworkEntityMap, ReplicationRegistry},
     server_messages::{ServerMessage, ServerMessages},
     snapshots::{EntitySnapshot, NetworkEntityId, NetworkIdentity},
@@ -136,4 +138,34 @@ fn on_network_identity_removed(
             payload: ServerMessages::EntityDespawn(network_id),
         },
     });
+}
+pub(crate) fn reserve_network_ids(
+    world: &mut World,
+    count: usize,
+) -> Result<Vec<NetworkEntityId>, InventoryError> {
+    if count == 0 {
+        return Ok(Vec::new());
+    }
+    let count = u64::try_from(count).map_err(|_| InventoryError::Overflow)?;
+    let mut allocator = world.resource_mut::<NetworkIdAllocator>();
+
+    let end = allocator
+        .next_id
+        .checked_add(count)
+        .ok_or(InventoryError::Overflow)?;
+
+    let ids = ((allocator.next_id + 1)..=end).collect();
+    allocator.next_id = end;
+
+    Ok(ids)
+}
+pub(crate) fn network_spawn_reserved<T: Bundle>(
+    world: &mut World,
+    id: NetworkEntityId,
+    bundle: T,
+) -> Entity {
+    let entity = world.spawn(bundle).id();
+    world.entity_mut(entity).insert(NetworkIdentity { id });
+
+    entity
 }

@@ -5388,6 +5388,7 @@ dependencies = [
  "dotenvy",
  "lz4_flex",
  "postcard",
+ "ron",
  "serde",
  "worldgen",
 ]

@@ -405,7 +405,11 @@ fn find_local_player(world: &mut World) -> Option<Entity> {
 }
 
 fn read_movement_input(world: &World) -> (i8, i8) {
-    if !world.resource::<MenuState>().in_game() {
+    if !world.resource::<MenuState>().in_game()
+        || world
+            .resource::<bevy_egui::input::EguiWantsInput>()
+            .wants_any_keyboard_input()
+    {
         return (0, 0);
     }
     let keys = world.resource::<ButtonInput<KeyCode>>();

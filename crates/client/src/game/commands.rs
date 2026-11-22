@@ -170,9 +170,14 @@ pub fn update_shoot_aim(
     cameras: Query<(&Camera, &GlobalTransform), With<Camera2d>>,
     players: Query<&PhysicsPosition, With<Owned>>,
     menu: Res<MenuState>,
+    inventory: Res<crate::game::inventory::InventoryClient>,
 ) {
     aim.0 = None;
-    if !menu.in_game() || !client_state.initiated || egui_input.wants_any_pointer_input() {
+    if !menu.in_game()
+        || !client_state.initiated
+        || inventory.visible
+        || egui_input.wants_any_pointer_input()
+    {
         return;
     }
 
@@ -272,7 +277,12 @@ fn predict_shot_hit(world: &mut World, origin: Vec2, direction: Vec2) -> Option<
 }
 
 pub fn send_shoot_command(world: &mut World) {
-    if !world.resource::<MenuState>().in_game() {
+    if !world.resource::<MenuState>().in_game()
+        || world
+            .resource::<crate::game::inventory::InventoryClient>()
+            .visible
+        || world.resource::<EguiWantsInput>().wants_any_pointer_input()
+    {
         return;
     }
     if !world

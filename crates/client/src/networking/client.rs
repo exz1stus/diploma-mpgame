@@ -88,7 +88,12 @@ impl GameClient {
                 .run_if(client_connected),
         );
 
-        app.add_systems(Update, reset_disconnected_client);
+        app.add_systems(
+            Update,
+            reset_disconnected_client
+                .after(super::session::drive_session)
+                .before(toggle_menu),
+        );
         app.add_systems(Update, (render_world_chunks, render_world_objects));
         app.add_systems(Update, follow_player_camera.after(render_player_visuals));
         app.add_systems(PostUpdate, sample_network.after(RenetSend));

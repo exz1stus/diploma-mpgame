@@ -31,6 +31,7 @@ pub fn plugin(app: &mut App) {
     app.add_systems(
         FixedPostUpdate,
         handle_shoot
+            .in_set(super::inventory::InventorySet::Lifecycle)
             .after(SpatialQuerySystems)
             .before(ReplicationSet::Collect),
     );
@@ -80,7 +81,9 @@ fn handle_shoot(
                 });
 
             if let Some((entity, _)) = hit {
-                commands.entity(entity).try_despawn();
+                commands.queue(move |world: &mut bevy_ecs::world::World| {
+                    super::inventory::retire_entity(world, entity);
+                });
             }
 
             Ok(hit.map(|(_, id)| id))

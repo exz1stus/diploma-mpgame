@@ -27,6 +27,7 @@ pub enum ServerMessages {
     NetworkCommandError(CommandError),
 
     NetworkCommandResult(CommandResult),
+    Inventory(crate::inventory::InventoryPacket),
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

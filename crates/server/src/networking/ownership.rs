@@ -3,10 +3,14 @@ use bevy_ecs::{
     lifecycle::{Add, Remove},
     observer::On,
     system::{Commands, Query, ResMut},
+    world::World,
 };
 use shared::components::{DisconnectPolicy, Ownership};
 
-use crate::networking::client::{ClientLeft, ReplicationClients};
+use crate::{
+    game,
+    networking::client::{ClientLeft, ReplicationClients},
+};
 
 pub(crate) fn plugin(app: &mut App) {
     app.add_observer(on_ownership_added);
@@ -26,7 +30,9 @@ fn on_client_left(event: On<ClientLeft>, ownerships: Query<&Ownership>, mut comm
 
         match ownership.disconnect_policy {
             DisconnectPolicy::Despawn => {
-                commands.entity(entity).try_despawn();
+                commands.queue(move |world: &mut World| {
+                    game::inventory::retire_entity(world, entity);
+                });
             }
             DisconnectPolicy::Disown => {
                 commands.entity(entity).remove::<Ownership>();

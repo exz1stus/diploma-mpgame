@@ -173,13 +173,37 @@ pub(crate) fn on_client_initiated(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        game::inventory::{InventoryService, retire_entity},
+        networking::{entity, messages::MessageBuffer},
+    };
     use shared::components::{DisconnectPolicy, Ownership, Player};
+    use shared::{
+        inventory::{GroundItem, InventoryConfig, ItemStack},
+        replication::NetworkEntityMap,
+        role::NetworkRole,
+    };
 
     #[test]
     fn disconnect_despawns_owned_player() {
-        let mut app = App::new();
+        let mut app = shared::app_init(NetworkRole::Server);
         app.init_resource::<ReplicationClients>();
-        app.add_plugins(super::super::ownership::plugin);
+        app.init_resource::<NetworkEntityMap>();
+        app.init_resource::<MessageBuffer>();
+        app.insert_resource(TickCounter(0));
+        entity::plugin(&mut app);
+        super::super::ownership::plugin(&mut app);
+
+        let config = InventoryConfig::load_directory(
+            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../docs/week7"),
+        )
+        .unwrap();
+        let mut inventory = config.inventory("player");
+        inventory.slots[0].stack = Some(ItemStack {
+            item: "wood".into(),
+            quantity: 5,
+        });
+        app.insert_resource(InventoryService::new(config));
         app.world_mut()
             .resource_mut::<ReplicationClients>()
             .clients
@@ -190,16 +214,20 @@ mod tests {
                     phase: ClientSyncPhase::Ready,
                 },
             );
-        let player = app
-            .world_mut()
-            .spawn((
+        let player_id = entity::reserve_network_ids(app.world_mut(), 1).unwrap()[0];
+        let player = entity::network_spawn_reserved(
+            app.world_mut(),
+            player_id,
+            (
                 Player,
+                inventory,
+                avian2d::physics_transform::Position(bevy::math::Vec2::ZERO),
                 Ownership {
                     client_id: 7,
                     disconnect_policy: DisconnectPolicy::Despawn,
                 },
-            ))
-            .id();
+            ),
+        );
         assert!(
             app.world().resource::<ReplicationClients>().clients[&7]
                 .owned_entities
@@ -219,5 +247,12 @@ mod tests {
         app.update();
 
         assert!(app.world().get_entity(player).is_err());
+        // A second queued lifecycle request must not spill the same items again.
+        retire_entity(app.world_mut(), player);
+        let mut ground = app.world_mut().query::<&GroundItem>();
+        let drops: Vec<_> = ground.iter(app.world()).collect();
+        assert_eq!(drops.len(), 1);
+        assert_eq!(drops[0].stack.item, "wood");
+        assert_eq!(drops[0].stack.quantity, 5);
     }
 }

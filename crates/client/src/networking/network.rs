@@ -3,7 +3,10 @@ use super::{
     state::{ClientState, RemoteWorld},
 };
 use crate::{
-    game::commands::{PendingCommands, PredictedVisuals},
+    game::{
+        commands::{PendingCommands, PredictedVisuals},
+        inventory::InventoryClient,
+    },
     networking::{
         diagnostics::NetworkDiagnostics, physics::RemoteCollisionProxies,
         reconciliation::ReconciliationStatus, simulation_clock::ClientSimulationClock,
@@ -108,12 +111,14 @@ pub fn reset_disconnected_client(
     mut pending_commands: ResMut<PendingCommands>,
     mut predicted_visuals: ResMut<PredictedVisuals>,
     mut collision_proxies: ResMut<RemoteCollisionProxies>,
+    mut inventory: ResMut<InventoryClient>,
 ) {
     if !client.is_disconnected() {
         return;
     }
     pending_commands.clear();
     predicted_visuals.clear();
+    *inventory = InventoryClient::default();
     for (_, entity) in collision_proxies.entities.drain() {
         commands.entity(entity).try_despawn();
     }

@@ -43,6 +43,7 @@ fn main() {
         NetcodeClientPlugin,
         WorldStreamingPlugin,
     ));
+    app.add_plugins(game::inventory::InventoryPlugin);
 
     app.add_systems(Startup, spawn_camera);
     app.init_resource::<MenuState>();

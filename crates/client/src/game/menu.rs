@@ -83,8 +83,12 @@ impl MenuState {
     }
 }
 
-pub fn toggle_menu(keys: Res<ButtonInput<KeyCode>>, mut menu: ResMut<MenuState>) {
-    if !keys.just_pressed(KeyCode::Escape) {
+pub fn toggle_menu(
+    keys: Res<ButtonInput<KeyCode>>,
+    inventory: Res<crate::game::inventory::InventoryClient>,
+    mut menu: ResMut<MenuState>,
+) {
+    if inventory.escape_consumed || !keys.just_pressed(KeyCode::Escape) {
         return;
     }
     match menu.screen {
