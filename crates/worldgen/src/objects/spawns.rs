@@ -85,7 +85,10 @@ pub fn repeated_rule_id(source_kind: &str, source: &str, object: &str, repeat: u
 
 /// How many earlier spawns list the same object.
 fn repeat_index(earlier: &[ObjectSpawn], object: &str) -> usize {
-    earlier.iter().filter(|spawn| spawn.object == object).count()
+    earlier
+        .iter()
+        .filter(|spawn| spawn.object == object)
+        .count()
 }
 
 fn check_set_references(biomes: &BiomesFile, objects: &ObjectsFile) -> Result<(), ObjectsError> {
