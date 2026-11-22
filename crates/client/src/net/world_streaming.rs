@@ -192,6 +192,17 @@ fn clear_world_on_disconnect(
     }
 }
 
+/// Clear the old world's queued data before starting another connection.
+pub(crate) fn clear_streamed_world(world: &mut World) {
+    if let Some(mut chunks) = world.get_resource_mut::<StreamedChunks>() {
+        let old = std::mem::take(&mut *chunks);
+        for entity in old.chunks.into_values() {
+            world.despawn(entity);
+        }
+    }
+    world.remove_resource::<WorldInfo>();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -268,5 +279,30 @@ mod tests {
             world.get_entity(object).is_err(),
             "objects despawn with their chunk"
         );
+    }
+
+    #[test]
+    fn switching_sessions_clears_world_entities_and_queued_data() {
+        let mut world = World::new();
+        let chunk = world
+            .run_system_once(|mut commands: Commands| spawn_chunk(&mut commands, snapshot(0)))
+            .unwrap();
+        let object = world
+            .get::<ChunkContents>(chunk)
+            .unwrap()
+            .iter()
+            .next()
+            .unwrap();
+        let mut chunks = StreamedChunks::default();
+        chunks.chunks.insert(ChunkPos { x: 0, y: -1 }, chunk);
+        chunks.inbox.push_back(WorldMessage::ChunkLoad(snapshot(1)));
+        world.insert_resource(chunks);
+
+        clear_streamed_world(&mut world);
+
+        assert_eq!(world.resource::<StreamedChunks>().len(), 0);
+        assert_eq!(world.resource::<StreamedChunks>().queued(), 0);
+        assert!(world.get_entity(chunk).is_err());
+        assert!(world.get_entity(object).is_err());
     }
 }

@@ -4,7 +4,7 @@ use std::net::SocketAddr;
 
 use bevy::prelude::*;
 
-use crate::net::session::SessionIntent;
+use crate::{inventory::InventoryClient, net::session::SessionIntent};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Screen {
@@ -79,8 +79,12 @@ impl MenuState {
     }
 }
 
-pub fn toggle_menu(keys: Res<ButtonInput<KeyCode>>, mut menu: ResMut<MenuState>) {
-    if !keys.just_pressed(KeyCode::Escape) {
+pub fn toggle_menu(
+    keys: Res<ButtonInput<KeyCode>>,
+    inventory: Res<InventoryClient>,
+    mut menu: ResMut<MenuState>,
+) {
+    if inventory.escape_consumed || !keys.just_pressed(KeyCode::Escape) {
         return;
     }
     match menu.screen {

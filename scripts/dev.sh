@@ -2,7 +2,7 @@
 set -euo pipefail
 
 usage() {
-    printf 'Usage: %s [-n client_count] [-s empty|circle]\n' "$0"
+    printf 'Usage: %s [-n client_count] [-s empty|circle|inventory]\n' "$0"
 }
 
 client_count=1
@@ -17,7 +17,7 @@ while getopts ':n:s:h' option; do
 done
 shift $((OPTIND - 1))
 
-if (( $# != 0 )) || [[ ! $client_count =~ ^[0-9]+$ ]] || [[ $scene != empty && $scene != circle ]]; then
+if (( $# != 0 )) || [[ ! $client_count =~ ^[0-9]+$ ]] || [[ $scene != empty && $scene != circle && $scene != inventory ]]; then
     usage >&2
     exit 2
 fi

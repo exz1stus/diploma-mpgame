@@ -1,0 +1,39 @@
+// Editable item definitions loaded at startup. See PLAYTEST.md.
+// IDs are permanent content keys. Never derive IDs from list positions.
+(
+    schema_version: 1,
+    items: [
+        (
+            id: "wood",
+            display_name: "Wood",
+            max_stack: 40,
+            icon: None,
+            fallback_rgba: (150, 105, 65, 255),
+            consume: None,
+        ),
+        (
+            id: "stone",
+            display_name: "Stone",
+            max_stack: 40,
+            icon: None,
+            fallback_rgba: (155, 165, 175, 255),
+            consume: None,
+        ),
+        (
+            id: "iron_ore",
+            display_name: "Iron ore",
+            max_stack: 50,
+            icon: None,
+            fallback_rgba: (105, 135, 165, 255),
+            consume: None,
+        ),
+        (
+            id: "healing_herb",
+            display_name: "Healing herb",
+            max_stack: 20,
+            icon: None,
+            fallback_rgba: (95, 185, 110, 255),
+            consume: Some(Heal(amount: 20)),
+        ),
+    ],
+)

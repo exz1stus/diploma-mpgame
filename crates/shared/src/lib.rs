@@ -1,12 +1,14 @@
 use bevy::app::App;
 
 use crate::components::{EntityKind, Health, NetworkPhysicsState, Ownership, Player};
+use crate::inventory::{Chest, GroundItem};
 use crate::replication::ReplicatedComponentAppExt;
 use crate::role::NetworkRole;
 
 pub mod client_messages;
 pub mod commands;
 pub mod components;
+pub mod inventory;
 pub mod movement;
 pub mod replication;
 pub mod role;
@@ -23,6 +25,8 @@ pub fn register_components(app: &mut App) {
     app.add_replicated::<Ownership>().reliable();
     app.add_replicated::<Player>().reliable();
     app.add_replicated::<EntityKind>().reliable();
+    app.add_replicated::<Chest>().reliable();
+    app.add_replicated::<GroundItem>().reliable();
 }
 
 pub fn app_init(role: NetworkRole) -> App {

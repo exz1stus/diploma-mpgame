@@ -2,6 +2,7 @@ mod assets;
 mod combat;
 mod config;
 mod entities;
+mod inventory;
 mod net;
 mod player;
 mod render_layers;
@@ -18,6 +19,7 @@ use crate::{
     combat::CombatPlugin,
     config::ClientConfig,
     entities::EntityVisualsPlugin,
+    inventory::InventoryPlugin,
     net::NetPlugin,
     player::PlayerPlugin,
     schedule::SchedulePlugin,
@@ -50,6 +52,7 @@ fn main() {
         EntityVisualsPlugin,
         PlayerPlugin,
         CombatPlugin,
+        InventoryPlugin,
         UiPlugin,
     ));
 
