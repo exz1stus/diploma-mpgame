@@ -105,9 +105,7 @@ pub fn process_server_message(
 
         ServerMessages::Inventory(packet) => {
             commands.queue(move |world: &mut World| {
-                world
-                    .resource_mut::<InventoryClient>()
-                    .receive(packet);
+                world.resource_mut::<InventoryClient>().receive(packet);
             });
         }
     }

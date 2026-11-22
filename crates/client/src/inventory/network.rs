@@ -16,10 +16,7 @@ use shared::{
 };
 
 pub(super) fn plugin(app: &mut App) {
-    app.add_systems(
-        Update,
-        send_inventory_commands.in_set(ClientSet::Send),
-    );
+    app.add_systems(Update, send_inventory_commands.in_set(ClientSet::Send));
 }
 
 fn send_inventory_commands(world: &mut World) {
