@@ -10,7 +10,12 @@
 //   like height steps but without shading;
 // - temperature: the ground is multiplied by the winning biome's tint, interpolated from its
 //   tiles' tints (chunk_mesh::tile_data can average them within a layer to soften colors
-//   inside a biome).
+//   inside a biome);
+// - pixel depth: every texture pixel has a height (the tile array's alpha, baked by
+//   textures::bake_pixel_heights). A higher layer's coverage gains pixel_depth times its pixel's
+//   height over the lowest ground's pixel here, and a biome's score pixel_depth times its
+//   pixel's height, so raised pixels (stones, highlights) reach past an edge and low ones
+//   (cracks) give way: edges follow the art, and the height shadow follows the edges.
 // Positions are snapped to the texture pixel grid so everything stays pixel-art crisp.
 //
 // tools/worldgen-preview/dist/terrain.mjs implements the same algorithm; keep them in sync.
@@ -25,7 +30,7 @@
 struct TerrainParams {
     // Global tile coordinates of the chunk's minimum corner, chunk size, pixels per tile.
     chunk: vec4<f32>,
-    // Unused, overlay reach, edge noise, noise scale.
+    // Pixel depth, overlay reach, edge noise, noise scale.
     blend: vec4<f32>,
     // Height shadow strength, height shadow width in pixels, south scale, north scale.
     shade: vec4<f32>,
@@ -74,12 +79,17 @@ fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
     return select(pow((c + 0.055) / 1.055, vec3(2.4)), c / 12.92, c <= vec3(0.04045));
 }
 
-fn texel_color(layer: u32, texel: vec2<i32>) -> vec3<f32> {
+// A tile texture's texel at a world texel, repeating: color in rgb, pixel height in a.
+fn tile_texel(layer: u32, texel: vec2<i32>) -> vec4<f32> {
     let size = vec2<i32>(textureDimensions(tiles));
     let x = ((texel.x % size.x) + size.x) % size.x;
     // Image rows run top-down; world +Y is up.
     let y = size.y - 1 - (((texel.y % size.y) + size.y) % size.y);
-    return textureLoad(tiles, vec2<i32>(x, y), i32(layer), 0).rgb;
+    return textureLoad(tiles, vec2<i32>(x, y), i32(layer), 0);
+}
+
+fn pixel_height(layer: u32, texel: vec2<i32>) -> f32 {
+    return tile_texel(layer, texel).a;
 }
 
 @fragment
@@ -110,15 +120,30 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         tint_of[i] = vec3<f32>(textureLoad(tile_tints, at, 0).rgb);
     }
 
+    // Pixel depth: each corner's texture height here; relief over the lowest ground's.
+    let depth = params.blend.x;
+    var lowest = 0;
+    var height_of: array<f32, 4>;
+    for (var i = 0; i < 4; i++) {
+        height_of[i] = pixel_height(layer_of[i], pixel);
+        if level_of[i] < level_of[lowest] {
+            lowest = i;
+        }
+    }
+    var relief: array<f32, 4>;
+    for (var i = 0; i < 4; i++) {
+        relief[i] = depth * (height_of[i] - height_of[lowest]);
+    }
+
     // Height: the highest covering layer, and how close the nearest higher edge is.
     let threshold = 0.5 - params.blend.y - params.blend.z * edge_noise(p, params.blend.w);
-    var chosen = min(min(level_of[0], level_of[1]), min(level_of[2], level_of[3]));
+    var chosen = level_of[lowest];
     for (var i = 0; i < 4; i++) {
         let level = level_of[i];
         if level <= chosen {
             continue;
         }
-        var covered = 0.0;
+        var covered = relief[i];
         for (var j = 0; j < 4; j++) {
             if level_of[j] >= level {
                 covered += coverage[j];
@@ -134,7 +159,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         if level_of[i] <= chosen {
             continue;
         }
-        var covered = 0.0;
+        var covered = relief[i];
         for (var j = 0; j < 4; j++) {
             if level_of[j] >= level_of[i] {
                 covered += coverage[j];
@@ -168,7 +193,8 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
                 covered += coverage[j];
             }
         }
-        let score = covered + params.blend.z * biome_noise(p, params.blend.w, biome_of[i]);
+        let score = covered + depth * height_of[i]
+            + params.blend.z * biome_noise(p, params.blend.w, biome_of[i]);
         if score > best {
             best = score;
             winner = i;
@@ -176,7 +202,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     // The winning biome's texture, and its tiles' tints interpolated bilinearly.
-    let color = texel_color(layer_of[winner], pixel);
+    let color = tile_texel(layer_of[winner], pixel).rgb;
     var tint_sum = vec3(0.0);
     var tint_total = 0.0;
     for (var i = 0; i < 4; i++) {

@@ -69,6 +69,11 @@ impl TextureTable {
 /// Biomes: within a layer, biomes meet on crisp, noisy edges too (without shading); texture
 /// and tint change together. The ground is multiplied by its biome's tint
 /// (`TileTable::tints`), optionally averaged over neighboring tiles of the same layer.
+///
+/// Pixel depth: every texture pixel has a height, its brightness relative to the rest of its
+/// texture (see [`super::textures::bake_pixel_heights`]). Where textures meet, raised pixels
+/// (stones, highlights) reach past the edge and low ones (cracks, shade) give way, so height
+/// and biome edges follow the art instead of noise alone.
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct TileBlend {
@@ -81,6 +86,9 @@ pub struct TileBlend {
     pub edge_noise: f32,
     /// Size of the edge irregularities, in tiles.
     pub noise_scale: f32,
+    /// How far pixel heights move height and biome edges, in tiles (0 to 1): how much further
+    /// a texture's highest pixel reaches than its neighbor's lowest one. 0 ignores them.
+    pub pixel_depth: f32,
     /// Darkening of lower ground at the foot of a higher layer (0 to 1).
     pub ao_strength: f32,
     /// Width of that shade, in texture pixels (0 to 16); it fades out one step per pixel.
@@ -106,6 +114,7 @@ impl Default for TileBlend {
             overlay_reach: 0.15,
             edge_noise: 0.35,
             noise_scale: 0.5,
+            pixel_depth: 0.2,
             ao_strength: 0.35,
             ao_width: 3,
             ao_south: 1.5,
@@ -131,6 +140,7 @@ impl TileBlend {
             overlay_reach: clamp(self.overlay_reach, 0.0, 0.5, fallback.overlay_reach),
             edge_noise: clamp(self.edge_noise, 0.0, 1.0, fallback.edge_noise),
             noise_scale: clamp(self.noise_scale, 0.05, 64.0, fallback.noise_scale),
+            pixel_depth: clamp(self.pixel_depth, 0.0, 1.0, fallback.pixel_depth),
             ao_strength: clamp(self.ao_strength, 0.0, 1.0, fallback.ao_strength),
             ao_width: self.ao_width.min(16),
             ao_south: clamp(self.ao_south, 0.0, 4.0, fallback.ao_south),

@@ -1,13 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildTileData, composeChunk, edgeNoise, lattice, sanitizeBlend } from './dist/terrain.mjs';
+import { buildTileData, composeChunk, edgeNoise, lattice, pixelHeights, sanitizeBlend } from './dist/terrain.mjs';
 import {
   bandedPresentation, cropRegion, defaultLayers, rampTint, hexRgb, migrateObjects, planetPresentation, PLANET_PALETTE, drawnTexture, objectsRon, parseRon,
   readAtlas, recolorImage, stackLayers, tileCatalog, tileRegion, tilesRon,
 } from './dist/presentation.mjs';
 
 // No edge noise, no height shadow, no tint smoothing.
-const NO_NOISE = { pixels_per_tile: 2, overlay_reach: 0, edge_noise: 0, noise_scale: 0.5, ao_strength: 0, ao_width: 0, ao_south: 1, ao_north: 1, tint_radius: 0 };
+const NO_NOISE = { pixels_per_tile: 2, overlay_reach: 0, edge_noise: 0, noise_scale: 0.5, pixel_depth: 0, ao_strength: 0, ao_width: 0, ao_south: 1, ao_north: 1, tint_radius: 0 };
 const WHITE = [255, 255, 255];
 
 // Solid 2 × 2 textures: index i is gray level 40 * (i + 1).
@@ -38,8 +38,28 @@ test('the hash matches the shader\'s u32 arithmetic', () => {
 
 test('blend settings clamp like the client', () => {
   assert.deepEqual(sanitizeBlend({ pixels_per_tile: 0, overlay_reach: -1, edge_noise: NaN, noise_scale: 0, ao_width: 40, tint_radius: 99 }),
-    { pixels_per_tile: 1, overlay_reach: 0, edge_noise: 0.35, noise_scale: 0.05, ao_strength: 0.35, ao_width: 16, ao_south: 1.5, ao_north: 0.4, tint_radius: 12 });
+    { pixels_per_tile: 1, overlay_reach: 0, edge_noise: 0.35, noise_scale: 0.05, pixel_depth: 0.2, ao_strength: 0.35, ao_width: 16, ao_south: 1.5, ao_north: 0.4, tint_radius: 12 });
   assert.equal(sanitizeBlend({ ao_south: 9 }).ao_south, 4);
+});
+
+test('pixel heights span the full range around the texture mean, like the client bake', () => {
+  // Same cases as textures::tests::pixel_heights_span_the_full_range_around_the_mean.
+  assert.deepEqual([...pixelHeights(Uint8Array.from([0, 0, 0, 255, 10, 10, 10, 255, 30, 0, 0, 255, 20, 20, 20, 255]))], [0, 128, 128, 255]);
+  assert.deepEqual([...pixelHeights(Uint8Array.from([100, 0, 0, 255, 103, 0, 0, 255]))], [0, 255]);
+  assert.deepEqual([...pixelHeights(new Uint8Array(16).fill(7))], [128, 128, 128, 128], 'flat');
+});
+
+test('pixel depth lets raised pixels reach past an edge and low ones give way', () => {
+  // Higher ground (texture 1) east of flat ground (texture 0, gray 40). Texture 1's columns
+  // alternate dark (20, lowest) and bright (200, highest).
+  const flat = Uint8Array.from({ length: 16 }, (_, c) => (c % 4 === 3 ? 255 : 40));
+  const ridged = Uint8Array.from([0, 1, 0, 1].flatMap(bright => [bright ? 200 : 20, bright ? 200 : 20, bright ? 200 : 20, 255]));
+  const layers = { width: 2, height: 2, layers: [flat, ridged] };
+  const columns = [[0, 0], [0, 0], [1, 1], [1, 1]];
+  const row = image => [...Array(image.width).keys()].map(x => pixel(image, x, 3)[0]);
+  assert.deepEqual(row(chunk(columns, { layers })), [40, 40, 40, 40, 20, 200, 20, 200], 'no depth: edge on the tile border');
+  // The bright pixel west of the border climbs over; the dark one east of it sinks under.
+  assert.deepEqual(row(chunk(columns, { layers, blend: { ...NO_NOISE, pixel_depth: 0.6 } })), [40, 40, 40, 200, 40, 200, 20, 200]);
 });
 
 test('textures repeat in world space with image rows top-down and world +Y up', () => {
@@ -235,7 +255,7 @@ test('the planet preset gives every kind five darker-to-lighter height layers', 
 });
 
 test('exported RON parses back and keeps every setting', () => {
-  const tiles = { textures: { ash: 'basalt' }, default_placeholder: '#FF00FF', placeholder_colors: { basalt: '#202020', 'odd "name"': '#000000' }, regions: { basalt: 'basalt_0' }, recolor: true, layers: { basalt: 3 }, tints: { ash: '#AA8866' }, blend: { pixels_per_tile: 16, overlay_reach: 0.2, edge_noise: 0.35, noise_scale: 0.5, ao_strength: 0.4, ao_width: 2, ao_south: 2, ao_north: 0.25, tint_radius: 6 } };
+  const tiles = { textures: { ash: 'basalt' }, default_placeholder: '#FF00FF', placeholder_colors: { basalt: '#202020', 'odd "name"': '#000000' }, regions: { basalt: 'basalt_0' }, recolor: true, layers: { basalt: 3 }, tints: { ash: '#AA8866' }, blend: { pixels_per_tile: 16, overlay_reach: 0.2, edge_noise: 0.35, noise_scale: 0.5, pixel_depth: 0.3, ao_strength: 0.4, ao_width: 2, ao_south: 2, ao_north: 0.25, tint_radius: 6 } };
   assert.deepEqual(parseRon(tilesRon(tiles)), tiles);
   const objects = {
     default_placeholder: '#475A47',
