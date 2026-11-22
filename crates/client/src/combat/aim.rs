@@ -5,6 +5,7 @@ use bevy::{prelude::*, window::PrimaryWindow};
 use bevy_egui::input::EguiWantsInput;
 
 use crate::{
+    inventory::InventoryClient,
     net::state::{ClientState, Owned},
     ui::menu::MenuState,
 };
@@ -35,9 +36,14 @@ pub fn update_shoot_aim(
     cameras: Query<(&Camera, &GlobalTransform), With<Camera2d>>,
     players: Query<&PhysicsPosition, With<Owned>>,
     menu: Res<MenuState>,
+    inventory: Res<InventoryClient>,
 ) {
     aim.0 = None;
-    if !menu.in_game() || !client_state.initiated || egui_input.wants_any_pointer_input() {
+    if !menu.in_game()
+        || !client_state.initiated
+        || inventory.visible
+        || egui_input.wants_any_pointer_input()
+    {
         return;
     }
 

@@ -62,6 +62,7 @@ impl MessageEvent {
                 ServerMessages::ComponentRemove { .. } => "Component remove",
                 ServerMessages::NetworkCommandError(_) => "Network command error",
                 ServerMessages::NetworkCommandResult(_) => "Network command result",
+                ServerMessages::Inventory(_) => "Inventory",
             },
         }
     }
@@ -115,6 +116,13 @@ impl MessageEvent {
                 ServerMessages::NetworkCommandResult(result) => {
                     format!("command id: {}\noutcome: {:?}", result.id, result.outcome)
                 }
+                ServerMessages::Inventory(packet) => format!(
+                    "epoch: {}\nserial: {}\nviews: {}\nreceipt: {:?}",
+                    packet.epoch,
+                    packet.serial,
+                    packet.state.views.len(),
+                    packet.receipt,
+                ),
             },
         }
     }

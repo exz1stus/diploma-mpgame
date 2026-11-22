@@ -6,12 +6,13 @@ edition = "2024"
 [dependencies]
 postcard.workspace = true
 avian2d.workspace = true
-serde.workspace = true
+serde = { workspace = true, features = ["derive"] }
 bevy.workspace = true
 bevy_ecs.workspace = true
 bevy_renet.workspace = true
 dotenvy = "0.15.7"
 lz4_flex = "0.14.0"
+ron = "0.12"
 worldgen = { path = "../worldgen" }
 
 [lints]

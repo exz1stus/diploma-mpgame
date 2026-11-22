@@ -5,6 +5,7 @@ use std::collections::{HashMap, HashSet};
 
 use avian2d::physics_transform::Position as PhysicsPosition;
 use bevy::prelude::*;
+use bevy_egui::input::EguiWantsInput;
 use shared::{
     commands::{CommandError, CommandOutcome, Shoot},
     components::{NetworkPhysicsState, Player},
@@ -16,6 +17,7 @@ use super::{
     commands::{PredictedCommand, submit},
 };
 use crate::{
+    inventory::InventoryClient,
     net::state::{Owned, RemoteWorld},
     ui::menu::MenuState,
 };
@@ -125,7 +127,10 @@ fn predict_shot_hit(world: &mut World, origin: Vec2, direction: Vec2) -> Option<
 }
 
 pub fn send_shoot_command(world: &mut World) {
-    if !world.resource::<MenuState>().in_game() {
+    if !world.resource::<MenuState>().in_game()
+        || world.resource::<InventoryClient>().visible
+        || world.resource::<EguiWantsInput>().wants_any_pointer_input()
+    {
         return;
     }
     if !world

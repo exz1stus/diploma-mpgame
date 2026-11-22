@@ -7,6 +7,7 @@ use std::{
 use crate::{
     combat::{ShootAimState, commands::PendingCommands, shoot::PredictedVisuals},
     config::ClientConfig,
+    inventory::InventoryClient,
     net::{
         diagnostics::NetworkDiagnostics,
         network::NetworkSimulation,
@@ -15,6 +16,7 @@ use crate::{
         simulation_clock::ClientSimulationClock,
         state::{ClientState, RemoteWorld},
         time_sync::TimeSyncEstimates,
+        world_streaming::clear_streamed_world,
     },
     ui::menu::{MenuState, Screen},
 };
@@ -248,6 +250,7 @@ impl Session {
         world.insert_resource(client);
 
         self.host = None;
+        clear_streamed_world(world);
 
         let remote = std::mem::take(&mut *world.resource_mut::<RemoteWorld>());
 
@@ -268,6 +271,7 @@ impl Session {
         *world.resource_mut::<ReconciliationStatus>() = ReconciliationStatus::default();
         *world.resource_mut::<NetworkDiagnostics>() = NetworkDiagnostics::default();
         *world.resource_mut::<ShootAimState>() = ShootAimState::default();
+        *world.resource_mut::<InventoryClient>() = InventoryClient::default();
 
         world.resource_mut::<PendingCommands>().clear();
         world.resource_mut::<PredictedVisuals>().clear();

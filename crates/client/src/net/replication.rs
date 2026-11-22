@@ -1,5 +1,6 @@
 use crate::{
     combat::{commands::PendingCommands, shoot::PredictedVisuals},
+    inventory::InventoryClient,
     net::physics::clear_remote_collision_proxies,
     net::replication_handlers::{
         handle_component_remove, handle_entity_despawn, handle_entity_spawn, handle_entity_update,
@@ -14,6 +15,7 @@ use super::{
 use bevy::{platform::collections::HashMap, prelude::*};
 use shared::{
     components::{NetworkPhysicsState, Ownership},
+    inventory::GroundItem,
     replication::{ReplicatedComponent, ReplicationRegistry},
     server_messages::{ServerMessage, ServerMessages},
     snapshots::{EntitySnapshot, NetworkIdentity},
@@ -37,6 +39,7 @@ pub fn process_server_message(
             pending_commands.clear();
             commands.queue(|world: &mut World| {
                 world.resource_mut::<PredictedVisuals>().clear();
+                *world.resource_mut::<InventoryClient>() = InventoryClient::default();
             });
             commands.queue(clear_remote_collision_proxies);
 
@@ -99,6 +102,14 @@ pub fn process_server_message(
         ServerMessages::NetworkCommandResult(result) => {
             pending_commands.resolve(message.sequence, Ok(result), commands);
         }
+
+        ServerMessages::Inventory(packet) => {
+            commands.queue(move |world: &mut World| {
+                world
+                    .resource_mut::<InventoryClient>()
+                    .receive(packet);
+            });
+        }
     }
     false
 }
@@ -145,7 +156,7 @@ pub fn spawn_remote_entity(
     let pending = std::mem::take(&mut remote_world.pending_updates);
     for (pending_tick, snapshot) in pending {
         if snapshot.id == id {
-            if pending_tick > tick {
+            if pending_tick >= tick {
                 apply_components(
                     snapshot,
                     pending_tick,
@@ -203,6 +214,26 @@ pub fn apply_components(
         let Some(registered) = registry.components.get(&component.component_id) else {
             continue;
         };
+
+        // Ground stacks have their own revision: a spawn and a partial pickup
+        // may both be published during one server tick.
+        if component.component_id == GroundItem::NETWORK_ID {
+            let Ok(incoming) = postcard::from_bytes::<GroundItem>(&component.data) else {
+                continue;
+            };
+            commands.queue(move |world: &mut World| {
+                let Ok(mut entity) = world.get_entity_mut(entity) else {
+                    return;
+                };
+                if entity
+                    .get::<GroundItem>()
+                    .is_none_or(|current| incoming.revision > current.revision)
+                {
+                    entity.insert(incoming);
+                }
+            });
+            continue;
+        }
 
         if replica
             .last_ticks

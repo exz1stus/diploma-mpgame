@@ -1,9 +1,9 @@
+use crate::inventory::{Chest, GroundItem};
+use crate::{movement::TickNumber, replication::ReplicatedComponent};
 use bevy::math::Vec2;
 use bevy_ecs::component::Component;
 use bevy_renet::renet::ClientId;
 use serde::{Deserialize, Serialize};
-
-use crate::{movement::TickNumber, replication::ReplicatedComponent};
 
 #[derive(Component, Serialize, Deserialize, Debug)]
 pub struct Player;
@@ -64,4 +64,12 @@ macro_rules! assign_network_ids {
     };
 }
 
-assign_network_ids!(Ownership, Player, NetworkPhysicsState, Health, EntityKind);
+assign_network_ids!(
+    Ownership,
+    Player,
+    NetworkPhysicsState,
+    Health,
+    EntityKind,
+    Chest,
+    GroundItem
+);

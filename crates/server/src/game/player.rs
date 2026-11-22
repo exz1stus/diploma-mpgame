@@ -7,12 +7,12 @@ use bevy_ecs::{
     bundle::Bundle,
     observer::On,
     query::With,
-    system::{Commands, Query},
+    system::{Commands, Query, Res},
 };
 use shared::components::{DisconnectPolicy, EntityKind, Health, NetworkPhysicsState, Player};
 
 use crate::{
-    game::world::WorldObserver,
+    game::{inventory::InventoryService, world::WorldObserver},
     net::{client::ClientIntiated, entity::NetworkCommandsExt, input::CurrentMovementInput},
 };
 
@@ -22,14 +22,14 @@ pub fn plugin(app: &mut App) {
 
 #[cfg(test)]
 pub fn new_player_bundle() -> impl Bundle {
-    new_player_bundle_at(Vec2::ZERO)
+    new_player_bundle_at(Vec2::ZERO, 100)
 }
 
-fn new_player_bundle_at(spawn: Vec2) -> impl Bundle {
+fn new_player_bundle_at(spawn: Vec2, health: u16) -> impl Bundle {
     (
         Player,
         EntityKind::new("player"),
-        Health(100),
+        Health(health),
         NetworkPhysicsState {
             tick: 0,
             position: spawn,
@@ -52,13 +52,24 @@ fn spawn_player_on_intiated(
     event: On<ClientIntiated>,
     mut commands: Commands,
     players: Query<(), (With<Player>, With<CurrentMovementInput>)>,
+    service: Res<InventoryService>,
+    demo: Option<Res<super::test_scenes::inventory::InventoryDemo>>,
 ) {
     let player_index = players.iter().count() as f32;
     let spawn = Vec2::new(player_index * 80.0, 0.0);
+    let max_health = service.config.rules.max_health;
+    let health = if demo.is_some() {
+        (max_health / 2).max(1)
+    } else {
+        max_health
+    };
     commands.network_spawn_with_ownership_and_policy(
         event.client_id,
         DisconnectPolicy::Despawn,
-        new_player_bundle_at(spawn),
+        (
+            new_player_bundle_at(spawn, health),
+            service.config.inventory("player"),
+        ),
     );
 }
 
@@ -78,7 +89,7 @@ mod tests {
     fn player_bundle_uses_spawn_for_network_and_physics_state() {
         let mut app = App::new();
         let spawn = Vec2::new(80.0, -20.0);
-        let entity = app.world_mut().spawn(new_player_bundle_at(spawn)).id();
+        let entity = app.world_mut().spawn(new_player_bundle_at(spawn, 100)).id();
 
         assert_eq!(
             app.world()
