@@ -70,11 +70,18 @@ fn load_generator(
                 config.world.seed = seed;
             }
             if let Some(size) = world_size_chunks {
-                config.world.world_size_chunks = size;
+                resize_world(&mut config.world, size);
             }
             config.build()
         })
         .unwrap_or_else(|error| panic!("world config {}: {error}", overrides.display()))
+}
+
+/// Changes the map size and scales the terrain with it, so the configured world is
+/// magnified rather than extended: same layout, climate bands and feature count.
+fn resize_world(world: &mut worldgen::WorldSettings, size_chunks: u32) {
+    world.terrain_scale *= f64::from(size_chunks) / f64::from(world.world_size_chunks);
+    world.world_size_chunks = size_chunks;
 }
 
 fn log_overrides(dir: &Path, source: &worldgen::ConfigSource) {
@@ -115,5 +122,15 @@ mod tests {
         let reseeded = load_generator(Path::new(CONFIG_OVERRIDES_DIR), Some(12345), Some(16));
         assert_eq!(reseeded.config().seed, 12345);
         assert_eq!(reseeded.config().world_size_chunks, 16);
+    }
+
+    #[test]
+    fn resizing_scales_the_terrain_with_the_map() {
+        let mut world = worldgen::WorldConfig::bundled().world;
+        world.world_size_chunks = 250;
+        world.terrain_scale = 0.5;
+        resize_world(&mut world, 512);
+        assert_eq!(world.world_size_chunks, 512);
+        assert!((world.terrain_scale - 1.024).abs() < 1e-12);
     }
 }

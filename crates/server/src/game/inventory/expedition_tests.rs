@@ -350,7 +350,7 @@ fn a_fixed_tick_rescues_the_player_and_spills_the_beacon_at_the_loss_site() {
 }
 
 #[test]
-fn the_default_pole_requires_more_than_two_full_t3_tanks_one_way() {
+fn the_default_pole_requires_more_than_one_full_t3_tank_one_way() {
     let cfg = InventoryConfig::load().unwrap();
     let half = i32::from(cfg.expedition.world_size_chunks / 2)
         * worldgen::WorldGeneratorConfig::default().chunk_size as i32
@@ -363,8 +363,8 @@ fn the_default_pole_requires_more_than_two_full_t3_tanks_one_way() {
         .position(|s| s.kind == SiteKind::Pole)
         .unwrap();
     let seconds = (mission.sites[index].position[1].unsigned_abs() as f32 - SITE_RADIUS) / 500.0;
-    assert!(seconds > 2.0 * f32::from(cfg.expedition.tank_seconds[2]));
-    assert!(seconds < 3.0 * f32::from(cfg.expedition.tank_seconds[2]));
+    assert!(seconds > f32::from(cfg.expedition.tank_seconds[2]));
+    assert!(seconds < 2.0 * f32::from(cfg.expedition.tank_seconds[2]));
 }
 
 #[test]

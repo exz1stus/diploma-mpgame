@@ -1,5 +1,5 @@
 (
- world_size_chunks: 1000,
+ world_size_chunks: 512,
  daylight: 240, night: 120, coal_seconds: 120, crystal_seconds: 180,
  tank_seconds: (180, 360, 450),
  recipes: [
