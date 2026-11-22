@@ -1,5 +1,4 @@
 (
- world_size_chunks: 1000,
  daylight: 240, night: 120, coal_seconds: 120, crystal_seconds: 180,
  tank_seconds: (180, 360, 450),
  recipes: [
@@ -9,17 +8,17 @@
     (product: "suit_t2", ingredients: [("cryo_crystal", 28), ("iron_ore", 16), ("sulfur", 8)], power: 24),
     (product: "distress_beacon", ingredients: [("distress_beacon", 1), ("iron_ore", 4), ("quartz", 2)], power: 15),
  ],
+ // First matching rule wins. Object names come from the worldgen manifest.
+ mining: [
+    (object:"rock", yields:[("coal",8),("basalt",2)]),
+    (object:"iron_ore", yields:[("iron_ore",2)]),
+    (object:"large_rock", scan:2, biome_prefix:Some("sulfur"), yields:[("sulfur",4)]),
+    (object:"large_rock", scan:2, yields:[("quartz",4)]),
+    (object:"crystal", scan:3, yields:[("cryo_crystal",6)]),
+ ],
  sites: [
-    (name:"Impact crater", offset:(1400,700), scan:0, kind:Crater, uses:2, yields:[("coal",8),("iron_ore",2),("basalt",2)]),
-    (name:"Split rim", offset:(-3800,2100), scan:1, kind:Crater, uses:2, yields:[("coal",8),("iron_ore",2),("basalt",2)]),
-    (name:"East crater", offset:(6800,-3200), scan:1, kind:Crater, uses:2, yields:[("coal",8),("iron_ore",2),("basalt",2)]),
-    (name:"Black basin", offset:(14600,3300), scan:1, kind:Crater, uses:32, yields:[("coal",8),("iron_ore",2),("basalt",2)]),
-    (name:"Western basin", offset:(-17500,-6100), scan:1, kind:Crater, uses:152, yields:[("coal",8),("iron_ore",2),("basalt",2)]),
-    (name:"Glass flats", offset:(39000,4000), scan:2, kind:Quartz, uses:64, yields:[("quartz",4)]),
-    (name:"Grey sulfur field", offset:(-40800,9000), scan:2, kind:Sulfur, uses:64, yields:[("sulfur",4)]),
-    (name:"Glacial shelf", offset:(54000,8000), scan:3, kind:Ice, uses:128, yields:[("cryo_crystal",6)]),
-    (name:"Engineering wreck", offset:(-51000,12000), scan:3, kind:Wreck, uses:1, yields:[]),
-    (name:"Navigation wreck", offset:(52000,-14000), scan:3, kind:Wreck, uses:1, yields:[]),
-    (name:"Polar emergency module", offset:(0,0), scan:3, kind:Pole, uses:1, yields:[]),
+    (name:"Engineering wreck", offset:(-51000,12000), scan:3, kind:Wreck, uses:1),
+    (name:"Navigation wreck", offset:(52000,-14000), scan:3, kind:Wreck, uses:1),
+    (name:"Polar emergency module", offset:(0,0), scan:3, kind:Pole, uses:1),
  ],
 )

@@ -11,7 +11,6 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use avian2d::physics_transform::Position;
 use bevy::{
     app::{App, FixedPreUpdate},
-    math::Vec2,
     prelude::IntoScheduleConfigs,
     tasks::{AsyncComputeTaskPool, Task, futures::check_ready},
     transform::components::Transform,
@@ -30,7 +29,7 @@ use worldgen::{ChunkPos, GenerationError};
 use super::{
     WorldGenerator,
     components::{Chunk, ChunkContents, ChunkTiles, InChunk, WorldObject, WorldObserver},
-    coords::{TILE_SIZE, WorldFrame, chebyshev, chunk_at_world, square, tile_to_world},
+    coords::{WorldFrame, chebyshev, chunk_at_world, square},
     objects::{ObjectComponentRegistry, ObjectKinds},
     storage::{ChunkStorage, StoredChunk, StoredObject},
 };
@@ -279,11 +278,7 @@ fn spawn_object(
     kinds: &ObjectKinds,
 ) {
     let placed = stored.placed;
-    let size = Vec2::new(
-        placed.footprint.width as f32,
-        placed.footprint.height as f32,
-    ) * TILE_SIZE;
-    let center = tile_to_world(placed.id.anchor) + size / 2.0;
+    let center = shared::world::object_center(placed.id.anchor, placed.footprint);
     let mut object = commands.spawn((
         WorldObject {
             placed: placed.clone(),

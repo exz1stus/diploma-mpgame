@@ -69,6 +69,14 @@ pub fn decode(bytes: &[u8]) -> Option<WorldMessage> {
     postcard::from_bytes(&raw).ok()
 }
 
+/// Physics center of a generated object's footprint in game coordinates.
+pub fn object_center(anchor: TilePos, footprint: Footprint) -> bevy::math::Vec2 {
+    bevy::math::Vec2::new(
+        anchor.x as f32 + footprint.width as f32 * 0.5,
+        anchor.y as f32 + footprint.height as f32 * 0.5,
+    ) * TILE_SIZE
+}
+
 pub fn chunk_span(chunk_size: u32) -> f32 {
     TILE_SIZE * chunk_size as f32
 }

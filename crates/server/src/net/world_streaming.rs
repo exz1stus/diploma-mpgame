@@ -2,7 +2,7 @@
 //! distance of that client's own [`WorldObserver`]. Chunks are encoded once (lz4 + postcard)
 //! and the same bytes go to every client that needs them.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use avian2d::physics_transform::Position;
 use bevy::{
@@ -16,7 +16,7 @@ use bevy_ecs::{
     query::Without,
     relationship::RelationshipTarget,
     resource::Resource,
-    system::{Commands, Query, Res, ResMut},
+    system::{Commands, Local, Query, Res, ResMut},
 };
 use bevy_renet::{
     RenetServer,
@@ -73,13 +73,16 @@ impl Default for WorldStreamConfig {
 
 /// Cached wire message of a loaded chunk. Remove it to have the chunk re-encoded.
 #[derive(Component)]
-pub(crate) struct EncodedChunk(pub Bytes);
+pub(crate) struct EncodedChunk {
+    bytes: Bytes,
+    version: u64,
+}
 
 #[derive(Default)]
 struct ClientStream {
     initialized: bool,
     /// Chunks the client currently has.
-    sent: HashSet<ChunkPos>,
+    sent: HashMap<ChunkPos, u64>,
 }
 
 #[derive(Resource, Default)]
@@ -91,6 +94,7 @@ fn encode_chunks(
     mut commands: Commands,
     chunks: Query<(Entity, &Chunk, &ChunkTiles, Option<&ChunkContents>), Without<EncodedChunk>>,
     objects: Query<&WorldObject>,
+    mut version: Local<u64>,
 ) {
     for (entity, chunk, tiles, contents) in &chunks {
         let objects = contents
@@ -109,9 +113,11 @@ fn encode_chunks(
             tiles: tiles.tiles.clone(),
             objects,
         });
-        commands
-            .entity(entity)
-            .insert(EncodedChunk(Bytes::from(encode(&message))));
+        *version += 1;
+        commands.entity(entity).insert(EncodedChunk {
+            bytes: Bytes::from(encode(&message)),
+            version: *version,
+        });
     }
 }
 
@@ -151,7 +157,7 @@ fn stream_chunks(
         };
 
         // Same +1 margin the server keeps loaded, so a border walk does not churn.
-        stream.sent.retain(|&pos| {
+        stream.sent.retain(|&pos, _| {
             let keep = chebyshev(pos, center) <= distance + 1 && streamer.loaded(pos).is_some();
             if !keep {
                 server.send_message(
@@ -163,14 +169,18 @@ fn stream_chunks(
             keep
         });
 
-        let mut missing: Vec<(ChunkPos, &Bytes)> = square(center, distance)
-            .filter(|pos| !stream.sent.contains(pos))
-            .filter_map(|pos| Some((pos, &encoded.get(streamer.loaded(pos)?).ok()?.0)))
+        let mut missing: Vec<_> = square(center, distance + 1)
+            .filter(|pos| chebyshev(*pos, center) <= distance || stream.sent.contains_key(pos))
+            .filter_map(|pos| {
+                let chunk = encoded.get(streamer.loaded(pos)?).ok()?;
+                (stream.sent.get(&pos) != Some(&chunk.version)).then_some((pos, chunk))
+            })
             .collect();
         missing.sort_unstable_by_key(|(pos, _)| chebyshev(*pos, center));
 
         let mut budget = config.bytes_per_tick;
-        for (pos, bytes) in missing {
+        for (pos, chunk) in missing {
+            let bytes = &chunk.bytes;
             if bytes.len() > budget && budget < config.bytes_per_tick {
                 break;
             }
@@ -179,7 +189,7 @@ fn stream_chunks(
                 break;
             }
             server.send_message(client, WORLD_CHANNEL, bytes.clone());
-            stream.sent.insert(pos);
+            stream.sent.insert(pos, chunk.version);
             budget = budget.saturating_sub(bytes.len());
         }
     }
@@ -267,7 +277,9 @@ mod tests {
             while let Some(bytes) = self.client.receive_message(WORLD_CHANNEL) {
                 let message = decode(&bytes).expect("server sends decodable world messages");
                 match &message {
-                    WorldMessage::ChunkLoad(chunk) => assert!(self.loaded.insert(chunk.pos)),
+                    WorldMessage::ChunkLoad(chunk) => {
+                        self.loaded.insert(chunk.pos);
+                    }
                     WorldMessage::ChunkUnload(pos) => assert!(self.loaded.remove(pos)),
                     WorldMessage::Init(_) => {}
                 }
@@ -340,6 +352,43 @@ mod tests {
             .filter(|message| matches!(message, WorldMessage::ChunkUnload(_)))
             .count();
         assert_eq!(unloads, 12);
+    }
+
+    #[test]
+    fn a_broken_generated_object_disappears_from_an_already_streamed_chunk() {
+        let mut h = Harness::new(1);
+        h.tick_until(|h| h.loaded == square_set(0, 0, 1));
+        let original = h
+            .messages
+            .iter()
+            .find_map(|m| match m {
+                WorldMessage::ChunkLoad(chunk) if !chunk.objects.is_empty() => Some(chunk.clone()),
+                _ => None,
+            })
+            .unwrap();
+        let world = h.app.world_mut();
+        let chunk = world
+            .resource::<ChunkStreamer>()
+            .loaded(original.pos)
+            .unwrap();
+        let object = world
+            .get::<ChunkContents>(chunk)
+            .unwrap()
+            .iter()
+            .next()
+            .unwrap();
+        let anchor = world.get::<WorldObject>(object).unwrap().placed.id.anchor;
+        world.despawn(object);
+        world.entity_mut(chunk).remove::<EncodedChunk>();
+        h.messages.clear();
+        h.tick_until(|h| !h.messages.is_empty());
+        let [WorldMessage::ChunkLoad(updated)] = h.messages.as_slice() else {
+            panic!("expected one refreshed chunk");
+        };
+        assert_eq!(updated.pos, original.pos);
+        assert_eq!(updated.tiles, original.tiles);
+        assert_eq!(updated.objects.len() + 1, original.objects.len());
+        assert!(updated.objects.iter().all(|object| object.anchor != anchor));
     }
 
     #[test]

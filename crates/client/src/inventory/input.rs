@@ -73,6 +73,8 @@ fn controls(
     players: Query<(&NetworkIdentity, &NetworkPhysicsState), With<Player>>,
     chests: Query<(&NetworkIdentity, &NetworkPhysicsState), With<Chest>>,
     ground: Query<(&NetworkIdentity, &NetworkPhysicsState, &GroundItem)>,
+    info: Option<Res<crate::world::WorldInfo>>,
+    objects: Query<&crate::world::WorldObject>,
     mut inventory: ResMut<InventoryClient>,
 ) {
     inventory.escape_consumed = false;
@@ -160,6 +162,36 @@ fn controls(
         })
         .min_by(|a, b| a.0.total_cmp(&b.0));
 
+    if inventory.state.expedition.is_some()
+        && let Some(info) = info
+    {
+        let nearest = objects
+            .iter()
+            .filter_map(|object| {
+                let kind = info.object(object.kind)?;
+                if !config
+                    .expedition
+                    .mining
+                    .iter()
+                    .any(|r| r.object == kind.name)
+                {
+                    return None;
+                }
+                let distance = origin.distance_squared(shared::world::object_center(
+                    object.anchor,
+                    object.footprint,
+                ));
+                (distance <= config.rules.pickup_range.powi(2)).then_some((distance, object.anchor))
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+        if let Some((distance, anchor)) = nearest
+            && chest.is_none_or(|c| distance < c.0)
+            && pickup.is_none_or(|p| distance < p.0)
+        {
+            inventory.enqueue(InventoryAction::MineObject { anchor });
+            return;
+        }
+    }
     match (chest, pickup) {
         (Some(chest), Some(pickup)) if pickup.0 < chest.0 => {
             inventory.enqueue(InventoryAction::CollectItem {

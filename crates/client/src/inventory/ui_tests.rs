@@ -360,11 +360,11 @@ fn fullscreen_expedition_opens_working_ship_controls() {
         contacts: vec![SiteContact {
             id: 0,
             position: [1400, 700],
-            remaining: 2,
+            remaining: 1,
         }],
     }));
     h.click_text("Expedition");
-    h.click_text("Impact crater · 2");
+    h.click_text("Engineering wreck · 1");
     assert_eq!(h.client.waypoint, Some(0));
     h.click_text("Scan region · 10 power");
     assert!(matches!(

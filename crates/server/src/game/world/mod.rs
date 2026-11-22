@@ -38,14 +38,14 @@ impl std::ops::Deref for WorldGenerator {
 /// Server overrides of the worldgen defaults (`worldgen/config/`), file by file.
 const CONFIG_OVERRIDES_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/worldgen");
 
-pub(crate) fn install_world(app: &mut App, world_size_chunks: Option<u32>) {
+pub(crate) fn plugin(app: &mut App) {
     let config = app.world().get_resource::<AppConfig>();
     let overrides = config.map_or_else(
         || PathBuf::from(CONFIG_OVERRIDES_DIR),
         |config| config.worldgen_config.clone(),
     );
     let seed = config.and_then(|config| config.world_seed);
-    let generator = Arc::new(load_generator(&overrides, seed, world_size_chunks));
+    let generator = Arc::new(load_generator(&overrides, seed));
     install(app, generator, RECENT_CHUNKS);
     objects::default_kinds(app);
     app.configure_sets(
@@ -57,20 +57,13 @@ pub(crate) fn install_world(app: &mut App, world_size_chunks: Option<u32>) {
 /// Builds the generator from the worldgen defaults plus the files in `overrides`,
 /// optionally with another seed. Panics with a readable message: a server cannot run
 /// without a valid world.
-fn load_generator(
-    overrides: &Path,
-    seed: Option<u64>,
-    world_size_chunks: Option<u32>,
-) -> worldgen::WorldGenerator {
+fn load_generator(overrides: &Path, seed: Option<u64>) -> worldgen::WorldGenerator {
     worldgen::ConfigSource::with_overrides(overrides)
         .and_then(|source| {
             log_overrides(overrides, &source);
             let mut config = worldgen::WorldConfig::load(&source)?;
             if let Some(seed) = seed {
                 config.world.seed = seed;
-            }
-            if let Some(size) = world_size_chunks {
-                config.world.world_size_chunks = size;
             }
             config.build()
         })
@@ -87,7 +80,7 @@ fn log_overrides(dir: &Path, source: &worldgen::ConfigSource) {
     println!("World config overrides from {}: {files}", dir.display());
 }
 
-/// Generator, storage and streaming systems; separate from [`install_world`] so tests can use a small world.
+/// Generator, storage and streaming systems; separate from [`plugin`] so tests can use a small world.
 pub(crate) fn install(
     app: &mut App,
     generator: Arc<worldgen::WorldGenerator>,
@@ -104,7 +97,7 @@ mod tests {
 
     #[test]
     fn server_overrides_build_a_generator() {
-        let generator = load_generator(Path::new(CONFIG_OVERRIDES_DIR), None, None);
+        let generator = load_generator(Path::new(CONFIG_OVERRIDES_DIR), None);
         let manifest = generator.manifest();
         for name in ["rock", "large_rock", "iron_ore"] {
             assert!(
@@ -112,8 +105,7 @@ mod tests {
                 "default object kinds rely on {name:?}"
             );
         }
-        let reseeded = load_generator(Path::new(CONFIG_OVERRIDES_DIR), Some(12345), Some(16));
+        let reseeded = load_generator(Path::new(CONFIG_OVERRIDES_DIR), Some(12345));
         assert_eq!(reseeded.config().seed, 12345);
-        assert_eq!(reseeded.config().world_size_chunks, 16);
     }
 }

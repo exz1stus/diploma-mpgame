@@ -26,7 +26,7 @@ pub(crate) struct Expedition {
     seconds: u32,
     fuel: u32,
     battery: u16,
-    scan: u8,
+    pub(super) scan: u8,
     fragments: u8,
     made_t2: bool,
     made_suit: bool,
@@ -199,26 +199,18 @@ impl Expedition {
             SITE_RADIUS,
         )?;
         contact.remaining = contact.remaining.checked_sub(1).ok_or(Error::Depleted)?;
-        let mut add = |item: &str, quantity| {
-            plan.put(
+        match site.kind {
+            SiteKind::Wreck => self.fragments += 1,
+            SiteKind::Pole => plan.put(
                 world,
                 config,
                 Destination::Auto(actor),
                 ItemStack {
-                    item: item.into(),
-                    quantity,
+                    item: BEACON.into(),
+                    quantity: 1,
                     charge: 0,
                 },
-            )
-        };
-        match site.kind {
-            SiteKind::Wreck => self.fragments += 1,
-            SiteKind::Pole => add(BEACON, 1)?,
-            _ => {
-                for (item, qty) in &site.yields {
-                    add(item, *qty)?;
-                }
-            }
+            )?,
         }
         Ok(())
     }
