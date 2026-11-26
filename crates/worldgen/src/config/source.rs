@@ -14,10 +14,11 @@ pub enum ConfigFile {
     Craters,
     Basins,
     Volcanoes,
+    Placements,
 }
 
 impl ConfigFile {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::World,
         Self::Biomes,
         Self::BiomeMap,
@@ -25,6 +26,7 @@ impl ConfigFile {
         Self::Craters,
         Self::Basins,
         Self::Volcanoes,
+        Self::Placements,
     ];
 
     /// Path relative to a config folder.
@@ -37,6 +39,7 @@ impl ConfigFile {
             Self::Craters => "features/craters.ron",
             Self::Basins => "features/basins.ron",
             Self::Volcanoes => "features/volcanoes.ron",
+            Self::Placements => "placements.ron",
         }
     }
 
@@ -50,6 +53,7 @@ impl ConfigFile {
             Self::Craters => include_str!("../../config/features/craters.ron"),
             Self::Basins => include_str!("../../config/features/basins.ron"),
             Self::Volcanoes => include_str!("../../config/features/volcanoes.ron"),
+            Self::Placements => include_str!("../../config/placements.ron"),
         }
     }
 

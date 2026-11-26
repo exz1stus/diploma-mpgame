@@ -10,6 +10,7 @@ use super::{
     config::PresentationConfig,
     objects::ObjectVisual,
     shadows::ObjectShadow,
+    trails::ObjectTrail,
 };
 use crate::{assets::AssetRoot, world::WorldInfo};
 
@@ -28,7 +29,7 @@ pub fn reload_config_on_key(
 }
 
 /// Runs when the config changed after startup: drops ground and object visuals (with the
-/// objects' shadows) and marks
+/// objects' shadows and trails) and marks
 /// the world changed, which re-runs the catalog systems; the spawn systems then rebuild
 /// every visual from the new config.
 pub fn restyle_world(
@@ -38,11 +39,12 @@ pub fn restyle_world(
     grounds: Query<Entity, With<ChunkGround>>,
     objects: Query<Entity, With<ObjectVisual>>,
     shadows: Query<Entity, With<ObjectShadow>>,
+    trails: Query<Entity, With<ObjectTrail>>,
 ) {
     let Some(mut world) = world else {
         return;
     };
-    for entity in ground_meshes.iter().chain(&shadows) {
+    for entity in ground_meshes.iter().chain(&shadows).chain(&trails) {
         commands.entity(entity).despawn();
     }
     for entity in &grounds {

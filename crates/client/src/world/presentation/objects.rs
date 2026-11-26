@@ -1,7 +1,8 @@
 //! Object sprites from the atlas. Each object picks its kind's art for the surface it
 //! stands on, then a variant, offset, mirroring and scale from its anchor tile
 //! ([`place`]), colored by its biome's object tint. Kinds without art are drawn as a
-//! placeholder rectangle over the footprint.
+//! placeholder rectangle over the footprint. Kinds with a `trail` also get it laid on the
+//! ground under them ([`trails`](super::trails)).
 
 use bevy::{prelude::*, sprite::Anchor};
 use shared::world::{TILE_SIZE, TilePos, TileSample};
@@ -9,12 +10,13 @@ use shared::world::{TILE_SIZE, TilePos, TileSample};
 use bevy::{image::ImageSampler, render::render_resource::TextureFormat};
 
 use super::{
-    atlas::{load_sheet, sheet_settled},
+    atlas::{Atlas, SheetRef, SpriteVariant, load_extra_sheets, load_sheet, sheet_settled},
     catalog::{KindVisual, ObjectCatalog},
     config::{ObjectLayer, PresentationConfig},
-    placement::place,
+    placement::{Placement, place},
     shadows::{ShadowAssets, ShadowMaterial, ShadowSpawner, Silhouette, SunLight},
     textures::recolor_regions,
+    trails::{place_trail, spawn_trail},
 };
 use crate::{
     render_layers,
@@ -24,24 +26,34 @@ use crate::{
 /// Placeholder rectangles leave a gap so neighbouring objects stay distinguishable.
 const PLACEHOLDER_SCALE: f32 = 0.9;
 
-/// The sheets object sprites are cut from: the loaded atlas sheet, which untinted kinds draw
-/// from, and the sheet tinted kinds draw from: the same one, or a copy with every sprite made
-/// neutral (`objects.ron` `recolor`). Objects wait until `tinted` is ready.
+/// The sheets object sprites are cut from: the loaded main atlas sheet, which untinted kinds
+/// draw from, and the sheet tinted kinds draw from: the same one, or a copy with every sprite
+/// made neutral (`objects.ron` `recolor`); plus the atlas's further sheets, always drawn in
+/// their own colors. Objects wait until `tinted` is ready.
 #[derive(Resource)]
 pub struct ObjectSheet {
     source: Handle<Image>,
     recolor: Option<Srgba>,
     tinted: Option<Handle<Image>>,
+    /// In `Atlas::sheets` order.
+    extra: Vec<Handle<Image>>,
 }
 
 impl ObjectSheet {
-    fn for_kind(&self, kind: &KindVisual) -> Option<Handle<Image>> {
-        let tinted = self.tinted.clone()?;
-        Some(if kind.style.tinted {
-            tinted
-        } else {
-            self.source.clone()
-        })
+    /// The image a kind's art on `sheet` is cut from.
+    fn for_kind(&self, kind: &KindVisual, sheet: SheetRef) -> Option<Handle<Image>> {
+        match sheet {
+            SheetRef::Main if kind.style.tinted => self.tinted.clone(),
+            _ => self.untinted(sheet),
+        }
+    }
+
+    /// The image art on `sheet` is cut from in its own colors.
+    fn untinted(&self, sheet: SheetRef) -> Option<Handle<Image>> {
+        match sheet {
+            SheetRef::Main => Some(self.source.clone()),
+            SheetRef::Extra(index) => self.extra.get(index).cloned(),
+        }
     }
 }
 
@@ -61,6 +73,7 @@ pub fn prepare_object_catalog(
         tinted: recolor.is_none().then(|| source.clone()),
         source,
         recolor,
+        extra: load_extra_sheets(&asset_server, &config.atlas),
     });
     commands.insert_resource(ObjectCatalog::build(&world, &config.objects));
     commands.insert_resource(ShadowAssets::default());
@@ -118,10 +131,7 @@ pub fn spawn_object_visuals(
         texel: world_per_px,
     };
     for (entity, object, in_chunk, mut transform) in &mut objects {
-        let Some((kind, image)) = catalog
-            .kind(object.kind)
-            .and_then(|kind| Some((kind, sheet.for_kind(kind)?)))
-        else {
+        let Some(kind) = catalog.kind(object.kind) else {
             continue;
         };
         let sample = chunks
@@ -133,8 +143,12 @@ pub fn spawn_object_visuals(
             .filter(|_| kind.style.tinted)
             .and_then(|sample| catalog.tint(sample));
         let color = object_color(kind, object_tint);
-        let (sprite, anchor) = match config.atlas.sprite(kind.sprite(surface)) {
-            Some(variants) => {
+        let art = config
+            .atlas
+            .sprite(kind.sprite(surface))
+            .and_then(|sprite| Some((sprite.variants, sheet.for_kind(kind, sprite.sheet)?)));
+        let (sprite, anchor) = match art {
+            Some((variants, image)) => {
                 let placement = place(
                     object.anchor,
                     object.footprint,
@@ -166,6 +180,15 @@ pub fn spawn_object_visuals(
                         &placement,
                     );
                 }
+                lay_trail(
+                    &mut commands,
+                    entity,
+                    kind,
+                    &art,
+                    &placement,
+                    &config.atlas,
+                    &sheet,
+                );
                 (sprite, Anchor(placement.anchor))
             }
             None => {
@@ -185,6 +208,31 @@ pub fn spawn_object_visuals(
             .entity(entity)
             .insert((ObjectVisual, sprite, anchor));
     }
+}
+
+/// Lays the kind's trail, if it has one, under the object's art as placed; the trail's
+/// variant follows the art's.
+fn lay_trail(
+    commands: &mut Commands,
+    object: Entity,
+    kind: &KindVisual,
+    art: &SpriteVariant,
+    placement: &Placement,
+    atlas: &Atlas,
+    sheet: &ObjectSheet,
+) {
+    let Some(style) = &kind.style.trail else {
+        return;
+    };
+    let Some((trail, image)) = atlas.sprite(&style.sprite).and_then(|sprite| {
+        let variant = sprite.variants[placement.variant % sprite.variants.len()];
+        Some((variant, sheet.untinted(sprite.sheet)?))
+    }) else {
+        return;
+    };
+    let at = place_trail(art, placement, &trail, style);
+    let z = object_z(kind, placement.foot.y);
+    spawn_trail(commands, object, z, image, &trail, at);
 }
 
 /// The kind's own tint, times the object tint of the biome under it (tinted kinds only); both

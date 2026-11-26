@@ -52,8 +52,9 @@ mod tests {
     #[test]
     fn folder_overrides_only_the_files_it_contains() {
         let dir = temp_dir("override");
-        // Crater spawns in the bundled features/craters.ron need rock, large_rock, iron_ore and crystal.
-        let objects = r#"(kinds: [(name: "rock", footprint: (width: 1, height: 1)), (name: "large_rock", footprint: (width: 2, height: 2)), (name: "iron_ore", footprint: (width: 2, height: 3)), (name: "crystal", footprint: (width: 1, height: 1))], sets: {"common_rocks": [(object: "rock", density: 0.5)], "iron_deposits": [], "pebbles": [], "polar": [], "sulfur_rocks": []})"#;
+        // Crater spawns in the bundled features/craters.ron need rock, large_rock, iron_ore and
+        // crystal; the bundled placements.ron needs the ship pieces.
+        let objects = r#"(kinds: [(name: "rock", footprint: (width: 1, height: 1)), (name: "large_rock", footprint: (width: 2, height: 2)), (name: "iron_ore", footprint: (width: 2, height: 3)), (name: "crystal", footprint: (width: 1, height: 1)), (name: "ship_hull", footprint: (width: 4, height: 3)), (name: "ship_engine", footprint: (width: 2, height: 2)), (name: "ship_part", footprint: (width: 2, height: 1))], sets: {"common_rocks": [(object: "rock", density: 0.5)], "iron_deposits": [], "pebbles": [], "polar": [], "sulfur_rocks": [], "ship_wreckage": []})"#;
         let volcanoes = ConfigFile::Volcanoes
             .bundled()
             .replace("probability: 0.2", "probability: 0.0");
@@ -73,7 +74,7 @@ mod tests {
         let config = WorldConfig::load(&source).unwrap();
         assert_eq!(config.volcanoes.probability, 0.0);
         let generator = small(config.clone()).build().unwrap();
-        assert_eq!(generator.manifest().objects.len(), 4);
+        assert_eq!(generator.manifest().objects.len(), 7);
 
         // A kind a feature still spawns cannot be removed; the error names the feature file.
         let mut missing = config;

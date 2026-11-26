@@ -1,0 +1,25 @@
+// Fixed objects: each is placed exactly once per world, whatever the terrain there, and random
+// objects (rocks, pebbles) stay off its footprint and `clearance` tiles around it.
+//
+// A placement is (object, at, [offset], [clearance]):
+//   object:    an object kind from objects.ron
+//   at:        Spawn            the tile the game centres its map on, where players spawn
+//              Pole(inset: n)   n tiles in from the north or the south edge, on the spawn's
+//                               meridian; the seed picks the pole (the south edge, largest y,
+//                               for an even number of set seed bits), like the expedition's
+//                               polar site
+//   offset:    (x, y) tiles from the site to the footprint's centre; +y is drawn up on screen
+//   clearance: tiles around the footprint kept free of random objects
+// The footprint is pushed back inside the world if it would reach past an edge. Keep fixed
+// objects apart: they do not avoid each other.
+(
+    placements: [
+        // The crashed ship, its south edge 2 tiles above the players' spawn.
+        (object: "ship_hull", at: Spawn, offset: (0, 11), clearance: 3),
+        // Its engine broke off over a pole, at the expedition's polar site (512 world units,
+        // 16 tiles, in from the edge).
+        (object: "ship_engine", at: Pole(inset: 16), clearance: 2),
+        // Ship parts are not placed here: they spawn in sulfur basins (objects.ron
+        // `ship_wreckage`).
+    ],
+)

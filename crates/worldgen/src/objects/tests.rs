@@ -133,6 +133,39 @@ fn an_object_larger_than_a_chunk_can_be_loaded_from_any_intersecting_chunk() {
 }
 
 #[test]
+fn fixed_objects_appear_in_every_chunk_they_cross_and_clear_random_ones() {
+    let config = config(4, 4);
+    let placements: crate::PlacementsFile = crate::config::parse_ron(
+        r#"(placements: [(object: "wide", at: Spawn, offset: (0, 1), clearance: 1)])"#,
+    )
+    .unwrap();
+    let placer = placer(r#"[(id: 9, object: "small", density: 1.0)]"#)
+        .with_fixed(&placements.placements, config)
+        .unwrap();
+    // Spawn is tile (8, 8); the 3×2 footprint centres on (8, 9): tiles (7..10, 8..10).
+    let hull = placer.fixed_objects().next().unwrap().clone();
+    assert_eq!(hull.id.anchor, TilePos { x: 7, y: 8 });
+    let cleared = rect(6, 7, 5, 4);
+    let all = placer
+        .place_in(config.tile_bounds().unwrap(), config, flat)
+        .unwrap();
+    assert!(all.contains(&hull));
+    for object in all.iter().filter(|object| object.id != hull.id) {
+        let bounds = object.footprint.bounds(object.id.anchor).unwrap();
+        assert!(!bounds.intersects(cleared), "{object:?} in the clearance");
+    }
+    assert_eq!(
+        all.len(),
+        1 + 16 * 16 - 5 * 4,
+        "random objects fill the rest"
+    );
+    for (x, y) in [(4, 8), (8, 8)] {
+        let chunk = placer.place_in(rect(x, y, 4, 4), config, flat).unwrap();
+        assert!(chunk.contains(&hull), "chunk ({x}, {y})");
+    }
+}
+
+#[test]
 fn a_corner_object_is_identical_in_all_four_chunk_responses() {
     let placer = placer(r#"[(id: 55, object: "square", density: 1.0, biomes: ["plain"])]"#);
     let config = config(4, 2);
@@ -382,7 +415,7 @@ fn bundled_definitions_resolve_and_appending_preserves_object_ids() {
     let config = crate::WorldConfig::bundled();
     let biomes = BiomeRepository::parse();
     let placer = ObjectPlacer::from_config(&config.biomes, &config.objects, &[], &biomes).unwrap();
-    assert_eq!(placer.objects().objects().len(), 5);
+    assert_eq!(placer.objects().objects().len(), 8);
     let original = repository();
     let mut definitions = original.objects().to_vec();
     definitions.push(ObjectDefinition {

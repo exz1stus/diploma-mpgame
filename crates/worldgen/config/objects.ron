@@ -13,6 +13,12 @@
         (name: "pebbles", footprint: (width: 1, height: 1)),
         // Rare ice crystal on the floors of cold craters (features/craters.ron).
         (name: "crystal", footprint: (width: 1, height: 1)),
+        // The crashed ship. Hull and engine are placed once per world (placements.ron); parts
+        // lie scattered over sulfur basins (`ship_wreckage`). Footprints cover the art at its native
+        // size (16 px per tile; the hull is about 14 m long).
+        (name: "ship_hull", footprint: (width: 28, height: 18)),
+        (name: "ship_engine", footprint: (width: 16, height: 11)),
+        (name: "ship_part", footprint: (width: 8, height: 4)),
     ],
     // Rock sizes follow a boulder size-frequency power law, density ~ diameter^-2.5:
     // pebbles (decal) >> rock (1 tile) > large_rock (2 tiles, ~0.18x rock) > iron_ore.
@@ -36,6 +42,13 @@
         "sulfur_rocks": [
             (object: "rock", density: 0.0003),
             (object: "large_rock", density: 0.002, max_height_difference: Some(0.04)),
+        ],
+        // Ship parts scattered over the sulfur biomes: rare (about one per 200 000 tiles), yet
+        // every sulfur basin gets some. The smallest basin territory (radius 1.5 × 384 tiles at
+        // terrain_scale 0.5, ~1 000 000 tiles) expects about 5, so one without any is under 1 %
+        // likely; the largest expects about 30.
+        "ship_wreckage": [
+            (object: "ship_part", density: 0.000005),
         ],
     },
 )

@@ -266,6 +266,20 @@ pub struct ObjectStyle {
     pub tint: Option<String>,
     /// `#RRGGBB` rectangle drawn while the kind has no sprite.
     pub placeholder: Option<String>,
+    /// Ground art laid under the object, such as the furrow a wreck ploughed while braking.
+    pub trail: Option<TrailStyle>,
+}
+
+/// Ground art of [`ObjectStyle::trail`]: drawn flat on the terrain in its own colors, mirrored
+/// and scaled with the object's art.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TrailStyle {
+    /// Atlas sprite of the trail; object variant i uses trail variant i (wrapping).
+    pub sprite: String,
+    /// Where the trail's top-left corner lies from the object art's top-left corner, in art
+    /// pixels (y down), before scaling.
+    pub offset: (f32, f32),
 }
 
 impl Default for ObjectStyle {
@@ -282,6 +296,7 @@ impl Default for ObjectStyle {
             occlusion: true,
             tint: None,
             placeholder: None,
+            trail: None,
         }
     }
 }
@@ -568,7 +583,29 @@ mod tests {
                     "{kind}: missing sprite {sprite}"
                 );
             }
+            if let Some(trail) = &style.trail {
+                assert!(
+                    atlas.sprite(&trail.sprite).is_some(),
+                    "{kind}: missing trail sprite {}",
+                    trail.sprite
+                );
+            }
             assert!(Srgba::hex(objects.placeholder(style).to_hex()).is_ok());
+        }
+    }
+
+    #[test]
+    fn ship_kinds_keep_their_own_colors_over_a_trail() {
+        let atlas: Atlas = ron::from_str(BUNDLED_ATLAS).unwrap();
+        let objects: ObjectStyles = ron::from_str(BUNDLED_OBJECTS).unwrap();
+        for kind in ["ship_hull", "ship_engine", "ship_part"] {
+            let style = objects.style(kind);
+            assert!(!style.tinted, "{kind}: further sheets are never recolored");
+            assert!(
+                atlas.sprite(style.sprite_for(kind, None)).is_some(),
+                "{kind}"
+            );
+            assert_eq!(style.trail.unwrap().sprite, format!("{kind}_trail"));
         }
     }
 

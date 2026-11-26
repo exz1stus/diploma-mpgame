@@ -9,6 +9,7 @@
 // sprites: object art per surface; each entry is a list of variants, one picked per object.
 //   pivot: the art's foot point in pixels inside its rect (default: bottom center,
 //          (width / 2, height)). It sits on the object's footprint, and draw order follows it.
+// sheets:  further sheets, each `(image, sprites)` like the main one; see the end of the file.
 //
 // The item icons in the sheet's bottom row are not world art and are not listed.
 (
@@ -131,4 +132,21 @@
             (rect: (419, 484, 23, 25)),
         ],
     },
+    // Further sheets, each with sprites of its own (looked up after the main sheet's). Their
+    // art is never recolored, so kinds drawn from them use `tinted: false` in objects.ron.
+    sheets: [
+        (
+            image: "textures/ship_atlas.png",
+            sprites: {
+                // The crashed ship; each piece comes with the furrow it ploughed while braking
+                // (objects.ron `trail`).
+                "ship_hull": [(rect: (581, 11, 445, 277))],
+                "ship_hull_trail": [(rect: (1, 13, 543, 268))],
+                "ship_engine": [(rect: (503, 314, 244, 171))],
+                "ship_engine_trail": [(rect: (0, 311, 470, 165))],
+                "ship_part": [(rect: (1027, 288, 120, 50))],
+                "ship_part_trail": [(rect: (796, 304, 203, 61))],
+            },
+        ),
+    ],
 )

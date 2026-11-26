@@ -72,7 +72,9 @@ impl WorldConfig {
         self.check_feature_spawns(&biomes)?;
         let object_placer =
             ObjectPlacer::from_config(&self.biomes, &self.objects, &self.feature_spawns(), &biomes)
-                .map_err(|error| ConfigError::invalid(objects_error_file(&error), error))?;
+                .map_err(|error| ConfigError::invalid(objects_error_file(&error), error))?
+                .with_fixed(&self.placements.placements, dimensions)
+                .map_err(|error| ConfigError::invalid(ConfigFile::Placements, error))?;
         let stages = self.stages(sources, &biomes, biome_map);
         Ok(
             WorldGenerator::new(dimensions, stages, biomes, object_placer)

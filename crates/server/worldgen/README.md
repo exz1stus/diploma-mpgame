@@ -13,6 +13,7 @@ from the defaults.
 | `features/craters.ron`   | crater settings and their territory biome map                  |
 | `features/basins.ron`    | basin settings and their territory biome map                   |
 | `features/volcanoes.ron` | volcano settings and their territory biome map                 |
+| `placements.ron`         | fixed objects placed once per world (the ship at spawn, its engine at a pole) |
 
 To change the world seed, for example, copy `world.ron` here and edit `seed`. Biome and object
 IDs are list positions, so append new entries to keep saved chunks valid.

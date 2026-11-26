@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use super::{ConfigError, ConfigFile, ConfigSource, WorldGeneratorConfig};
 use crate::{
     BasinSettings, BiomeMapDefinition, CraterGenerator, NoiseConfig, ObjectDefinition,
-    PlanetParams, Range, TemperatureCoefficients, VolcanoGenerator,
+    PlacementsFile, PlanetParams, Range, TemperatureCoefficients, VolcanoGenerator,
 };
 
 /// `world.ron`: dimensions, seed and the terrain/climate models.
@@ -148,6 +148,7 @@ pub struct WorldConfig {
     pub craters: CraterGenerator,
     pub basins: BasinSettings,
     pub volcanoes: VolcanoGenerator,
+    pub placements: PlacementsFile,
 }
 
 impl Default for WorldConfig {
@@ -172,6 +173,7 @@ impl WorldConfig {
             craters: parse(source, ConfigFile::Craters)?,
             basins: parse(source, ConfigFile::Basins)?,
             volcanoes: parse(source, ConfigFile::Volcanoes)?,
+            placements: parse(source, ConfigFile::Placements)?,
         })
     }
 }

@@ -26,6 +26,7 @@ The whole world is declared in [`config/`](config). Each file owns one concern:
 | `features/craters.ron`   | crater settings and the biome map of crater territory                  |
 | `features/basins.ron`    | basin settings and the biome map of basin territory                    |
 | `features/volcanoes.ron` | volcano settings and the biome map of volcano territory                |
+| `placements.ron`         | fixed objects, each placed once per world at a named site (spawn, pole) |
 
 ```ron
 // biomes.ron
@@ -56,6 +57,12 @@ Placement rule IDs come from a stable hash of `(biome or set name, object name)`
 doesn't change placement, but renaming a biome, set or object does. Biome and object IDs are list
 positions, so append new entries to keep saved worlds valid. Bump `generator_version` whenever the
 output for a seed changes.
+
+A fixed placement is `(object, at, [offset], [clearance])`, with `at` either `Spawn` (the tile the
+game centres its map on) or `Pole(inset: n)` (n tiles in from the north or south edge; the seed
+picks which). The footprint is centred on the site plus `offset`, placed whatever the terrain, and
+random objects stay off it and `clearance` tiles around it. `ObjectPlacer::fixed_objects()` lists
+where they went.
 
 ### Overrides
 

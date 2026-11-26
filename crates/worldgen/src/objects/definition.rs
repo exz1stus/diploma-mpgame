@@ -122,6 +122,7 @@ pub enum ObjectsError {
     UnknownBiome(String),
     UnknownSet(String),
     InvalidRule { id: u32, field: &'static str },
+    PlacementOutsideWorld(String),
 }
 
 impl fmt::Display for ObjectsError {
@@ -140,11 +141,17 @@ impl fmt::Display for ObjectsError {
                 "duplicate object spawn (rule ID {id}); each object may be listed once per biome or set"
             ),
             Self::UnknownObject(name) => {
-                write!(f, "a spawn references unknown object kind {name:?}")
+                write!(
+                    f,
+                    "a spawn or placement references unknown object kind {name:?}"
+                )
             }
             Self::UnknownBiome(name) => write!(f, "a spawn references unknown biome {name:?}"),
             Self::UnknownSet(name) => write!(f, "a biome includes unknown object set {name:?}"),
             Self::InvalidRule { id, field } => write!(f, "object rule {id} has invalid {field}"),
+            Self::PlacementOutsideWorld(name) => {
+                write!(f, "fixed object {name:?} does not fit inside the world")
+            }
         }
     }
 }

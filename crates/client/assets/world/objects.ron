@@ -36,6 +36,10 @@
 //   occlusion:   false skips the ambient occlusion at the lower edge (default: true)
 //   tint:        Some("#RRGGBB") multiplies the art
 //   placeholder: Some("#RRGGBB") rectangle drawn while the kind has no sprite
+//   trail:       Some((sprite, offset)) ground art laid under the object in its own colors (a
+//                wreck's furrow); offset is where its top-left corner lies from the art's
+//                top-left corner, in art pixels (y down) before scaling; mirrored and scaled
+//                with the art
 // Art is drawn at its pixel size, `tiles.ron` blend.pixels_per_tile pixels per tile.
 (
     default_placeholder: "#475A47",
@@ -160,6 +164,26 @@
             tinted: false,
             jitter: 0.25,
             placeholder: Some("#9FB8D8"),
+        ),
+        // The crashed ship (worldgen placements.ron and the sulfur `ship_wreckage` set): own
+        // colors at the art's native size (its pixels are real size: the hull is about 14 m),
+        // each piece resting at the wide end of the furrow it ploughed while braking, which runs
+        // west from the impact point. Laid out as in the sheet, the gap closed so the furrow's
+        // end tucks under the piece.
+        "ship_hull": (
+            tinted: false,
+            placeholder: Some("#5C5F66"),
+            trail: Some((sprite: "ship_hull_trail", offset: (-10.0, -28.0))),
+        ),
+        "ship_engine": (
+            tinted: false,
+            placeholder: Some("#4A4D52"),
+            trail: Some((sprite: "ship_engine_trail", offset: (10.0, 58.0))),
+        ),
+        "ship_part": (
+            tinted: false,
+            placeholder: Some("#55585E"),
+            trail: Some((sprite: "ship_part_trail", offset: (0.0, 16.0))),
         ),
     },
 )

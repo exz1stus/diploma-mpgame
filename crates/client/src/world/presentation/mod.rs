@@ -1,7 +1,7 @@
 //! Presentation of the streamed world: textured ground and object sprites.
 //!
 //! World data (chunks, objects, [`WorldInfo`]) is owned by the streaming layer; this plugin
-//! only reads it. All art comes from one sprite sheet whose named regions are listed in
+//! only reads it. Art comes from sprite sheets whose named regions are listed in
 //! `assets/world/atlas.ron`; `tiles.ron` and `objects.ron` choose which regions biomes and
 //! object kinds use and how objects are placed ([`placement`]). Changing the config, by
 //! F5 or later from the settings UI, re-styles the loaded world ([`reload`]).
@@ -25,6 +25,7 @@ mod placement;
 mod reload;
 mod shadows;
 mod textures;
+mod trails;
 
 use bevy::{asset::embedded_asset, prelude::*, sprite_render::Material2dPlugin};
 

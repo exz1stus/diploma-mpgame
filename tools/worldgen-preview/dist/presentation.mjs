@@ -172,6 +172,10 @@ function styleRon(style) {
   if (style.occlusion === false) fields.push('occlusion: false');
   if (style.tint) fields.push(`tint: Some(${quote(style.tint)})`);
   if (style.placeholder) fields.push(`placeholder: Some(${quote(style.placeholder)})`);
+  if (style.trail) {
+    const [x, y] = style.trail.offset;
+    fields.push(`trail: Some((sprite: ${quote(style.trail.sprite)}, offset: (${number(x)}, ${number(y)})))`);
+  }
   return fields.length ? `(\n${fields.map(field => `            ${field},`).join('\n')}\n        )` : '()';
 }
 
@@ -224,6 +228,10 @@ export function objectsRon(objects) {
 //   occlusion:   false skips the ambient occlusion at the lower edge (default: true)
 //   tint:        Some("#RRGGBB") multiplies the art
 //   placeholder: Some("#RRGGBB") rectangle drawn while the kind has no sprite
+//   trail:       Some((sprite, offset)) ground art laid under the object in its own colors (a
+//                wreck's furrow); offset is where its top-left corner lies from the art's
+//                top-left corner, in art pixels (y down) before scaling; mirrored and scaled
+//                with the art
 // Art is drawn at its pixel size, \`tiles.ron\` blend.pixels_per_tile pixels per tile.
 (
     default_placeholder: ${quote(objects.default_placeholder)},

@@ -1,7 +1,10 @@
 use std::collections::{HashMap, HashSet};
 
+use super::fixed::{FixedObject, resolve_fixed};
 use super::rule::ResolvedObjectRule;
-use super::{ObjectInstanceId, ObjectRepository, ObjectRule, ObjectsError, PlacedObject};
+use super::{
+    FixedPlacement, ObjectInstanceId, ObjectRepository, ObjectRule, ObjectsError, PlacedObject,
+};
 use crate::hash::hash_cell;
 use crate::{BiomeRepository, GenerationError, TileData, TilePos, TileRect, WorldGeneratorConfig};
 
@@ -10,6 +13,8 @@ use crate::{BiomeRepository, GenerationError, TileData, TilePos, TileRect, World
 pub struct ObjectPlacer {
     objects: ObjectRepository,
     rules: Vec<ResolvedObjectRule>,
+    /// Objects placed once per world (`placements.ron`), in file order.
+    fixed: Vec<FixedObject>,
     padding_x: i64,
     padding_y: i64,
 }
@@ -31,6 +36,7 @@ impl ObjectPlacer {
         Self {
             objects: ObjectRepository::default(),
             rules: Vec::new(),
+            fixed: Vec::new(),
             padding_x: 0,
             padding_y: 0,
         }
@@ -112,18 +118,36 @@ impl ObjectPlacer {
         Ok(Self {
             objects,
             rules,
+            fixed: Vec::new(),
             padding_x,
             padding_y,
         })
+    }
+
+    /// Adds the objects placed once per world (`placements.ron`), sited for a world of these
+    /// dimensions; pass the same dimensions to [`Self::place_in`].
+    pub fn with_fixed(
+        mut self,
+        placements: &[FixedPlacement],
+        config: WorldGeneratorConfig,
+    ) -> Result<Self, ObjectsError> {
+        self.fixed = resolve_fixed(placements, &self.objects, config)?;
+        Ok(self)
     }
 
     pub fn objects(&self) -> &ObjectRepository {
         &self.objects
     }
 
+    /// Objects placed once per world, in `placements.ron` order.
+    pub fn fixed_objects(&self) -> impl Iterator<Item = &PlacedObject> {
+        self.fixed.iter().map(|fixed| &fixed.object)
+    }
+
     /// Return complete object instances intersecting these half-open tile bounds.
     /// The caller can cache terrain samples locally to reuse core chunk data.
     /// Decisions depend only on global coordinates, settings, and terrain data.
+    /// Fixed objects are included whatever the terrain; random ones stay off their clearance.
     pub fn place_in(
         &self,
         bounds: TileRect,
@@ -174,7 +198,7 @@ impl ObjectPlacer {
                 let Some(footprint_bounds) = rule.footprint.bounds(anchor) else {
                     continue;
                 };
-                if !world.contains_rect(footprint_bounds) {
+                if !world.contains_rect(footprint_bounds) || self.is_cleared(footprint_bounds) {
                     continue;
                 }
                 let mut low = f64::INFINITY;
@@ -212,7 +236,25 @@ impl ObjectPlacer {
                 }
             }
         }
-        Ok(resolve_candidates(candidates, bounds))
+        let mut accepted = resolve_candidates(candidates, bounds);
+        accepted.extend(self.fixed_in(bounds));
+        accepted.sort_unstable_by_key(|object| object.id);
+        Ok(accepted)
+    }
+
+    /// Whether random objects must stay off this footprint: it reaches the ground a fixed
+    /// object keeps clear.
+    fn is_cleared(&self, footprint: TileRect) -> bool {
+        self.fixed
+            .iter()
+            .any(|fixed| fixed.cleared.intersects(footprint))
+    }
+
+    fn fixed_in(&self, bounds: TileRect) -> impl Iterator<Item = PlacedObject> + '_ {
+        self.fixed
+            .iter()
+            .filter(move |fixed| fixed.bounds.intersects(bounds))
+            .map(|fixed| fixed.object.clone())
     }
 }
 
@@ -239,6 +281,5 @@ fn resolve_candidates(candidates: Vec<Candidate>, bounds: TileRect) -> Vec<Place
             accepted.push(candidate.object.clone());
         }
     }
-    accepted.sort_unstable_by_key(|object| object.id);
     accepted
 }

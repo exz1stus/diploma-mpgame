@@ -57,12 +57,40 @@ impl SpriteVariant {
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Atlas {
-    /// Asset path of the sheet.
+    /// Asset path of the main sheet.
     pub image: String,
     #[serde(default)]
     tiles: HashMap<String, PixelRect>,
     #[serde(default)]
     sprites: HashMap<String, Vec<SpriteVariant>>,
+    /// Further sheets with sprites of their own, drawn in their own colors (never recolored).
+    #[serde(default)]
+    pub sheets: Vec<ExtraSheet>,
+}
+
+/// A further sheet of [`Atlas::sheets`].
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExtraSheet {
+    /// Asset path of the sheet.
+    pub image: String,
+    #[serde(default)]
+    sprites: HashMap<String, Vec<SpriteVariant>>,
+}
+
+/// The sheet a sprite's art is cut from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SheetRef {
+    Main,
+    /// Index into [`Atlas::sheets`].
+    Extra(usize),
+}
+
+/// A named sprite's variants and the sheet they are on.
+#[derive(Clone, Copy, Debug)]
+pub struct AtlasSprite<'a> {
+    pub sheet: SheetRef,
+    pub variants: &'a [SpriteVariant],
 }
 
 impl Atlas {
@@ -70,15 +98,21 @@ impl Atlas {
         self.tiles.get(name).copied()
     }
 
-    /// Variants of a sprite; `None` when it is missing or has none.
-    pub fn sprite(&self, name: &str) -> Option<&[SpriteVariant]> {
-        self.sprites
-            .get(name)
-            .map(Vec::as_slice)
-            .filter(|variants| !variants.is_empty())
+    /// A sprite from the main sheet, else from the first further sheet listing it; `None` when
+    /// it is missing or has no variants.
+    pub fn sprite(&self, name: &str) -> Option<AtlasSprite<'_>> {
+        let main = std::iter::once((SheetRef::Main, &self.sprites));
+        let extra = self
+            .sheets
+            .iter()
+            .enumerate()
+            .map(|(index, extra)| (SheetRef::Extra(index), &extra.sprites));
+        main.chain(extra).find_map(|(sheet, sprites)| {
+            variants_of(sprites, name).map(|variants| AtlasSprite { sheet, variants })
+        })
     }
 
-    /// Every sprite variant's rect, once.
+    /// Every sprite variant's rect on the main sheet, once.
     pub fn sprite_rects(&self) -> Vec<PixelRect> {
         let mut rects: Vec<PixelRect> = self
             .sprites
@@ -92,14 +126,37 @@ impl Atlas {
     }
 }
 
-/// Loads the sheet with nearest sampling, so pixel art stays crisp.
+fn variants_of<'a>(
+    sprites: &'a HashMap<String, Vec<SpriteVariant>>,
+    name: &str,
+) -> Option<&'a [SpriteVariant]> {
+    sprites
+        .get(name)
+        .map(Vec::as_slice)
+        .filter(|variants| !variants.is_empty())
+}
+
+/// Loads the main sheet with nearest sampling, so pixel art stays crisp.
 pub fn load_sheet(asset_server: &AssetServer, atlas: &Atlas) -> Handle<Image> {
+    load_image(asset_server, &atlas.image)
+}
+
+/// Loads the further sheets, in [`Atlas::sheets`] order.
+pub fn load_extra_sheets(asset_server: &AssetServer, atlas: &Atlas) -> Vec<Handle<Image>> {
+    atlas
+        .sheets
+        .iter()
+        .map(|extra| load_image(asset_server, &extra.image))
+        .collect()
+}
+
+fn load_image(asset_server: &AssetServer, path: &str) -> Handle<Image> {
     asset_server
         .load_builder()
         .with_settings(|settings: &mut ImageLoaderSettings| {
             settings.sampler = ImageSampler::nearest();
         })
-        .load(atlas.image.clone())
+        .load(path.to_owned())
 }
 
 /// The sheet finished loading, successfully or not.
@@ -172,9 +229,24 @@ mod tests {
         let sizes: Vec<_> = atlas.tiles.values().map(|rect| rect.size()).collect();
         assert!(sizes.windows(2).all(|w| w[0] == w[1]), "tiles share a size");
         let rocks = atlas.sprite("regolith_rock").unwrap();
-        assert!(rocks.len() > 1);
-        assert_eq!(rocks[0].pivot(), Vec2::new(7.5, 16.0));
+        assert_eq!(rocks.sheet, SheetRef::Main);
+        assert!(rocks.variants.len() > 1);
+        assert_eq!(rocks.variants[0].pivot(), Vec2::new(7.5, 16.0));
         assert!(atlas.sprite("nothing").is_none());
+    }
+
+    #[test]
+    fn further_sheets_hold_their_own_sprites_outside_the_main_rects() {
+        let atlas: Atlas = ron::from_str(BUNDLED_ATLAS).unwrap();
+        let hull = atlas.sprite("ship_hull").unwrap();
+        let SheetRef::Extra(index) = hull.sheet else {
+            panic!("the ship is on its own sheet");
+        };
+        assert_eq!(atlas.sheets[index].image, "textures/ship_atlas.png");
+        assert!(
+            !atlas.sprite_rects().contains(&hull.variants[0].rect),
+            "main-sheet recoloring leaves further sheets alone"
+        );
     }
 
     #[test]

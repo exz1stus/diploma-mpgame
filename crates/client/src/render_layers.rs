@@ -2,6 +2,9 @@
 
 /// Terrain chunks.
 pub const GROUND: f32 = -10.0;
+/// Marks objects left on the ground (a wreck's furrow): over the terrain, under occlusion,
+/// decals and shadows.
+pub const TRAILS: f32 = -9.7;
 /// Flat decoration on the ground (pebbles): above it, under everything that stands.
 pub const DECALS: f32 = -9.5;
 /// Object shadows: over the ground and its decals, under everything that stands.

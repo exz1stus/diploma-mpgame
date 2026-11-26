@@ -27,6 +27,7 @@ pub fn without_features(config: &WorldConfig) -> WorldConfig {
 fn without_objects(config: &WorldConfig) -> WorldConfig {
     let mut config = config.clone();
     config.objects.sets.values_mut().for_each(Vec::clear);
+    config.placements.placements.clear();
     config
         .biomes
         .biomes

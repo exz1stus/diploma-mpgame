@@ -47,8 +47,9 @@ pub use geographical::{GeoPosition, WorldGeography};
 pub use manifest::{ObjectKind, WorldManifest};
 pub use noise::{FbmNoise, NoiseConfig, NoiseSource};
 pub use objects::{
-    FeatureSpawns, Footprint, ObjectDefinition, ObjectId, ObjectInstanceId, ObjectPlacer,
-    ObjectRepository, ObjectRule, ObjectsError, PlacedObject,
+    FeatureSpawns, FixedPlacement, Footprint, ObjectDefinition, ObjectId, ObjectInstanceId,
+    ObjectPlacer, ObjectRepository, ObjectRule, ObjectsError, PlacedObject, PlacementSite,
+    PlacementsFile,
 };
 pub use pipeline::TerrainSources;
 pub use range::Range;
