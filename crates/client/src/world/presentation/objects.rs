@@ -1,6 +1,7 @@
 //! Object sprites from the atlas. Each object picks its kind's art for the surface it
 //! stands on, then a variant, offset, mirroring and scale from its anchor tile
-//! ([`place`]), colored by its biome's object tint. Kinds without art are drawn as a
+//! ([`place`]), colored by its biome's object tint; ore kinds also pick which ore they are
+//! ([`pick_ore`]) and mix its color into that tint. Kinds without art are drawn as a
 //! placeholder rectangle over the footprint. Kinds with a `trail` also get it laid on the
 //! ground under them ([`trails`](super::trails)).
 
@@ -13,7 +14,7 @@ use super::{
     atlas::{Atlas, SheetRef, SpriteVariant, load_extra_sheets, load_sheet, sheet_settled},
     catalog::{KindVisual, ObjectCatalog},
     config::{ObjectLayer, PresentationConfig},
-    placement::{Placement, place},
+    placement::{Placement, pick_ore, place},
     shadows::{ShadowAssets, ShadowMaterial, ShadowSpawner, Silhouette, SunLight},
     textures::recolor_regions,
     trails::{place_trail, spawn_trail},
@@ -116,6 +117,7 @@ pub fn spawn_object_visuals(
     mut shadow_assets: ResMut<ShadowAssets>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut shadow_materials: ResMut<Assets<ShadowMaterial>>,
+    images: Res<Assets<Image>>,
 ) {
     if sheet.tinted.is_none() {
         return;
@@ -125,6 +127,7 @@ pub fn spawn_object_visuals(
         assets: &mut shadow_assets,
         meshes: &mut meshes,
         materials: &mut shadow_materials,
+        images: &images,
         light: *light,
         occlusion: config.objects.occlusion,
         // Art pixels and terrain texels share one size: pixels_per_tile per tile.
@@ -139,9 +142,12 @@ pub fn spawn_object_visuals(
             .ok()
             .and_then(|(chunk, tiles)| tile_at(chunk, tiles, object.anchor));
         let surface = sample.and_then(|sample| catalog.surface(sample));
-        let object_tint = sample
-            .filter(|_| kind.style.tinted)
-            .and_then(|sample| catalog.tint(sample));
+        let biome_tint = sample.and_then(|sample| catalog.tint(sample));
+        let object_tint = kind
+            .style
+            .tinted
+            .then(|| ore_tint(kind, object.anchor, biome_tint))
+            .flatten();
         let color = object_color(kind, object_tint);
         let art = config
             .atlas
@@ -178,6 +184,7 @@ pub fn spawn_object_visuals(
                         &image,
                         &art,
                         &placement,
+                        kind.style.lying_height(),
                     );
                 }
                 lay_trail(
@@ -241,6 +248,26 @@ fn object_color(kind: &KindVisual, object_tint: Option<[u8; 3]>) -> Color {
     let tint = kind.style.tint().to_srgba();
     let [r, g, b] = object_tint.map_or([1.0; 3], |rgb| rgb.map(|value| f32::from(value) / 255.0));
     Srgba::new(tint.red * r, tint.green * g, tint.blue * b, tint.alpha).into()
+}
+
+/// The biome's object tint, mixed toward the color of the ore the object is (kinds with
+/// `ores` only; others keep the biome tint). A missing biome tint mixes from white.
+fn ore_tint(kind: &KindVisual, anchor: TilePos, biome_tint: Option<[u8; 3]>) -> Option<[u8; 3]> {
+    let Some(ores) = &kind.style.ores else {
+        return biome_tint;
+    };
+    let Some(ore) = ores.color(pick_ore(anchor, kind.salt, ores.kinds.len())) else {
+        return biome_tint;
+    };
+    Some(mix_rgb(biome_tint.unwrap_or([255; 3]), ore, ores.mix()))
+}
+
+/// `from` moved toward `to` by `amount` (0 to 1), per sRGB channel.
+fn mix_rgb(from: [u8; 3], to: [u8; 3], amount: f32) -> [u8; 3] {
+    std::array::from_fn(|c| {
+        let (a, b) = (f32::from(from[c]), f32::from(to[c]));
+        (a + (b - a) * amount).round() as u8
+    })
 }
 
 /// The silhouettes a kind gets: ground occlusion, and if it stands a sun shadow and the shade

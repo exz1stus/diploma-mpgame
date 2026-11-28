@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fnv1a, hash32, placeObject, styleJitter, styleScale } from './dist/placement.mjs';
-import { objectTint, objectVisual, sortVisuals } from './dist/objects.mjs';
+import { fnv1a, hash32, pickOre, placeObject, styleJitter, styleScale } from './dist/placement.mjs';
+import { objectTint, objectVisual, oreTint, sortVisuals } from './dist/objects.mjs';
 import { recolorRegions, spriteRects } from './dist/presentation.mjs';
 
 test('tinted kinds take the biome object tint and the recolored sheet; untinted kinds keep their colors', () => {
@@ -18,6 +18,15 @@ test('tinted kinds take the biome object tint and the recolored sheet; untinted 
   assert.deepEqual([rock.tinted, rock.tint], [true, [10, 20, 30]]);
   const crystal = objectVisual(object(1), look, { surface: null, tint: [10, 20, 30] });
   assert.deepEqual([crystal.tinted, crystal.tint], [false, null], 'untinted kinds ignore the biome tint');
+  // Ores mix the biome tint toward the picked ore's color; untinted kinds take neither.
+  const ores = { mix: 0.5, kinds: [['coal', '#000000'], ['iron', '#FF0000']] };
+  const ore = { name: 'ore', style: { sprite: 'rock', ores }, salt: fnv1a('iron_ore') };
+  const picked = pickOre({ x: 10, y: 20 }, ore.salt, 2);
+  assert.deepEqual(oreTint(ore, { x: 10, y: 20 }, [100, 100, 100]), picked === 0 ? [50, 50, 50] : [178, 50, 50]);
+  assert.deepEqual(oreTint(ore, { x: 10, y: 20 }, null), picked === 0 ? [128, 128, 128] : [255, 128, 128]);
+  assert.deepEqual(oreTint({ ...ore, style: {} }, { x: 0, y: 0 }, [1, 2, 3]), [1, 2, 3]);
+  const untintedOre = { ...ore, style: { ...ore.style, tinted: false } };
+  assert.equal(objectVisual(object(0), { ...look, kinds: [untintedOre] }, { surface: null, tint: [10, 20, 30] }).tint, null);
   // Two 1-pixel sprites side by side are recolored on their own means (both become the color).
   const sheet = { width: 2, height: 1, data: Uint8ClampedArray.from([40, 0, 0, 255, 200, 9, 9, 255]) };
   const atlas = { sprites: { a: [{ rect: [0, 0, 1, 1] }, { rect: [1, 0, 1, 1] }], b: [{ rect: [1, 0, 1, 1] }] } };
@@ -32,6 +41,8 @@ test('hashes match the client', () => {
   assert.equal(hash32(0, 0, 0), 0);
   assert.equal(hash32(1, 2, 3), 0x9d92aeb2);
   assert.equal(hash32(123456, 654321, fnv1a('rock')), 0x3fca3dae);
+  assert.equal(pickOre({ x: 10, y: 20 }, fnv1a('iron_ore'), 7), 3);
+  assert.equal(pickOre({ x: 10, y: 20 }, fnv1a('iron_ore'), 0), 0);
 });
 
 const variants = [[0, 0, 16, 16], [16, 0, 10, 20], [32, 0, 24, 40]].map(rect => ({ rect }));

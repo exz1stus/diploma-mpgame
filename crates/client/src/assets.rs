@@ -5,7 +5,11 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use bevy::{asset::io::file::FileAssetReader, prelude::*};
+use bevy::{
+    asset::io::file::FileAssetReader,
+    image::{ImageLoaderSettings, ImageSampler},
+    prelude::*,
+};
 use serde::de::DeserializeOwned;
 
 /// Filesystem root of the client's assets, used to skip loading files that do not exist.
@@ -41,4 +45,14 @@ pub fn read_table<T: DeserializeOwned>(path: &Path, bundled: &str) -> T {
         );
         ron::from_str(bundled).expect("bundled config must be valid")
     })
+}
+
+/// Loads an image with nearest sampling, so pixel art stays crisp.
+pub fn load_pixel_art(asset_server: &AssetServer, path: &str) -> Handle<Image> {
+    asset_server
+        .load_builder()
+        .with_settings(|settings: &mut ImageLoaderSettings| {
+            settings.sampler = ImageSampler::nearest();
+        })
+        .load(path.to_owned())
 }

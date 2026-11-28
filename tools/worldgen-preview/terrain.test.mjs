@@ -289,6 +289,7 @@ test('exported RON parses back and keeps every setting', () => {
       pebbles: { sprite: 'regolith_pebbles', sprites: { basalt: 'basalt_pebbles' }, jitter: 0.4, flip: true, layer: 'Ground', placeholder: '#77726B' },
       rock: { scale: [1, 1.25], tint: '#FFEEDD', tinted: false, shadow: false, occlusion: false },
       tree: {},
+      iron_ore: { ores: { mix: 0.6, kinds: [['coal', '#2B2826'], ['iron', '#9C5A3C']] } },
       ship_hull: { scale: [0.5, 0.5], tinted: false, trail: { sprite: 'ship_hull_trail', offset: [286, -127.5] } },
     },
   };

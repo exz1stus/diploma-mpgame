@@ -2,7 +2,7 @@
 // sprite for the surface under it, placed by placement.mjs (variant, jitter, flip, scale, pivot on
 // the foot), ground decals first and the rest by foot position; kinds without art are a rectangle
 // in their placeholder color at 90 % of the footprint.
-import { placeObject, variantPivot } from './placement.mjs';
+import { pickOre, placeObject, variantPivot } from './placement.mjs';
 import { hexRgb, spriteFor, spriteVariants } from './presentation.mjs';
 
 export const PLACEHOLDER_SCALE = 0.9;
@@ -97,7 +97,7 @@ export function objectVisual(object, look, under) {
   const tilesPerArtPx = size.width / art.rect[2];
   return {
     ground, sortY: foot.y, tinted: kind.style.tinted !== false,
-    tint: objectTint(kind.style, kind.style.tinted !== false ? under?.tint : null),
+    tint: objectTint(kind.style, kind.style.tinted !== false ? oreTint(kind, anchor, under?.tint) : null),
     sprite: {
       rect: art.rect, flip, width: size.width, height: size.height,
       // A mirrored sprite mirrors its pivot too, like the client's anchor.
@@ -105,6 +105,17 @@ export function objectVisual(object, look, under) {
       bottom: foot.y - (art.rect[3] - pivotY) * tilesPerArtPx,
     },
   };
+}
+
+// objects.rs ore_tint: the biome tint mixed toward the color of the ore the object is (kinds with
+// `ores` only; others keep the biome tint). A missing biome tint mixes from white.
+export function oreTint(kind, anchor, biomeTint) {
+  const ores = kind.style.ores;
+  const ore = ores?.kinds?.[pickOre(anchor, kind.salt, ores.kinds.length)];
+  if (!ore) return biomeTint ?? null;
+  const mix = Number.isFinite(ores.mix) ? Math.min(1, Math.max(0, ores.mix)) : 0.5;
+  const from = biomeTint ?? [255, 255, 255];
+  return hexRgb(ore[1]).map((to, c) => Math.round(from[c] + (to - from[c]) * mix));
 }
 
 // objects.rs object_color: the kind's tint times the biome's object tint (sRGB, per channel); null

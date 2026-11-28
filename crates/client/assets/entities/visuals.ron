@@ -3,10 +3,35 @@
 //   texture: `textures/entities/<texture>.png`, defaulting to the kind's own name;
 //            while the file is missing, a circle of `size` is drawn instead
 //   tint:    PerEntity (a stable hue per entity) or Hex("#RRGGBB")
+//   sheet:   an animated sprite sheet, used instead of `texture` while its file exists
+//            image:      asset path of the sheet
+//            frame:      (width, height) of one frame in sheet pixels
+//            pixel_scale: world units per sheet pixel; 2.0 matches world art, so the
+//                        sheet draws at its true pixel size (3.0 = 1.5x bigger)
+//            frame_secs: seconds each frame is shown
+//            run_speed:  on-screen speed (units/s) from which the run clip plays
+//            idle, run:  frames per facing as (column, row) cells; `front` faces the
+//                        camera (moving down), `back` faces away (moving up)
 // Kinds without an entry use `unknown`.
 (
     unknown: (size: 16.0, tint: Hex("#ff00ff")),
     kinds: {
-        "player": (size: 32.0, tint: PerEntity),
+        "player": (
+            size: 32.0,
+            sheet: Some((
+                image: "textures/player_atlas.png",
+                frame: (32, 32),
+                pixel_scale: 2.0,
+                // Movement is 360 units/s; a 4-frame cycle (two steps) of 0.24 s makes each
+                // step about 43 units, two thirds of the 64-unit body, so feet keep up.
+                frame_secs: 0.06,
+                run_speed: 40.0,
+                idle: (front: [(0, 0)], back: [(1, 0)]),
+                run: (
+                    front: [(0, 1), (0, 0), (0, 2), (0, 0)],
+                    back: [(1, 1), (1, 0), (1, 2), (1, 0)],
+                ),
+            )),
+        ),
     },
 )

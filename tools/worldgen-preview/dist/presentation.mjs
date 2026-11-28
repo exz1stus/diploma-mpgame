@@ -169,12 +169,17 @@ function styleRon(style) {
   if (style.layer === 'Ground') fields.push('layer: Ground');
   if (style.tinted === false) fields.push('tinted: false');
   if (style.shadow === false) fields.push('shadow: false');
+  if (style.lying_height > 0) fields.push(`lying_height: Some(${number(style.lying_height)})`);
   if (style.occlusion === false) fields.push('occlusion: false');
   if (style.tint) fields.push(`tint: Some(${quote(style.tint)})`);
   if (style.placeholder) fields.push(`placeholder: Some(${quote(style.placeholder)})`);
   if (style.trail) {
     const [x, y] = style.trail.offset;
     fields.push(`trail: Some((sprite: ${quote(style.trail.sprite)}, offset: (${number(x)}, ${number(y)})))`);
+  }
+  if (style.ores?.kinds?.length) {
+    const kinds = style.ores.kinds.map(([ore, color]) => `(${quote(ore)}, ${quote(color)})`).join(', ');
+    fields.push(`ores: Some((mix: ${number(style.ores.mix)}, kinds: [${kinds}]))`);
   }
   return fields.length ? `(\n${fields.map(field => `            ${field},`).join('\n')}\n        )` : '()';
 }
@@ -225,6 +230,10 @@ export function objectsRon(objects) {
 //   layer:       Sorted (stands; drawn by foot position with players) or Ground (flat decal)
 //   tinted:      false keeps the art's own colors: no recolor and no biome tint (default: true)
 //   shadow:      false casts no sun shadow (default: true; ground decals never cast one)
+//   lying_height: Some(pixels) for art seen from above lying on the ground (a wreck): its
+//                shadow is its outline pushed away from the sun by that many art pixels of
+//                height, so it stays attached; default None: upright art, whose shadow is
+//                the art laid on the ground from its lowest opaque row
 //   occlusion:   false skips the ambient occlusion at the lower edge (default: true)
 //   tint:        Some("#RRGGBB") multiplies the art
 //   placeholder: Some("#RRGGBB") rectangle drawn while the kind has no sprite
@@ -232,6 +241,9 @@ export function objectsRon(objects) {
 //                wreck's furrow); offset is where its top-left corner lies from the art's
 //                top-left corner, in art pixels (y down) before scaling; mirrored and scaled
 //                with the art
+//   ores:        Some((mix, kinds: [(ore, "#RRGGBB"), ...])) each object is one of the ores,
+//                picked from its anchor tile (so the world seed fixes it), and its biome tint
+//                moves toward that ore's color by mix (0-1); tinted kinds only
 // Art is drawn at its pixel size, \`tiles.ron\` blend.pixels_per_tile pixels per tile.
 (
     default_placeholder: ${quote(objects.default_placeholder)},

@@ -1,5 +1,5 @@
 //! Attaches a visual child to every networked entity once its kind arrives. The child is
-//! the kind's texture, or a tinted circle while that texture file is missing.
+//! the kind's animated sheet or texture, or a tinted circle while those files are missing.
 
 use std::collections::HashMap;
 
@@ -7,10 +7,14 @@ use bevy::prelude::*;
 use shared::{components::EntityKind, snapshots::NetworkIdentity};
 
 use super::{
+    animation::{EntitySheet, SheetAnimator},
     catalog::{EntityVisual, EntityVisuals},
     motion::{InterpolationDebug, LocalVisualPosition},
 };
-use crate::assets::{AssetRoot, texture_file_exists, texture_path};
+use crate::{
+    assets::{AssetRoot, load_pixel_art, texture_file_exists, texture_path},
+    world::presentation::ShadowCaster,
+};
 
 const ENTITY_FOLDER: &str = "entities";
 
@@ -21,14 +25,15 @@ pub struct Visual {
     pub foot_offset: f32,
 }
 
-/// Texture and placeholder mesh per kind, loaded when the first entity of that kind arrives.
+/// What a kind is drawn with, loaded when the first entity of that kind arrives.
 #[derive(Resource, Default)]
 pub struct KindAssets(HashMap<String, KindAsset>);
 
 #[derive(Clone)]
-struct KindAsset {
-    texture: Option<Handle<Image>>,
-    circle: Handle<Mesh>,
+enum KindAsset {
+    Sheet(Handle<Image>, EntitySheet),
+    Texture(Handle<Image>),
+    Circle(Handle<Mesh>),
 }
 
 pub fn spawn_entity_visuals(
@@ -43,7 +48,7 @@ pub fn spawn_entity_visuals(
 ) {
     for (entity, identity, kind) in &new_entities {
         let visual = visuals.get(&kind.0);
-        let assets = kind_assets
+        let asset = kind_assets
             .0
             .entry(kind.0.clone())
             .or_insert_with(|| {
@@ -57,28 +62,55 @@ pub fn spawn_entity_visuals(
             InterpolationDebug::default(),
             LocalVisualPosition::default(),
         ));
+        let drawn_size = asset.drawn_size(visual);
         let mut child = commands.spawn((
             Visual {
-                foot_offset: visual.size / 2.0,
+                foot_offset: drawn_size.y / 2.0,
             },
             ChildOf(entity),
             Transform::default(),
         ));
-        match assets.texture {
-            Some(image) => child.insert(Sprite {
+        let size = Some(drawn_size);
+        match asset {
+            KindAsset::Sheet(image, sheet) => {
+                let animator = SheetAnimator::new(sheet);
+                child.insert((
+                    Sprite {
+                        image,
+                        color,
+                        custom_size: size,
+                        rect: animator.first_rect(),
+                        ..default()
+                    },
+                    animator,
+                    ShadowCaster,
+                ))
+            }
+            KindAsset::Texture(image) => child.insert(Sprite {
                 image,
                 color,
-                custom_size: Some(Vec2::splat(visual.size)),
+                custom_size: size,
                 ..default()
             }),
-            None => child.insert((
-                Mesh2d(assets.circle),
+            KindAsset::Circle(circle) => child.insert((
+                Mesh2d(circle),
                 MeshMaterial2d(materials.add(ColorMaterial::from_color(color))),
             )),
         };
     }
 }
 
+impl KindAsset {
+    /// World size of the visual: a sheet frame at its own pixel size, else the kind's `size`.
+    fn drawn_size(&self, visual: &EntityVisual) -> Vec2 {
+        match self {
+            Self::Sheet(_, sheet) => sheet.frame_world_size(),
+            Self::Texture(_) | Self::Circle(_) => Vec2::splat(visual.size),
+        }
+    }
+}
+
+/// The kind's sheet, else its texture, else a circle of its size.
 fn load_kind_asset(
     root: &AssetRoot,
     asset_server: &AssetServer,
@@ -86,9 +118,15 @@ fn load_kind_asset(
     texture: &str,
     visual: &EntityVisual,
 ) -> KindAsset {
-    KindAsset {
-        texture: texture_file_exists(root, ENTITY_FOLDER, texture)
-            .then(|| asset_server.load(texture_path(ENTITY_FOLDER, texture))),
-        circle: meshes.add(Circle::new(visual.size / 2.0)),
+    if let Some(sheet) = visual
+        .sheet
+        .as_ref()
+        .filter(|sheet| root.join(&sheet.image).is_file())
+    {
+        return KindAsset::Sheet(load_pixel_art(asset_server, &sheet.image), sheet.clone());
     }
+    if texture_file_exists(root, ENTITY_FOLDER, texture) {
+        return KindAsset::Texture(asset_server.load(texture_path(ENTITY_FOLDER, texture)));
+    }
+    KindAsset::Circle(meshes.add(Circle::new(visual.size / 2.0)))
 }

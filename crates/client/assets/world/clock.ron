@@ -4,6 +4,6 @@
 //   start:           time of day when the client starts, in [0, 1): 0.25 dawn, 0.5 noon on the
 //                    prime meridian, 0.75 dusk (local time shifts with longitude)
 (
-    day_length_secs: 600.0,
+    day_length_secs: 1800.0,
     start: 0.35,
 )

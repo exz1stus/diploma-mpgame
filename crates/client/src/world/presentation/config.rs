@@ -240,6 +240,9 @@ pub enum ObjectLayer {
     Ground,
 }
 
+/// Tallest [`ObjectStyle::lying_height`]: the shadow shader steps through every pixel of it.
+const MAX_LYING_HEIGHT: f32 = 128.0;
+
 /// How one object kind is drawn (`objects.ron` `kinds`).
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields, default)]
@@ -260,6 +263,10 @@ pub struct ObjectStyle {
     pub tinted: bool,
     /// Cast a shadow from the sun (standing kinds only; ground decals never do).
     pub shadow: bool,
+    /// Art pixels tall for art seen from above lying on the ground, like a wreck: its shadow is
+    /// its outline pushed away from the sun by that height. `None` treats the art as standing
+    /// upright, its shadow laid on the ground from its lowest row.
+    pub lying_height: Option<f32>,
     /// Darken the ground at the art's lower edge (ambient occlusion).
     pub occlusion: bool,
     /// `#RRGGBB` the art is multiplied by.
@@ -268,6 +275,36 @@ pub struct ObjectStyle {
     pub placeholder: Option<String>,
     /// Ground art laid under the object, such as the furrow a wreck ploughed while braking.
     pub trail: Option<TrailStyle>,
+    /// Ores the kind's objects can be, one picked per object; tinted kinds only.
+    pub ores: Option<OreStyle>,
+}
+
+/// [`ObjectStyle::ores`]: each object is one of `kinds`, picked from its anchor tile, and its
+/// biome's object tint is mixed toward that ore's color.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OreStyle {
+    /// How far the biome tint moves toward the ore color (0 keeps the tint, 1 is the ore color).
+    pub mix: f32,
+    /// Ore name and its `#RRGGBB` color.
+    pub kinds: Vec<(String, String)>,
+}
+
+impl OreStyle {
+    /// `mix` clamped to 0..=1.
+    pub fn mix(&self) -> f32 {
+        if self.mix.is_finite() {
+            self.mix.clamp(0.0, 1.0)
+        } else {
+            0.5
+        }
+    }
+
+    /// sRGB color of the ore at `index`, if listed.
+    pub fn color(&self, index: usize) -> Option<[u8; 3]> {
+        let [r, g, b, _] = parse_color(&self.kinds.get(index)?.1, "ore").to_u8_array();
+        Some([r, g, b])
+    }
 }
 
 /// Ground art of [`ObjectStyle::trail`]: drawn flat on the terrain in its own colors, mirrored
@@ -293,15 +330,24 @@ impl Default for ObjectStyle {
             layer: ObjectLayer::Sorted,
             tinted: true,
             shadow: true,
+            lying_height: None,
             occlusion: true,
             tint: None,
             placeholder: None,
             trail: None,
+            ores: None,
         }
     }
 }
 
 impl ObjectStyle {
+    /// [`Self::lying_height`] as a finite height in art pixels; 0 for upright art.
+    pub fn lying_height(&self) -> f32 {
+        self.lying_height
+            .filter(|height| height.is_finite())
+            .map_or(0.0, |height| height.clamp(0.0, MAX_LYING_HEIGHT))
+    }
+
     pub fn jitter(&self) -> f32 {
         if self.jitter.is_finite() {
             self.jitter.clamp(0.0, 0.5)
@@ -592,6 +638,32 @@ mod tests {
             }
             assert!(Srgba::hex(objects.placeholder(style).to_hex()).is_ok());
         }
+    }
+
+    #[test]
+    fn wrecks_lie_flat_and_rocks_stand_upright() {
+        let objects: ObjectStyles = ron::from_str(BUNDLED_OBJECTS).unwrap();
+        assert_eq!(objects.style("ship_hull").lying_height(), 48.0);
+        assert_eq!(objects.style("rock").lying_height(), 0.0);
+        let broken = ObjectStyle {
+            lying_height: Some(f32::NAN),
+            ..ObjectStyle::default()
+        };
+        assert_eq!(broken.lying_height(), 0.0);
+    }
+
+    #[test]
+    fn bundled_ores_color_tinted_ore_kinds_and_skip_crystals() {
+        let objects: ObjectStyles = ron::from_str(BUNDLED_OBJECTS).unwrap();
+        let ores = objects.style("iron_ore").ores.expect("iron_ore lists its ores");
+        let names: Vec<_> = ores.kinds.iter().map(|(name, _)| name.as_str()).collect();
+        assert_eq!(names, ["coal", "iron"]);
+        assert!((0..ores.kinds.len()).all(|index| ores.color(index).is_some()));
+        assert!(ores.color(ores.kinds.len()).is_none());
+        for (kind, style) in &objects.kinds {
+            assert!(style.ores.is_none() || style.tinted, "{kind}: ores need a tinted kind");
+        }
+        assert!(objects.style("crystal").ores.is_none());
     }
 
     #[test]

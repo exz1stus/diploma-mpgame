@@ -6,12 +6,16 @@
 //
 // Meshes are a quad in art pixels with the object's foot at the origin (+Y up), grown by a
 // margin so edge texels are never cut. Per vertex: uv = sheet pixel at the vertex, color =
-// (mirrored ? -1 : 1, art left, art bottom, unused), normal = (art width, art height, unused);
-// the art spans [left, left + width] × [bottom, bottom + height] in local pixels.
+// (mirrored ? -1 : 1, art left, art bottom, contact), normal = (art width, art height, lying);
+// the art spans [left, left + width] × [bottom, bottom + height] in local pixels. `contact` is
+// the art's transparent bottom rows: it touches the ground at y = bottom + contact (`base`).
 //
 // Modes (style.x):
-// 0 sun shadow: a ground point g shows the art pixel p with g = (p.x + shear.x * p.y,
-//   shear.y * p.y): the base stays on the ground, the top slides away from the sun.
+// 0 sun shadow. Upright art (lying = 0): a ground point g shows the art pixel p with
+//   g = (p.x + shear.x * h, base + shear.y * h), h = p.y - base: the base stays on the ground,
+//   the top slides away from the sun. Art lying on the ground, `lying` pixels tall: g is in
+//   shadow when the outline covers g - shear * t for some t in [0, lying], the outline pushed
+//   away from the sun, so the shadow always touches the object.
 // 1 occlusion under standing art: texels near the art's lowest `reach` rows darken in
 //   whole-texel steps, darkest next to it, fading out over `reach` texels (like the terrain's
 //   height shading).
@@ -51,9 +55,10 @@ struct Fragment {
     // The unsheared local point and its sheet pixel, to map other local points to the sheet.
     @location(2) local: vec2<f32>,
     @location(3) uv: vec2<f32>,
-    // Mirroring, art left, art bottom; art width, height; world units per local pixel.
-    @location(4) art: vec3<f32>,
-    @location(5) art_size: vec2<f32>,
+    // Mirroring, art left, art bottom, contact; art width, height, lying; world units per
+    // local pixel.
+    @location(4) art: vec4<f32>,
+    @location(5) art_size: vec3<f32>,
     @location(6) scale: f32,
 };
 
@@ -61,12 +66,33 @@ fn mode() -> i32 {
     return i32(params.style.x + 0.5);
 }
 
+// Local y where the art touches the ground: above its transparent bottom rows.
+fn base_of(art: vec4<f32>) -> f32 {
+    return art.z + art.w;
+}
+
+// Where the sun shadow puts local vertex `p`.
+fn sun_vertex(p: vec2<f32>, art: vec4<f32>, art_size: vec3<f32>) -> vec2<f32> {
+    let shear = params.shear.xy;
+    let lying = art_size.z;
+    if lying > 0.0 {
+        // Stretch the quad over the outline and the outline pushed by the full height.
+        let push = shear * lying;
+        let center = art.yz + art_size.xy * 0.5;
+        let outward = select(min(push, vec2<f32>(0.0)), max(push, vec2<f32>(0.0)), p > center);
+        return p + outward;
+    }
+    let base = base_of(art);
+    let h = p.y - base;
+    return vec2<f32>(p.x + shear.x * h, base + shear.y * h);
+}
+
 @vertex
 fn vertex(vertex: Vertex) -> Fragment {
     let p = vertex.position.xy;
     var ground = p;
     if mode() == 0 {
-        ground = vec2<f32>(p.x + params.shear.x * p.y, params.shear.y * p.y);
+        ground = sun_vertex(p, vertex.art, vertex.art_size);
     }
     var out: Fragment;
     let world_from_local = mesh_functions::get_world_from_local(vertex.instance_index);
@@ -79,8 +105,8 @@ fn vertex(vertex: Vertex) -> Fragment {
     out.ground = ground;
     out.local = p;
     out.uv = vertex.uv;
-    out.art = vertex.art.xyz;
-    out.art_size = vertex.art_size.xy;
+    out.art = vertex.art;
+    out.art_size = vertex.art_size;
     out.scale = length(world_from_local[0].xyz);
     return out;
 }
@@ -88,7 +114,7 @@ fn vertex(vertex: Vertex) -> Fragment {
 // Coverage of the art pixel containing local point `p`; 0 outside the art.
 fn art_alpha(in: Fragment, p: vec2<f32>) -> f32 {
     let low = in.art.yz;
-    let high = low + in.art_size;
+    let high = low + in.art_size.xy;
     if any(p < low) || any(p >= high) {
         return 0.0;
     }
@@ -111,15 +137,37 @@ fn ground_at(in: Fragment, w: vec2<f32>) -> vec2<f32> {
     return in.ground + (w - in.world) / in.scale;
 }
 
+// Whether the art casts a sun shadow on the texel at world point `center`.
+fn sun_coverage(in: Fragment, center: vec2<f32>) -> f32 {
+    let g = ground_at(in, center);
+    let shear = params.shear.xy;
+    let lying = in.art_size.z;
+    if lying > 0.0 {
+        // Some height of the lying outline, pushed away from the sun, covers the texel. One
+        // step per art pixel of height moves the outline by at most one shadow length.
+        let steps = i32(ceil(lying));
+        for (var i = 0; i <= steps; i++) {
+            if opaque(in, g - shear * (lying * f32(i) / f32(steps))) {
+                return 1.0;
+            }
+        }
+        return 0.0;
+    }
+    // Undo the shear about the art's base to find the pixel casting the texel.
+    let base = base_of(in.art);
+    let h = (g.y - base) / shear.y;
+    return select(0.0, 1.0, opaque(in, vec2<f32>(g.x - shear.x * h, base + h)));
+}
+
 // Whole-texel steps: 1 one texel from opaque art, fading over `reach` texels; only art rows up
-// to `rows` above the art's bottom count (all rows when `rows` is negative).
+// to `rows` above the art's base count (all rows when `rows` is negative).
 fn occlusion(in: Fragment, center: vec2<f32>, rows: f32) -> f32 {
     if opaque(in, ground_at(in, center)) {
         return 0.0;
     }
     let reach = i32(params.style.y + 0.5);
     let texel = params.style.z;
-    let lowest = in.art.z + rows;
+    let lowest = base_of(in.art) + rows;
     var nearest = reach + 1;
     for (var dy = -reach; dy <= reach; dy++) {
         for (var dx = -reach; dx <= reach; dx++) {
@@ -144,10 +192,7 @@ fn fragment(in: Fragment) -> @location(0) vec4<f32> {
     var coverage = 0.0;
     switch mode() {
         case 0: {
-            // Undo the shear at the texel's center to find the art pixel casting it.
-            let g = ground_at(in, center);
-            let y = g.y / params.shear.y;
-            coverage = select(0.0, 1.0, opaque(in, vec2<f32>(g.x - params.shear.x * y, y)));
+            coverage = sun_coverage(in, center);
         }
         case 1: {
             coverage = occlusion(in, center, params.style.y);
@@ -156,10 +201,11 @@ fn fragment(in: Fragment) -> @location(0) vec4<f32> {
             coverage = occlusion(in, center, -1.0);
         }
         default: {
-            // On the art's own pixels: darkest on the bottom row, one step lighter per row up.
+            // On the art's own pixels: darkest on its lowest opaque row, one step lighter per
+            // row up.
             let corner = in.art.yz;
             let pixel = floor(in.local - corner) + 0.5 + corner;
-            let row = floor(pixel.y - in.art.z);
+            let row = floor(pixel.y - base_of(in.art));
             let rows = params.style.y;
             if row < rows && opaque(in, pixel) {
                 coverage = (rows - row) / rows;

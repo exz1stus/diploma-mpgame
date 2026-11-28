@@ -33,6 +33,10 @@
 //   layer:       Sorted (stands; drawn by foot position with players) or Ground (flat decal)
 //   tinted:      false keeps the art's own colors: no recolor and no biome tint (default: true)
 //   shadow:      false casts no sun shadow (default: true; ground decals never cast one)
+//   lying_height: Some(pixels) for art seen from above lying on the ground (a wreck): its
+//                shadow is its outline pushed away from the sun by that many art pixels of
+//                height, so it stays attached; default None: upright art, whose shadow is
+//                the art laid on the ground from its lowest opaque row
 //   occlusion:   false skips the ambient occlusion at the lower edge (default: true)
 //   tint:        Some("#RRGGBB") multiplies the art
 //   placeholder: Some("#RRGGBB") rectangle drawn while the kind has no sprite
@@ -40,6 +44,9 @@
 //                wreck's furrow); offset is where its top-left corner lies from the art's
 //                top-left corner, in art pixels (y down) before scaling; mirrored and scaled
 //                with the art
+//   ores:        Some((mix, kinds: [(ore, "#RRGGBB"), ...])) each object is one of the ores,
+//                picked from its anchor tile (so the world seed fixes it), and its biome tint
+//                moves toward that ore's color by mix (0-1); tinted kinds only
 // Art is drawn at its pixel size, `tiles.ron` blend.pixels_per_tile pixels per tile.
 (
     default_placeholder: "#475A47",
@@ -142,6 +149,7 @@
             },
             jitter: 0.25,
             placeholder: Some("#7A4A35"),
+            ores: Some((mix: 0.6, kinds: [("coal", "#2B2826"), ("iron", "#9C5A3C")])),
         ),
         "pebbles": (
             sprite: Some("regolith_pebbles"),
@@ -172,16 +180,19 @@
         // end tucks under the piece.
         "ship_hull": (
             tinted: false,
+            lying_height: Some(48.0),
             placeholder: Some("#5C5F66"),
             trail: Some((sprite: "ship_hull_trail", offset: (-10.0, -28.0))),
         ),
         "ship_engine": (
             tinted: false,
+            lying_height: Some(40.0),
             placeholder: Some("#4A4D52"),
             trail: Some((sprite: "ship_engine_trail", offset: (10.0, 58.0))),
         ),
         "ship_part": (
             tinted: false,
+            lying_height: Some(16.0),
             placeholder: Some("#55585E"),
             trail: Some((sprite: "ship_part_trail", offset: (0.0, 16.0))),
         ),

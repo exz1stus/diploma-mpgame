@@ -22,7 +22,7 @@ use bevy::{
 use shared::world::{SunPosition, TILE_SIZE, TilePos, WorldGeography};
 
 use super::{
-    atlas::SpriteVariant,
+    atlas::{PixelRect, SpriteVariant},
     config::{OcclusionStyle, PresentationConfig, ShadowStyle},
     placement::Placement,
 };
@@ -100,7 +100,7 @@ impl Silhouette {
     }
 
     /// Z relative to the object.
-    fn z(self, object_z: f32) -> f32 {
+    pub fn z(self, object_z: f32) -> f32 {
         match self {
             Self::Sun => render_layers::SHADOWS - object_z,
             Self::StandingOcclusion | Self::GroundOcclusion => render_layers::OCCLUSION - object_z,
@@ -192,14 +192,23 @@ pub struct ShadowAssets {
     meshes: HashMap<MeshKey, Handle<Mesh>>,
 }
 
-/// Art rect, pivot bits, mirroring and margin bits.
-type MeshKey = (u32, u32, u32, u32, u32, u32, bool, u32);
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct MeshKey {
+    sheet: AssetId<Image>,
+    rect: PixelRect,
+    pivot: (u32, u32),
+    flip: bool,
+    margin: u32,
+    lying_height: u32,
+}
 
 /// What spawning a silhouette needs, besides the object.
 pub struct ShadowSpawner<'a> {
     pub assets: &'a mut ShadowAssets,
     pub meshes: &'a mut Assets<Mesh>,
     pub materials: &'a mut Assets<ShadowMaterial>,
+    /// Sheets, read for where art touches the ground.
+    pub images: &'a Assets<Image>,
     pub light: SunLight,
     pub occlusion: OcclusionStyle,
     /// Terrain texel size in world units.
@@ -207,7 +216,8 @@ pub struct ShadowSpawner<'a> {
 }
 
 impl ShadowSpawner<'_> {
-    /// Gives `object` (at `transform`) a silhouette of `art` as placed, from `sheet`.
+    /// Gives `object` (at `transform`) a silhouette of `art` as placed, from `sheet`;
+    /// `lying_height` as in [`silhouette_mesh`].
     #[allow(clippy::too_many_arguments)]
     pub fn spawn(
         &mut self,
@@ -218,44 +228,12 @@ impl ShadowSpawner<'_> {
         sheet: &Handle<Image>,
         art: &SpriteVariant,
         placement: &Placement,
+        lying_height: f32,
     ) {
-        let occlusion = self.occlusion.sanitized();
-        if !role.enabled(occlusion) {
+        let Some(material) = self.material(role, sheet) else {
             return;
-        }
-        let params = role.params(self.light, occlusion, self.texel);
-        let material = self
-            .assets
-            .materials
-            .entry((sheet.id(), role))
-            .or_insert_with(|| {
-                self.materials.add(ShadowMaterial {
-                    sheet: sheet.clone(),
-                    params,
-                })
-            })
-            .clone();
-        let pivot = art.pivot();
-        let margin = role.margin(occlusion);
-        let key = (
-            art.rect.0,
-            art.rect.1,
-            art.rect.2,
-            art.rect.3,
-            pivot.x.to_bits(),
-            pivot.y.to_bits(),
-            placement.flip,
-            margin.to_bits(),
-        );
-        let mesh = self
-            .assets
-            .meshes
-            .entry(key)
-            .or_insert_with(|| {
-                self.meshes
-                    .add(silhouette_mesh(art, placement.flip, margin))
-            })
-            .clone();
+        };
+        let mesh = self.mesh(role, sheet, art, placement.flip, lying_height);
         let foot = placement.foot - transform.translation.truncate();
         let world_per_px = placement.size.x / art.rect.2 as f32;
         commands.spawn((
@@ -267,12 +245,97 @@ impl ShadowSpawner<'_> {
                 .with_scale(Vec3::new(world_per_px, world_per_px, 1.0)),
         ));
     }
+
+    /// The shared material of `role` for silhouettes cut from `sheet`; `None` when the role
+    /// is turned off.
+    pub fn material(
+        &mut self,
+        role: Silhouette,
+        sheet: &Handle<Image>,
+    ) -> Option<Handle<ShadowMaterial>> {
+        let occlusion = self.occlusion.sanitized();
+        if !role.enabled(occlusion) {
+            return None;
+        }
+        let params = role.params(self.light, occlusion, self.texel);
+        let material = self
+            .assets
+            .materials
+            .entry((sheet.id(), role))
+            .or_insert_with(|| {
+                self.materials.add(ShadowMaterial {
+                    sheet: sheet.clone(),
+                    params,
+                })
+            });
+        Some(material.clone())
+    }
+
+    /// The shared mesh of `role` for `art` on `sheet`, mirrored when `flip`. Until the sheet
+    /// has loaded, the art is taken to touch the ground with its bottom row and the mesh is
+    /// not shared.
+    pub fn mesh(
+        &mut self,
+        role: Silhouette,
+        sheet: &Handle<Image>,
+        art: &SpriteVariant,
+        flip: bool,
+        lying_height: f32,
+    ) -> Handle<Mesh> {
+        let margin = role.margin(self.occlusion.sanitized());
+        let Some(image) = self.images.get(sheet) else {
+            return self
+                .meshes
+                .add(silhouette_mesh(art, flip, margin, 0, lying_height));
+        };
+        let pivot = art.pivot();
+        let key = MeshKey {
+            sheet: sheet.id(),
+            rect: art.rect,
+            pivot: (pivot.x.to_bits(), pivot.y.to_bits()),
+            flip,
+            margin: margin.to_bits(),
+            lying_height: lying_height.to_bits(),
+        };
+        self.assets
+            .meshes
+            .entry(key)
+            .or_insert_with(|| {
+                let contact = empty_bottom_rows(image, art.rect);
+                self.meshes
+                    .add(silhouette_mesh(art, flip, margin, contact, lying_height))
+            })
+            .clone()
+    }
+}
+
+/// Transparent rows at the bottom of `rect` on `sheet`: the art touches the ground just above
+/// them, so its shadow and occlusion start there.
+fn empty_bottom_rows(sheet: &Image, rect: PixelRect) -> u32 {
+    let opaque_row = |y: u32| {
+        (rect.0..rect.0 + rect.2).any(|x| {
+            sheet
+                .get_color_at(x, y)
+                .is_ok_and(|color| color.alpha() > 0.5)
+        })
+    };
+    (0..rect.3)
+        .take_while(|row| !opaque_row(rect.1 + rect.3 - 1 - row))
+        .count() as u32
 }
 
 /// The art's quad in art pixels with its foot at the origin (+Y up), grown by `margin` on every
 /// side; UVs in sheet pixels (beyond the art past its edges). Every vertex also carries the art's
-/// bounds: color = (mirrored ? -1 : 1, left, bottom, 0), normal = (width, height, 0).
-fn silhouette_mesh(art: &SpriteVariant, flip: bool, margin: f32) -> Mesh {
+/// bounds and shape: color = (mirrored ? -1 : 1, left, bottom, `contact`: transparent bottom
+/// rows), normal = (width, height, `lying_height`: art pixels tall for art lying on the ground,
+/// 0 for upright art).
+fn silhouette_mesh(
+    art: &SpriteVariant,
+    flip: bool,
+    margin: f32,
+    contact: u32,
+    lying_height: f32,
+) -> Mesh {
     let rect = art.rect;
     let (width, height) = (rect.2 as f32, rect.3 as f32);
     let pivot = art.pivot();
@@ -303,8 +366,14 @@ fn silhouette_mesh(art: &SpriteVariant, flip: bool, margin: f32) -> Mesh {
         Mesh::ATTRIBUTE_UV_0,
         corners.map(|[x, y]| [u(x), v(y)]).to_vec(),
     )
-    .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, vec![[mirror, left, bottom, 0.0]; 4])
-    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[width, height, 0.0]; 4])
+    .with_inserted_attribute(
+        Mesh::ATTRIBUTE_COLOR,
+        vec![[mirror, left, bottom, contact as f32]; 4],
+    )
+    .with_inserted_attribute(
+        Mesh::ATTRIBUTE_NORMAL,
+        vec![[width, height, lying_height]; 4],
+    )
     .with_inserted_indices(Indices::U16(vec![0, 1, 2, 0, 2, 3]))
 }
 
@@ -480,7 +549,7 @@ mod tests {
                 _ => unreachable!(),
             }
         };
-        let plain = silhouette_mesh(&art, false, 0.0);
+        let plain = silhouette_mesh(&art, false, 0.0, 0, 0.0);
         assert_eq!(
             attribute(&plain, Mesh::ATTRIBUTE_POSITION)[0],
             [-2.0, 0.0, 0.0],
@@ -499,7 +568,7 @@ mod tests {
             attribute(&plain, Mesh::ATTRIBUTE_NORMAL)[0],
             [8.0, 4.0, 0.0]
         );
-        let grown = silhouette_mesh(&art, true, 2.0);
+        let grown = silhouette_mesh(&art, true, 2.0, 1, 24.0);
         assert_eq!(
             attribute(&grown, Mesh::ATTRIBUTE_POSITION)[0],
             [-8.0, -2.0, 0.0]
@@ -508,7 +577,42 @@ mod tests {
         assert_eq!(attribute(&grown, Mesh::ATTRIBUTE_UV_0)[0], [20.0, 26.0]);
         assert_eq!(
             attribute(&grown, Mesh::ATTRIBUTE_COLOR)[0],
-            [-1.0, -6.0, 0.0, 0.0]
+            [-1.0, -6.0, 0.0, 1.0],
+            "carries its transparent bottom rows"
+        );
+        assert_eq!(
+            attribute(&grown, Mesh::ATTRIBUTE_NORMAL)[0],
+            [8.0, 4.0, 24.0],
+            "carries its lying height"
+        );
+    }
+
+    #[test]
+    fn art_touches_the_ground_above_its_transparent_bottom_rows() {
+        use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+
+        // 2×4 sheet: opaque top two rows, transparent bottom two.
+        let mut data = vec![255u8; 2 * 4 * 4];
+        for pixel in data.chunks_mut(4).skip(4) {
+            pixel[3] = 0;
+        }
+        let sheet = Image::new(
+            Extent3d {
+                width: 2,
+                height: 4,
+                depth_or_array_layers: 1,
+            },
+            TextureDimension::D2,
+            data,
+            TextureFormat::Rgba8UnormSrgb,
+            RenderAssetUsages::all(),
+        );
+        assert_eq!(empty_bottom_rows(&sheet, PixelRect(0, 0, 2, 4)), 2);
+        assert_eq!(empty_bottom_rows(&sheet, PixelRect(0, 0, 2, 2)), 0);
+        assert_eq!(
+            empty_bottom_rows(&sheet, PixelRect(0, 2, 2, 2)),
+            2,
+            "all empty"
         );
     }
 }

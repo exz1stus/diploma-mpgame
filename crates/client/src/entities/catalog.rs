@@ -6,6 +6,7 @@ use bevy::prelude::*;
 use serde::Deserialize;
 use shared::snapshots::NetworkEntityId;
 
+use super::animation::EntitySheet;
 use crate::assets::read_table;
 
 const BUNDLED_VISUALS: &str = include_str!("../../assets/entities/visuals.ron");
@@ -21,6 +22,9 @@ pub struct EntityVisual {
     pub texture: Option<String>,
     #[serde(default)]
     pub tint: Tint,
+    /// An animated sprite sheet, used instead of `texture` when its file exists.
+    #[serde(default)]
+    pub sheet: Option<EntitySheet>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -76,6 +80,9 @@ mod tests {
         assert_eq!(visuals.get("player").size, 32.0);
         assert_eq!(visuals.texture_name("player"), "player");
         assert_eq!(visuals.get("no such kind").size, visuals.unknown.size);
+        let sheet = visuals.get("player").sheet.as_ref().unwrap();
+        assert_eq!(sheet.image, "textures/player_atlas.png");
+        assert_eq!(sheet.frame_world_size(), Vec2::splat(64.0));
     }
 
     #[test]

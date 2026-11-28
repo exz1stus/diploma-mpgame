@@ -6,14 +6,15 @@ use std::collections::HashMap;
 
 use bevy::{
     asset::{LoadState, RenderAssetUsages},
-    image::{ImageLoaderSettings, ImageSampler},
     prelude::*,
     render::render_resource::{Extent3d, TextureDimension, TextureFormat},
 };
 use serde::Deserialize;
 
+use crate::assets::load_pixel_art;
+
 /// `(x, y, width, height)` in sheet pixels, y down.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Deserialize)]
 pub struct PixelRect(pub u32, pub u32, pub u32, pub u32);
 
 impl PixelRect {
@@ -46,6 +47,11 @@ pub struct SpriteVariant {
 }
 
 impl SpriteVariant {
+    /// Art at `rect` standing on the bottom center of its region.
+    pub fn bottom_centered(rect: PixelRect) -> Self {
+        Self { rect, pivot: None }
+    }
+
     pub fn pivot(&self) -> Vec2 {
         self.pivot.map_or(
             Vec2::new(self.rect.2 as f32 / 2.0, self.rect.3 as f32),
@@ -138,7 +144,7 @@ fn variants_of<'a>(
 
 /// Loads the main sheet with nearest sampling, so pixel art stays crisp.
 pub fn load_sheet(asset_server: &AssetServer, atlas: &Atlas) -> Handle<Image> {
-    load_image(asset_server, &atlas.image)
+    load_pixel_art(asset_server, &atlas.image)
 }
 
 /// Loads the further sheets, in [`Atlas::sheets`] order.
@@ -146,17 +152,8 @@ pub fn load_extra_sheets(asset_server: &AssetServer, atlas: &Atlas) -> Vec<Handl
     atlas
         .sheets
         .iter()
-        .map(|extra| load_image(asset_server, &extra.image))
+        .map(|extra| load_pixel_art(asset_server, &extra.image))
         .collect()
-}
-
-fn load_image(asset_server: &AssetServer, path: &str) -> Handle<Image> {
-    asset_server
-        .load_builder()
-        .with_settings(|settings: &mut ImageLoaderSettings| {
-            settings.sampler = ImageSampler::nearest();
-        })
-        .load(path.to_owned())
 }
 
 /// The sheet finished loading, successfully or not.

@@ -14,6 +14,7 @@
 //! `layers` and `blend` settings in `tiles.ron`.
 
 mod atlas;
+mod casters;
 mod catalog;
 mod chunk_mesh;
 mod chunks;
@@ -33,6 +34,9 @@ use bevy::{asset::embedded_asset, prelude::*, sprite_render::Material2dPlugin};
 pub use layers::{
     HeightLayer, TextureLayer, TileContext, TileLayer, TileLayerAppExt, TileLayers, TileVisual,
 };
+
+/// Shadows for moving sprites; the entity visuals schedule the system after they animate.
+pub(crate) use casters::{ShadowCaster, follow_shadow_casters};
 
 use catalog::ObjectCatalog;
 use config::PresentationConfig;

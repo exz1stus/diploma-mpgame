@@ -2,7 +2,13 @@
 // is drawn, decided from its anchor tile alone. Keep the two in sync; placement.test.mjs
 // asserts the same hash vectors as the Rust tests. Positions here are in tiles.
 
-const CHANNEL = { variant: 0, jitterX: 1, jitterY: 2, flip: 3, scale: 4 };
+const CHANNEL = { variant: 0, jitterX: 1, jitterY: 2, flip: 3, scale: 4, ore: 5 };
+
+const channelHash = (anchor, salt, channel) =>
+  hash32(anchor.x >>> 0, anchor.y >>> 0, (salt ^ Math.imul(channel, 0x9e3779b9)) >>> 0);
+
+// pick_ore: which of `count` ores the object anchored at `anchor` is (0 when there are none).
+export const pickOre = (anchor, salt, count) => channelHash(anchor, salt, CHANNEL.ore) % Math.max(1, count);
 
 // 32-bit hash of a tile and a salt (lowbias32 finalizer), in wrapping u32 math.
 export function hash32(x, y, salt) {
@@ -59,7 +65,7 @@ function snapToGrid(foot, art, flip, pixel, grid) {
 }
 
 export function placeObject(anchor, footprint, style, variants, salt, tilesPerPx, grid = 0) {
-  const hash = channel => hash32(anchor.x >>> 0, anchor.y >>> 0, (salt ^ Math.imul(channel, 0x9e3779b9)) >>> 0);
+  const hash = channel => channelHash(anchor, salt, channel);
   const variant = hash(CHANNEL.variant) % Math.max(1, variants.length);
   const art = variants[Math.min(variant, variants.length - 1)];
   const flip = !!style?.flip && (hash(CHANNEL.flip) & 1) === 1;

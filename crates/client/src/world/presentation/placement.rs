@@ -16,6 +16,22 @@ enum Channel {
     JitterY = 2,
     Flip = 3,
     Scale = 4,
+    Ore = 5,
+}
+
+/// The hash of one decision for an object anchored at `anchor` of the kind salted `salt`.
+fn channel_hash(anchor: TilePos, salt: u32, channel: Channel) -> u32 {
+    hash32(
+        anchor.x as u32,
+        anchor.y as u32,
+        salt ^ (channel as u32).wrapping_mul(0x9e37_79b9),
+    )
+}
+
+/// Which of `count` ores the object anchored at `anchor` is (0 when there are none). Like the
+/// rest of the placement it follows the anchor tile, which the world seed chose.
+pub fn pick_ore(anchor: TilePos, salt: u32, count: usize) -> usize {
+    channel_hash(anchor, salt, Channel::Ore) as usize % count.max(1)
 }
 
 /// 32-bit hash of a tile and a salt (lowbias32 finalizer). Wrapping u32 math only, so the
@@ -64,13 +80,7 @@ pub fn place(
     world_per_px: f32,
     grid: f32,
 ) -> Placement {
-    let hash = |channel: Channel| {
-        hash32(
-            anchor.x as u32,
-            anchor.y as u32,
-            salt ^ (channel as u32).wrapping_mul(0x9e37_79b9),
-        )
-    };
+    let hash = |channel: Channel| channel_hash(anchor, salt, channel);
     let variant = hash(Channel::Variant) as usize % variants.len().max(1);
     let art = variants[variant.min(variants.len() - 1)];
     let flip = style.flip && hash(Channel::Flip) & 1 == 1;
@@ -174,6 +184,17 @@ mod tests {
             "{foot}"
         );
         assert!((scale - 1.725_5).abs() < 1e-4, "{scale}");
+    }
+
+    /// Also asserted by the preview's placement test; keep the two in sync.
+    #[test]
+    fn ore_pick_matches_the_shared_vector_and_uses_every_ore() {
+        let salt = fnv1a("iron_ore");
+        assert_eq!(channel_hash(at(10, 20), salt, Channel::Ore), 4_045_813_250);
+        assert_eq!(pick_ore(at(10, 20), salt, 7), 3);
+        assert_eq!(pick_ore(at(10, 20), salt, 0), 0, "no ores: index 0");
+        let picks: Vec<_> = (0..20).map(|x| pick_ore(at(x, 3), salt, 2)).collect();
+        assert!(picks.contains(&0) && picks.contains(&1), "{picks:?}");
     }
 
     fn variants() -> Vec<SpriteVariant> {
