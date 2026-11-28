@@ -320,7 +320,10 @@ mod tests {
             velocity *= 0.8;
             animator.advance(position, Some(velocity), dt);
         }
-        assert_eq!((animator.clip, animator.facing), (Clip::Idle, Facing::Front));
+        assert_eq!(
+            (animator.clip, animator.facing),
+            (Clip::Idle, Facing::Front)
+        );
     }
 
     #[test]

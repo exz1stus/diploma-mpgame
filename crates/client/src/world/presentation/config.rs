@@ -655,13 +655,19 @@ mod tests {
     #[test]
     fn bundled_ores_color_tinted_ore_kinds_and_skip_crystals() {
         let objects: ObjectStyles = ron::from_str(BUNDLED_OBJECTS).unwrap();
-        let ores = objects.style("iron_ore").ores.expect("iron_ore lists its ores");
+        let ores = objects
+            .style("iron_ore")
+            .ores
+            .expect("iron_ore lists its ores");
         let names: Vec<_> = ores.kinds.iter().map(|(name, _)| name.as_str()).collect();
         assert_eq!(names, ["coal", "iron"]);
         assert!((0..ores.kinds.len()).all(|index| ores.color(index).is_some()));
         assert!(ores.color(ores.kinds.len()).is_none());
         for (kind, style) in &objects.kinds {
-            assert!(style.ores.is_none() || style.tinted, "{kind}: ores need a tinted kind");
+            assert!(
+                style.ores.is_none() || style.tinted,
+                "{kind}: ores need a tinted kind"
+            );
         }
         assert!(objects.style("crystal").ores.is_none());
     }

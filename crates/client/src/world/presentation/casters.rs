@@ -67,14 +67,12 @@ impl CasterPose {
 
 fn pixel_rect(rect: Rect) -> Option<PixelRect> {
     let size = rect.size();
-    (rect.min.min_element() >= 0.0 && size.min_element() >= 1.0).then(|| {
-        PixelRect(
-            rect.min.x as u32,
-            rect.min.y as u32,
-            size.x as u32,
-            size.y as u32,
-        )
-    })
+    (rect.min.min_element() >= 0.0 && size.min_element() >= 1.0).then_some(PixelRect(
+        rect.min.x as u32,
+        rect.min.y as u32,
+        size.x as u32,
+        size.y as u32,
+    ))
 }
 
 #[allow(clippy::type_complexity)]
